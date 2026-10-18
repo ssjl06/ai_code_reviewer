@@ -14,19 +14,16 @@ from review.claude_cmd import write_agents_file
 from review.claude_runner import run_all
 from review.config import KIT_DIR, load_config
 from review.diff_split import build_chunks, line_map
+from review.failure import log, post, report_failure
 from review.github_api import GitHub, GitHubError
 from review.gitutil import GitError
 from review.prompt import build_prompt
 from review.render import render_body, render_inline
+from review.validate import normalize_state
 
 LLM_ENV = ("AI_REVIEW_LLM_BASE_URL", "AI_REVIEW_LLM_API_KEY")
 ONLINE_ENV = ("GITHUB_API_URL", "GITHUB_REPOSITORY", "AI_REVIEW_BOT_PAT", "AI_REVIEW_BOT_NAME")
 AGENT_MD = os.path.join(KIT_DIR, "agent", "pr-reviewer.md")
-DISMISS_MSG = "새 커밋을 다시 리뷰하여 이전 AI 변경 요청을 해제합니다."
-
-
-def log(msg: str) -> None:
-    print("[main] " + msg, flush=True)
 
 
 def _fail(msg: str) -> int:
@@ -59,30 +56,12 @@ def _missing(args, env) -> List[str]:
 def _inputs(args, env):
     """Return (gh, base, head, title, prev)."""
     if args.dry_run:
-        return None, args.base, args.head, "", sc.read_state_file(args.state_file)
+        return None, args.base, args.head, "", normalize_state(sc.read_state_file(args.state_file))
     gh = GitHub(env["GITHUB_API_URL"], env["AI_REVIEW_BOT_PAT"], env["GITHUB_REPOSITORY"], args.pr)
     pr = gh.get_pr()
     base, head = args.base or pr["base"]["sha"], args.head or pr["head"]["sha"]
-    return gh, base, head, pr.get("title") or "", gh.latest_state(env["AI_REVIEW_BOT_NAME"])
-
-
-def _post(gh, env, head, review, body, comments, fallback) -> int:
-    """Post first, then lift earlier change requests only on an APPROVE verdict."""
-    try:
-        posted = gh.post_with_fallback(head, review["event"], body, comments, fallback)
-    except GitHubError as e:
-        log("리뷰 게시 실패: %s" % e)
-        return 1
-    log("리뷰 게시 완료: id=%s" % (posted or {}).get("id"))
-    rc = 1 if review["failed_all"] else 0
-    if review["event"] == "APPROVE":
-        try:
-            n = gh.dismiss_change_requests(env["AI_REVIEW_BOT_NAME"], DISMISS_MSG)
-            log("이전 변경 요청 %d건 해제" % n)
-        except GitHubError as e:
-            log("이전 변경 요청 해제 실패: %s" % e)
-            rc = 1
-    return rc
+    return gh, base, head, pr.get("title") or "", normalize_state(
+        gh.latest_state(env["AI_REVIEW_BOT_NAME"]))
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -108,6 +87,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     except (GitError, OSError, ValueError) as e:
         print("ai-review: error: %s" % e, file=sys.stderr, flush=True)
         return 1
+    try:
+        return _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, prev, scope)
+    except Exception as e:  # unexpected bug: never leave the PR without a comment
+        return report_failure(gh, head, e)
+
+
+def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, prev, scope) -> int:
     if scope["mode"] == "unchanged":
         log("이미 리뷰한 커밋 %s — 리뷰를 건너뜀" % head[:7])
         return 0
@@ -147,4 +133,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
         log("dry-run: 게시하지 않음")
         return 0
-    return _post(gh, env, head, review, body, comments, fallback)
+    return post(gh, env, head, review, body, comments, fallback)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

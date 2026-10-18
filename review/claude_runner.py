@@ -1,7 +1,6 @@
 """Run one `claude -p` process per diff chunk, with timeouts and a conclusion-only resume."""
 from __future__ import annotations
 
-import json
 import os
 import signal
 import subprocess
@@ -14,27 +13,7 @@ from typing import Any, Dict, List, Optional
 from review.claude_cmd import build_command, build_env
 from review.prompt import FALLBACK_PROMPT
 from review.stream_log import StreamLogger
-
-
-def extract_output(result: Optional[dict]) -> Optional[dict]:
-    if not isinstance(result, dict):
-        return None
-    if isinstance(result.get("structured_output"), dict):
-        return result["structured_output"]
-    text, dec, i = result.get("result"), json.JSONDecoder(), 0
-    if not isinstance(text, str):
-        return None
-    while True:
-        i = text.find("{", i)
-        if i < 0:
-            return None
-        try:
-            obj, end = dec.raw_decode(text, i)
-            if isinstance(obj, dict) and "findings" in obj:
-                return obj
-            i = end if isinstance(obj, dict) else i + 1
-        except ValueError:
-            i += 1
+from review.validate import extract_output
 
 
 def run_process(cmd, env, cwd, stdin_text, timeout_s, logger, tee_path=None, info=None) -> str:

@@ -74,6 +74,11 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(len(r["output"]["findings"]), 1)
         self.assertEqual(len(self.calls()), 1)
 
+    def test_text_json_malformed_finding_dropped(self):
+        r = self.run_scn("text_json_bad")
+        self.assertEqual(r["status"], "ok")
+        self.assertEqual([f["title"] for f in r["output"]["findings"]], ["t"])
+
     def test_crash_failed(self):
         r = self.run_scn("crash")
         self.assertEqual(r["status"], "failed")
@@ -85,9 +90,12 @@ class RunnerTest(unittest.TestCase):
 
     def test_extract_output(self):
         self.assertIsNone(extract_output(None))
-        self.assertEqual(extract_output({"structured_output": {"a": 1}}), {"a": 1})
+        self.assertIsNone(extract_output({"structured_output": {"a": 1}}))
+        empty = {"summary": "", "findings": [], "previous_findings": [], "incomplete_reason": None}
+        self.assertEqual(extract_output({"structured_output": {"findings": []}}), empty)
         self.assertIsNone(extract_output({"result": '{"x": 1}'}))
-        self.assertEqual(extract_output({"result": 'a {"x":1} b {"findings": []}'}), {"findings": []})
+        self.assertEqual(extract_output({"result": 'a {"x":1} b {"findings": []}'}), empty)
+        self.assertEqual(extract_output({"result": '{"findings": 1} {"findings": []}'}), empty)
 
     def _proc(self, script, stdin, timeout):
         info = {}

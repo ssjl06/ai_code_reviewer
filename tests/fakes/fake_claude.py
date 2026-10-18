@@ -6,7 +6,10 @@ import sys
 import time
 
 OUT = {"summary": "s", "findings": [{"file": "a.c", "line": 1, "severity": "major",
-                                     "confidence": 90, "title": "t"}], "incomplete_reason": None}
+                                     "confidence": 90, "category": "bug", "title": "t",
+                                     "detail": "d"}],
+       "previous_findings": [], "incomplete_reason": None}
+BAD_FINDING = {"line": "x", "severity": "major", "confidence": 90, "title": "no file"}
 
 BLOCKING = {"file": "src/k.cu", "line": 2, "severity": "major", "confidence": 85,
             "category": "memory", "title": "배열 범위를 벗어난 접근",
@@ -62,6 +65,9 @@ def main():
         result(sid, result="not json at all")
     elif scn == "text_json":
         result(sid, result="Here: " + json.dumps(OUT) + " done")
+    elif scn == "text_json_bad":
+        bad = dict(OUT, findings=OUT["findings"] + [BAD_FINDING])
+        result(sid, result="Here: " + json.dumps(bad) + " done")
 
 
 main()

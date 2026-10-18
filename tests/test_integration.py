@@ -22,7 +22,7 @@ def git(repo, *args):
                           text=True).stdout.strip()
 
 
-class IntegrationTest(unittest.TestCase):
+class IntegrationBase(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -71,6 +71,8 @@ class IntegrationTest(unittest.TestCase):
         with open(self.log, encoding="utf-8") as f:
             return [json.loads(x) for x in f]
 
+
+class IntegrationTest(IntegrationBase):
     def test_first_full_then_incremental(self):
         self.assertEqual(self.run_main("blocking", "--repo", self.R, "--pr", "1"), 0)
         first = self.gh.posted[-1]
