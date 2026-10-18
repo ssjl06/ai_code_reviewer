@@ -25,11 +25,18 @@ def run_process(cmd, env, cwd, stdin_text, timeout_s, logger, tee_path=None, inf
     tee = open(tee_path, "a", encoding="utf-8") if tee_path else None
 
     def pump_out():
+        logged = False
         for line in proc.stdout:
             if tee:
                 tee.write(line)
                 tee.flush()
-            logger.feed(line)
+            try:
+                logger.feed(line)
+            except Exception as e:  # a parser bug must not stop draining stdout
+                if not logged:
+                    logged = True
+                    print("[runner] stream parse error: %s: %s" % (type(e).__name__, e),
+                          file=sys.stderr, flush=True)
 
     threads = [threading.Thread(target=pump_out, daemon=True),
                threading.Thread(target=lambda: err.extend(proc.stderr), daemon=True)]
@@ -121,8 +128,12 @@ def run_all(chunks, prompts, cfg, paths, base_env, deadline) -> List[dict]:
         left = deadline - time.monotonic()
         if left <= 0:
             return _result(chunk["index"], "incomplete", None, _empty_stats(), None, "deadline")
-        return run_chunk(chunk, prompt, len(chunks), cfg, paths, base_env,
-                         min(cfg["chunk_timeout_s"], left), deadline)
+        try:
+            return run_chunk(chunk, prompt, len(chunks), cfg, paths, base_env,
+                             min(cfg["chunk_timeout_s"], left), deadline)
+        except Exception as e:  # one broken chunk must not discard the others
+            return _result(chunk["index"], "failed", None, _empty_stats(), None,
+                           "%s: %s" % (type(e).__name__, e))
 
     with ThreadPoolExecutor(cfg["concurrency"]) as ex:
         futs = [ex.submit(one, c, p) for c, p in zip(chunks, prompts)]

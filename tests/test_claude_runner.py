@@ -118,6 +118,28 @@ class RunnerTest(unittest.TestCase):
         with self.assertRaises(ProcessLookupError):
             os.kill(pid, 0)
 
+    def test_run_all_missing_binary_fails_every_chunk(self):
+        chunks = [dict(self.chunk, index=i) for i in range(3)]
+        cfg = dict(self.cfg("ok"), claude_bin=os.path.join(self.tmp.name, "nope"))
+        with quiet():
+            rs = run_all(chunks, ["p"] * 3, cfg, self.paths, self.env, time.monotonic() + 30)
+        self.assertEqual([(r["index"], r["status"]) for r in rs], [(0, "failed"), (1, "failed"),
+                                                                    (2, "failed")])
+        self.assertTrue(all(r["error"].startswith("FileNotFoundError: ") for r in rs))
+
+    def test_logger_exception_keeps_draining(self):
+        class Boom(StreamLogger):
+            def feed(self, line):
+                raise KeyError("bad event")
+        tee, err = os.path.join(self.tmp.name, "tee.jsonl"), io.StringIO()
+        with contextlib.redirect_stderr(err):
+            st = run_process(["sh", "-c", "for i in 1 2 3; do echo $i; done"], self.env,
+                             self.tmp.name, "", 5, Boom("t", out=io.StringIO()), tee, {})
+        self.assertEqual(st, "exited")
+        with open(tee, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "1\n2\n3\n")
+        self.assertEqual(err.getvalue().count("KeyError"), 1)
+
     def test_run_all_deadline(self):
         chunks = [dict(self.chunk, index=i) for i in range(4)]
         cfg = self.cfg("hang")
