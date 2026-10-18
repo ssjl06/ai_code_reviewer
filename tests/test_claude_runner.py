@@ -6,7 +6,8 @@ import tempfile
 import time
 import unittest
 
-from review.claude_runner import extract_output, run_all, run_chunk
+from review.claude_runner import extract_output, run_all, run_chunk, run_process
+from review.stream_log import StreamLogger
 from review.prompt import FALLBACK_PROMPT
 from tests.fakes import make_wrapper
 
@@ -87,6 +88,27 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(extract_output({"structured_output": {"a": 1}}), {"a": 1})
         self.assertIsNone(extract_output({"result": '{"x": 1}'}))
         self.assertEqual(extract_output({"result": 'a {"x":1} b {"findings": []}'}), {"findings": []})
+
+    def _proc(self, script, stdin, timeout):
+        info = {}
+        t = time.monotonic()
+        out = io.StringIO()
+        st = run_process(["sh", "-c", script], self.env, self.tmp.name, stdin, timeout,
+                         StreamLogger("t", out=out), None, info)
+        return st, time.monotonic() - t, out.getvalue()
+
+    def test_large_stdin_does_not_defeat_timeout(self):
+        st, dt, _ = self._proc("sleep 30", "x" * 200000, 1)
+        self.assertEqual(st, "timeout")
+        self.assertLess(dt, 3)
+
+    def test_lingering_grandchild_killed(self):
+        st, dt, out = self._proc("sleep 20 & echo $!", "", 5)
+        self.assertEqual(st, "exited")
+        self.assertLess(dt, 3)
+        pid = int(out.split("·")[1])
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
 
     def test_run_all_deadline(self):
         chunks = [dict(self.chunk, index=i) for i in range(4)]

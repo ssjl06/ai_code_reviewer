@@ -56,21 +56,27 @@ def run_process(cmd, env, cwd, stdin_text, timeout_s, logger, tee_path=None, inf
                threading.Thread(target=lambda: err.extend(proc.stderr), daemon=True)]
     for t in threads:
         t.start()
-    try:
-        proc.stdin.write(stdin_text)
-        proc.stdin.close()
-    except (BrokenPipeError, OSError):
-        pass
+    def feed_stdin():
+        try:
+            proc.stdin.write(stdin_text)
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+        try:
+            proc.stdin.close()
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+
+    threading.Thread(target=feed_stdin, daemon=True).start()
     status = "exited"
     try:
         proc.wait(max(timeout_s, 0.01))
     except subprocess.TimeoutExpired:
         status = "timeout"
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            pass
-        proc.wait()
+    try:  # kill the whole group on every path so lingering grandchildren free the pipes
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        pass
+    proc.wait()
     for t in threads:
         t.join(5)
     if tee:
