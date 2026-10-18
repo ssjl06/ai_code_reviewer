@@ -13,9 +13,35 @@ import time
 EXPLORE_TOOLS = {"Read", "Grep", "Glob", "Bash"}
 GIT_SUBCOMMANDS = {"diff", "log", "show", "blame", "grep", "ls-files"}
 BUDGET_REASON = "탐색 예산 소진. 추가 도구 호출 없이 지금 최종 JSON 결과를 출력하라."
-_SHELL_META = set(";|&><$`()\n\r")
-_BAD_FLAGS = ("--output", "--git-dir", "--work-tree", "--no-index", "--ext-diff",
-              "--exec-path", "--open-files-in-pager", "-O")
+_SHELL_META = set(";|&><$`(){}*?[]~\\\n\r")
+_DIFFISH = ("--stat --shortstat --numstat --name-only --name-status --no-color --oneline -p --patch "
+            "--no-patch --follow -M -w --word-diff --abbrev-commit --diff-filter= --format= --pretty=")
+_HIST = _DIFFISH + " --since= --until= --author= --grep= --merges --no-merges --graph --all -n"
+# subcommand -> (exact flags and "--name=" prefixes for value flags, regex for numeric forms)
+_OPTS = {
+    "diff": (_DIFFISH + " --cached --staged", r"-U\d+|-\d+"),
+    "show": (_DIFFISH, r"-U\d+|-\d+"),
+    "log": (_HIST, r"-n\d+|-\d+|-U\d+"),
+    "grep": ("-n -i -w -l -c -e -E -F --line-number --ignore-case --files-with-matches "
+             "--count -C -A -B", r"-[CAB]\d+|-\d+"),
+    "blame": ("-w -e --porcelain --line-porcelain -L", r"-L\d+,[+-]?\d+"),
+    "ls-files": ("--cached --others --exclude-standard", r"(?!)"),
+}
+
+
+def _option_ok(sub, tok):
+    flags, numeric = _OPTS[sub]
+    allowed = flags.split()
+    if tok in allowed or re.fullmatch(numeric, tok):
+        return True
+    name, eq, _ = tok.partition("=")
+    return bool(eq) and name + "=" in allowed
+
+
+def _operand_ok(tok):
+    if tok.startswith(("/", "~")):
+        return False
+    return ".." not in re.split(r"[/:]", tok)
 
 
 def check_path(path, root):
@@ -35,7 +61,7 @@ def check_path(path, root):
 
 
 def check_glob_pattern(pattern):
-    if pattern.startswith(("/", "~")) or ".." in re.split(r"[\\/]", pattern):
+    if "{" in pattern or pattern.startswith(("/", "~")) or ".." in re.split(r"[\\/]", pattern):
         return "glob pattern outside repo: %s" % pattern
     return None
 
@@ -49,9 +75,14 @@ def check_bash(command):
         return "unparseable command"
     if len(tokens) < 2 or tokens[0] != "git" or tokens[1] not in GIT_SUBCOMMANDS:
         return "only read-only git %s allowed" % "/".join(sorted(GIT_SUBCOMMANDS))
-    for t in tokens[1:]:
-        if t in ("-c", "-C") or t.startswith(_BAD_FLAGS):
-            return "git option not allowed: %s" % t
+    for t in tokens[2:]:
+        if t == "--":
+            continue
+        if t.startswith("-"):
+            if not _option_ok(tokens[1], t):
+                return "git option not allowed: %s" % t
+        elif not _operand_ok(t):
+            return "path outside repo: %s" % t
     return None
 
 

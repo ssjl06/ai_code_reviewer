@@ -47,11 +47,13 @@ class PathTest(TmpCase):
         self.assertIsNotNone(check_glob_pattern("/etc/*"))
         self.assertIsNotNone(check_glob_pattern("../**"))
         self.assertIsNotNone(check_glob_pattern("~/x"))
+        self.assertIsNotNone(check_glob_pattern("{..,x}/**"))
 
 
 class BashTest(unittest.TestCase):
     def test_allowed(self):
-        for c in ["git diff HEAD~1 -- src/a.cu", "git log -3 --oneline",
+        for c in ["git diff HEAD^ -- src/a.cu", "git diff --stat -U3 a..b", "git log -n 5 --format=%h -- src",
+                  "git grep -n -e foo -- src", "git grep -C3 foo", "git diff --cached", "git log -3 --oneline",
                   "git show abc123:src/a.cu", "git grep -n launch_kernel", "git blame -L 1,20 a.py"]:
             self.assertIsNone(check_bash(c), c)
 
@@ -61,7 +63,15 @@ class BashTest(unittest.TestCase):
                   "git diff --ext-diff", "git grep -O vim x", "git grep --open-files-in-pager x",
                   "git log; rm -rf .", "git log | sh", "git log $(id)", "git log `id`",
                   "git log > out", "git log\nrm x", "git --git-dir=/x log", "git log --exec-path=/x",
-                  "git log 'unterminated", "", "git"]:
+                  "git log 'unterminated", "", "git",
+                  "git grep -nO'touch /tmp/x' hello", "git grep --open-files-in='touch /tmp/x' hello",
+                  "git grep --open=x hello", "git diff --ext=x", "git log --out=/tmp/x",
+                  "git log --{output=/tmp/x,oneline}", "git log *", "git log HEAD~1",
+                  "git diff /etc/hostname /dev/null", "git diff ~/.ssh/id_rsa /dev/null",
+                  "git blame --contents /etc/hostname a.txt", "git blame -S /etc/hostname a",
+                  "git blame --ignore-revs-file=/etc/hostname a", "git grep -f /etc/hostname",
+                  "git ls-files -X /etc/hostname", "git ls-files --exclude-from=/etc/hostname",
+                  "git show abc:../x", "git diff a ../b", "git log -nw", "git log --out\\put=x"]:
             self.assertIsNotNone(check_bash(c), c)
 
 
