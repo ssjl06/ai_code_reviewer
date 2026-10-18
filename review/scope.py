@@ -19,10 +19,14 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict]) -> Dict[str
     if psha == head:
         out.update(mode="unchanged", range="%s..%s" % (psha[:7], head[:7]), targets=[])
     elif psha and is_ancestor(repo, psha, head):
-        targets = parse_unified_diff(diff_text(repo, psha, head, merge_base=False))
+        # A merge of base into the PR branch brings upstream changes into psha..head:
+        # keep only files and added lines that are also part of the PR diff itself.
+        pr_added = line_map(pr_files, "added_lines")
+        targets = [f for f in parse_unified_diff(diff_text(repo, psha, head, merge_base=False))
+                   if f["path"] in pr_added]
+        changed = {p: lines & pr_added[p] for p, lines in line_map(targets, "added_lines").items()}
         out.update(mode="incremental", range="%s..%s" % (psha[:7], head[:7]), targets=targets,
-                   changed=line_map(targets, "added_lines"),
-                   delta_files={f["path"] for f in targets})
+                   changed=changed, delta_files={f["path"] for f in targets})
     else:  # first review, or force-push/rebase: review the whole PR again
         out.update(mode="full", range="%s...%s" % (base[:7], head[:7]), targets=pr_files)
         if psha:

@@ -72,6 +72,27 @@ class ScopeTest(unittest.TestCase):
         self.assertEqual((s["mode"], s["delta_files"]), ("full", None))
 
 
+class MergeFromBaseTest(unittest.TestCase):
+    def test_upstream_changes_from_merge_are_not_targets(self):
+        with tempfile.TemporaryDirectory() as R:
+            run(R, "init", "-q", "-b", "main")
+            run(R, "config", "user.email", "t@example.com")
+            run(R, "config", "user.name", "t")
+            commit(R, {"shared.py": "a\nb\nc\nd\ne\nf\ng\n"})
+            run(R, "checkout", "-q", "-b", "pr")
+            p1 = commit(R, {"feature.py": "f1\n", "shared.py": "A\nb\nc\nd\ne\nf\ng\n"})
+            run(R, "checkout", "-q", "main")
+            up = commit(R, {"upstream.py": "u\n", "shared.py": "a\nb\nc\nd\ne\nf\nG\n"})
+            run(R, "checkout", "-q", "pr")
+            run(R, "merge", "-q", "--no-edit", "main")
+            head = commit(R, {"feature.py": "f1\nf2\n"})
+            s = determine(R, up, head, {"sha": p1, "findings": []})
+        self.assertEqual(s["mode"], "incremental")
+        self.assertEqual({f["path"] for f in s["targets"]}, {"feature.py", "shared.py"})
+        self.assertEqual(s["delta_files"], {"feature.py", "shared.py"})
+        self.assertEqual(s["changed"], {"feature.py": {2}, "shared.py": set()})  # G is upstream
+
+
 class HelpersTest(unittest.TestCase):
     def test_parse_overrides(self):
         got = parse_overrides(["max_chunks=2", "claude_bin=/a/b", "exclude_globs=[\"x\"]"])
