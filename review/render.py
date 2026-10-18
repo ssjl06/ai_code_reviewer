@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import json
-import re
 
 MARKER = "ai-review-state"
 MAX_BODY = 60000
-_MARKER_RE = re.compile(r"<!-- " + MARKER + r" (.*?) -->", re.S)
+_OPEN = "<!-- " + MARKER + " "
 _HEADS = {"APPROVE": "✅ 승인", "REQUEST_CHANGES": "❌ 변경 요청", "COMMENT": "💬 코멘트"}
 _PREV = {"resolved": "✅ 해결", "open": "⏳ 미해결", "unclear": "❔ 불명확"}
 _SEVS = ["critical", "major", "minor", "info"]
@@ -21,14 +20,22 @@ def state_marker(state: dict) -> str:
 def parse_state(body):
     if not body:
         return None
-    found = _MARKER_RE.findall(body)
-    if not found:
+    i = body.rfind(_OPEN)  # the real marker is the footer, always last
+    if i < 0:
+        return None
+    j = body.find(" -->", i)
+    if j < 0:
         return None
     try:
-        state = json.loads(found[-1])
+        state = json.loads(body[i + len(_OPEN):j])
     except ValueError:
         return None
     return state if isinstance(state, dict) else None
+
+
+def _safe(text: str) -> str:
+    """Neutralize HTML comment delimiters in LLM-controlled text."""
+    return text.replace("<!--", "&lt;!--").replace("-->", "--&gt;")
 
 
 def render_inline(f: dict) -> str:
@@ -38,7 +45,7 @@ def render_inline(f: dict) -> str:
     out = head + "\n\n" + f["detail"]
     if f.get("suggestion"):
         out += "\n\n**제안**\n" + f["suggestion"]
-    return out
+    return _safe(out)
 
 
 def _reason(review: dict) -> str:
@@ -97,7 +104,7 @@ def render_body(review: dict, body_only: list, meta: dict, state: dict) -> str:
     mins, secs = divmod(int(round(meta["duration_s"])), 60)
     footer = "<sub>%s · %s chunks · %dm%02ds · %s</sub>\n%s" % (
         meta["model"], meta["chunks"], mins, secs, meta["range"], state_marker(state))
-    parts = [_head(review)] + _sections(review, body_only, meta)
+    parts = [_safe(p) for p in [_head(review)] + _sections(review, body_only, meta)]
     body = "\n\n".join(parts) + "\n\n" + footer
     if len(body) <= MAX_BODY:
         return body
