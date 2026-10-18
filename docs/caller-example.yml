@@ -1,0 +1,13 @@
+# Place in the target repo as .github/workflows/ai-review.yml
+name: ai-review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    uses: your-org/ai-review/.github/workflows/ai-review.yml@v1
+    secrets: inherit
+    # with:
+    #   model: deepseek-v4-flash
+    #   runner_labels: '["self-hosted", "linux"]'
