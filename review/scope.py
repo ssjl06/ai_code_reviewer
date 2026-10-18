@@ -53,13 +53,15 @@ def read_state_file(path: Optional[str]) -> Optional[dict]:
 
 
 def next_state(head: str, review: dict, prev: Optional[dict]) -> dict:
-    """State for the posted review. A run where every chunk failed keeps the previous
-    state (or an empty sha) so that re-running on the same head reviews again."""
-    if review.get("failed_all"):
-        return prev if prev else {"sha": "", "findings": []}
+    """State for the posted review: new findings + carried open/unclear previous ones.
+    If any chunk was not reviewed (failed or incomplete), the previous sha (or "") is kept
+    instead of head, so the next run re-reviews the code those chunks never covered."""
+    sha = head
+    if review.get("failed_all") or review.get("incomplete"):
+        sha = (prev or {}).get("sha") or ""
     keep = [p for p in review.get("previous", []) if p.get("status") in ("open", "unclear")]
-    return {"sha": head, "findings": [{k: f.get(k) for k in STATE_KEYS}
-                                      for f in list(review["findings"]) + keep]}
+    return {"sha": sha, "findings": [{k: f.get(k) for k in STATE_KEYS}
+                                     for f in list(review["findings"]) + keep]}
 
 
 def reviewed_files(chunks: List[dict]) -> List[str]:

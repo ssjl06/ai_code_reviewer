@@ -91,11 +91,19 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual(set(st["findings"][2]), {"id", "file", "line", "title", "severity",
                                                   "blocking"})
 
-    def test_next_state_failed_all_keeps_previous(self):
-        review = {"findings": [], "previous": [], "failed_all": True}
-        prev = {"sha": "old", "findings": [{"id": "p"}]}
-        self.assertEqual(next_state("h", review, prev), prev)
-        self.assertEqual(next_state("h", review, None), {"sha": "", "findings": []})
+    def test_next_state_not_ok_chunk_keeps_previous_sha(self):
+        new = {"id": "n1", "file": "a", "line": 1, "title": "t", "severity": "minor",
+               "blocking": False}
+        carried = dict(new, id="p1", status="open")
+        prev = {"sha": "old", "findings": [carried]}
+        incomplete = {"findings": [new], "previous": [carried], "incomplete": [1],
+                      "failed_all": False}
+        st = next_state("h", incomplete, prev)
+        self.assertEqual(st["sha"], "old")
+        self.assertEqual([f["id"] for f in st["findings"]], ["n1", "p1"])
+        self.assertEqual(next_state("h", incomplete, None)["sha"], "")
+        failed = {"findings": [], "previous": [], "incomplete": [0], "failed_all": True}
+        self.assertEqual(next_state("h", failed, None), {"sha": "", "findings": []})
 
     def test_read_state_file(self):
         self.assertIsNone(read_state_file(None))
