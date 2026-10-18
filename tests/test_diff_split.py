@@ -56,6 +56,8 @@ class DiffSplitTest(unittest.TestCase):
     def test_priority_order(self):
         self.assertEqual([priority(p) for p in
             ["a.cu", "ci.yml", "tests/test_a.py", "README.md", "LICENSE"]], [0, 1, 2, 3, 4])
+        self.assertEqual([priority(p) for p in ["CMakeLists.txt", "src/requirements.txt",
+                                                "docs/CMakeLists.txt", "notes.txt"]], [1, 1, 1, 3])
 
     def test_estimate_tokens(self):
         self.assertEqual(estimate_tokens("x" * 7), 2)

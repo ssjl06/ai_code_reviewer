@@ -8,7 +8,8 @@ import time
 
 _LOCK = threading.Lock()
 _MAX = 120
-_GUARD_MARKERS = ("outside repo", "not allowed", "unparseable command", "guard error", "탐색 예산")
+_GUARD_MARKERS = ("outside repo", "not allowed", "unparseable command", "guard error", "탐색 예산",
+                  "only read-only git")
 
 
 def _trunc(s, n=_MAX):

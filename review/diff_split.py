@@ -13,7 +13,8 @@ SRC_EXT = {".c", ".cc", ".cpp", ".cu", ".cuh", ".h", ".hpp", ".py", ".go", ".rs"
            ".java", ".js", ".ts", ".tsx", ".jsx", ".sh", ".cs", ".kt", ".swift"}
 DOC_EXT = {".md", ".rst", ".txt", ".adoc"}
 BUILD_EXT = {".yml", ".yaml", ".cmake", ".toml", ".gradle", ".mk"}
-BUILD_NAMES = {"makefile", "cmakelists.txt", "dockerfile", "setup.py", "setup.cfg"}
+BUILD_NAMES = {"makefile", "cmakelists.txt", "dockerfile", "setup.py", "setup.cfg",
+               "requirements.txt"}
 
 
 def _unquote(s: str) -> str:
@@ -104,12 +105,14 @@ def priority(path: str) -> int:
     low = path.lower()
     name, ext = os.path.basename(low), os.path.splitext(low)[1]
     parts = low.split("/")[:-1]
+    if name in BUILD_NAMES:  # before doc extensions: CMakeLists.txt is not a doc
+        return 1
     if ext in DOC_EXT or "docs" in parts:
         return 3
     if (set(parts) & {"test", "tests"} or name.startswith("test_")
             or os.path.splitext(name)[0].endswith("_test")):
         return 2
-    if ext in BUILD_EXT or name in BUILD_NAMES or ".github" in parts:
+    if ext in BUILD_EXT or ".github" in parts:
         return 1
     return 0 if ext in SRC_EXT else 4
 

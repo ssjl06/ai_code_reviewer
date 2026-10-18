@@ -84,5 +84,5 @@ def build_env(
         "AI_REVIEW_EXPLORE_BUDGET": str(cfg["explore_budget"]),
         "AI_REVIEW_KIT": KIT_DIR,
     })
-    # TODO(Task 13): the API retry-limit env var name is confirmed there (spec 4.5 item 2); add it then.
+    # The API retry-limit env var is unconfirmed: see docs/runbook.md pending check #2.
     return env

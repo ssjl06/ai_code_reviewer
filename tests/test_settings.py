@@ -16,7 +16,7 @@ class SettingsTest(unittest.TestCase):
             self.assertIn(r, allow)
         for r in ["Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Bash(git push:*)",
                   "Bash(git commit:*)", "Bash(git checkout:*)", "Bash(git reset:*)",
-                  "Bash(git config:*)"]:
+                  "Bash(git config:*)", "Bash(git diff --no-index:*)"]:
             self.assertIn(r, deny)
         self.assertEqual(s["permissions"]["defaultMode"], "dontAsk")
         hook = s["hooks"]["PreToolUse"][0]

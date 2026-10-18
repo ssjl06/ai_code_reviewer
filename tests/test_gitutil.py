@@ -2,6 +2,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 from review.gitutil import GitError, diff_text, git, is_ancestor
 
@@ -47,6 +48,11 @@ class GitUtilTest(unittest.TestCase):
     def test_git_error_raises(self):
         with self.assertRaises(GitError):
             git(self.repo, "show", "no-such-ref")
+
+    def test_timeout_raises_git_error(self):
+        with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["git"], 1)):
+            with self.assertRaises(GitError):
+                git(self.repo, "status")
 
     def test_unicode_path_not_quoted(self):
         self.assertIn("b/한글.txt", diff_text(self.repo, self.c2, self.c3, merge_base=True))

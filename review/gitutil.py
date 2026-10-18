@@ -9,10 +9,13 @@ class GitError(RuntimeError):
 
 
 def git(repo: str, *args: str, timeout: int = 60) -> str:
-    proc = subprocess.run(
-        ["git", "-c", "core.quotepath=false", *args],
-        cwd=repo, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=timeout)
+    try:
+        proc = subprocess.run(
+            ["git", "-c", "core.quotepath=false", *args],
+            cwd=repo, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise GitError("git %s timed out after %ss" % (args[0] if args else "", e.timeout))
     if proc.returncode != 0:
         raise GitError(proc.stderr)
     return proc.stdout

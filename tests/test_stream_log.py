@@ -76,6 +76,13 @@ class StreamLogTest(unittest.TestCase):
         self.assertIn("error: File not found", text)
         self.assertEqual(lg.stats()["denied"], 0)
 
+    def test_read_only_git_message_is_denied(self):
+        lg, out = logger([0, 1, 2])
+        lg.start("x")
+        lg.feed('{"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"git push"}}]}}')
+        lg.feed('{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"only read-only git diff/log allowed","is_error":true}]}}')
+        self.assertEqual(lg.stats()["denied"], 1)
+
     def test_same_message_id_counted_once(self):
         lg, out = logger([0, 4.0, 5.0])
         lg.start("x")
