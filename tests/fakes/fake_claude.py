@@ -1,11 +1,26 @@
 #!/usr/bin/env python3
 """Fake `claude -p`: fake_claude.py [--scenario S] [--resume-scenario S] [--log F] <claude argv...>"""
 import json
+import re
 import sys
 import time
 
 OUT = {"summary": "s", "findings": [{"file": "a.c", "line": 1, "severity": "major",
                                      "confidence": 90, "title": "t"}], "incomplete_reason": None}
+
+BLOCKING = {"file": "src/k.cu", "line": 2, "severity": "major", "confidence": 85,
+            "category": "memory", "title": "배열 범위를 벗어난 접근",
+            "detail": "p[1]은 길이 1 버퍼에서 범위를 벗어난다."}
+
+
+def scenario_output(scn, stdin):
+    if scn == "blocking":
+        return {"summary": "차단 1건", "findings": [BLOCKING], "previous_findings": [],
+                "incomplete_reason": None}
+    ids = re.findall(r'"id": "([^"]+)"', stdin)  # previous findings JSON in the prompt
+    return {"summary": "해결 확인", "findings": [],
+            "previous_findings": [{"id": i, "status": "resolved"} for i in ids],
+            "incomplete_reason": None}
 
 
 def emit(ev):
@@ -39,6 +54,8 @@ def main():
         time.sleep(60)
     elif scn == "ok":
         result(sid, structured_output=OUT)
+    elif scn in ("blocking", "resolved"):
+        result(sid, structured_output=scenario_output(scn, stdin))
     elif scn == "max_turns":
         result(sid, "error_max_turns")
     elif scn == "broken":
