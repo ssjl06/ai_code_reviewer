@@ -93,7 +93,9 @@ class IntegrationTest(unittest.TestCase):
         self.assertEqual(second["event"], "APPROVE")
         self.assertEqual(parse_state(second["body"]), {"sha": C2, "findings": []})
         self.assertIn("✅ 해결", second["body"])
-        self.assertTrue(self.gh.dismissed)
+        self.assertEqual(self.gh.dismissed, [1])
+        order = [r["method"] for r in self.gh.requests if r["method"] in ("POST", "PUT")]
+        self.assertEqual(order, ["POST", "POST", "PUT"])  # new review posted before dismissal
         stdins = "\n".join(c["stdin"] for c in self.fake_calls()[1:])
         self.assertIn("증분 리뷰", stdins)
         self.assertIn('"%s"' % fid, stdins)
@@ -129,6 +131,15 @@ class IntegrationTest(unittest.TestCase):
         self.assertEqual(posted["event"], "COMMENT")
         self.assertIn("AI 리뷰 실패", posted["body"])
         self.assertEqual(parse_state(posted["body"])["sha"], "")  # a retry reviews again
+
+    def test_failed_followup_keeps_change_request(self):
+        self.assertEqual(self.run_main("blocking", "--repo", self.R, "--pr", "1"), 0)
+        self.gh.head = self.add_commit({"src/k.cu": FIXED})
+        self.assertEqual(self.run_main("crash", "--repo", self.R, "--pr", "1"), 1)
+        self.assertEqual(self.gh.posted[-1]["event"], "COMMENT")
+        self.assertEqual(self.gh.dismissed, [])
+        self.assertEqual(self.gh.reviews[0]["state"], "CHANGES_REQUESTED")
+        self.assertEqual(parse_state(self.gh.posted[-1]["body"])["sha"], self.C1)
 
     def test_missing_env_exit_2(self):
         os.environ.pop("AI_REVIEW_BOT_PAT")
