@@ -123,3 +123,12 @@ class RenderTest(unittest.TestCase):
         rows = t.splitlines()
         self.assertIn("| 1 | ok | 3 | 2.0s | 1.5s | 0.2s | 4 | 0 | 100/20 |", rows[2])
         self.assertIn("incomplete (timeout)", rows[3])
+        t = render_step_summary([RESULT(status="failed", error="a|b\nc\r\nd")])
+        self.assertIn("failed (a\\|b c d)", t)
+        self.assertEqual(len(t.splitlines()), 3)
+
+    def test_errors_section(self):
+        b = render_body(REVIEW("COMMENT", incomplete=[1], errors=[[1, "boom <!-- x"]]),
+                        [], META, ST)
+        self.assertIn("### 미완료/실패 원인\n- c2: boom &lt;!-- x", b)
+        self.assertNotIn("미완료/실패 원인", render_body(REVIEW(), [], META, ST))

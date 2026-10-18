@@ -91,6 +91,9 @@ def _sections(review: dict, body_only: list, meta: dict) -> list:
     if review.get("summaries"):
         secs.append("### 조각별 요약\n" + "\n\n".join(
             "- " + s for s in review["summaries"]))
+    if review.get("errors"):
+        secs.append("### 미완료/실패 원인\n" + "\n".join(
+            "- c%d: %s" % (i + 1, e) for i, e in review["errors"]))
     scope = "리뷰 %d files · 생략 %d files" % (len(meta.get("reviewed", [])), len(meta.get("skipped", [])))
     if meta.get("skipped"):
         scope += " (%s)" % ", ".join("`%s`" % p for p in meta["skipped"])
@@ -122,12 +125,16 @@ def render_body(review: dict, body_only: list, meta: dict, state: dict) -> str:
     return "\n\n".join(kept) + _CUT + "\n\n" + footer
 
 
+def _cell(text) -> str:
+    return " ".join(str(text).split()).replace("|", "\\|")
+
+
 def render_step_summary(results: list) -> str:
     rows = ["| chunk | status | turns | wall | LLM | tools | tool calls | denied | tokens in/out |",
             "|---|---|---|---|---|---|---|---|---|"]
     for r in sorted(results, key=lambda x: x["index"]):
         s = r.get("stats") or {}
-        status = r["status"] + (" (%s)" % r["error"] if r.get("error") else "")
+        status = r["status"] + (" (%s)" % _cell(r["error"]) if r.get("error") else "")
         rows.append("| %d | %s | %s | %.1fs | %.1fs | %.1fs | %s | %s | %s/%s |" % (
             r["index"] + 1, status, s.get("turns", 0), s.get("wall_s", 0), s.get("llm_s", 0),
             s.get("tool_s", 0), s.get("tool_calls", 0), s.get("denied", 0),

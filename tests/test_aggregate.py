@@ -130,6 +130,14 @@ class AggregateTest(unittest.TestCase):
         r = run(results, [P()], {}, {"a.cu"})
         self.assertEqual(r["previous"][0]["note"], "n")
 
+    def test_errors_listed_for_non_ok(self):
+        bad = res(1, [], status="failed")
+        bad["error"] = "E" * 300
+        slow = dict(res(2, [], status="incomplete"), error="timeout")
+        r = run([res(0, []), bad, slow])
+        self.assertEqual(r["errors"], [[1, "E" * 200], [2, "timeout"]])
+        self.assertEqual(run([res(0, [])])["errors"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

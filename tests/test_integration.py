@@ -132,6 +132,7 @@ class IntegrationTest(IntegrationBase):
         posted = self.gh.posted[-1]
         self.assertEqual(posted["event"], "COMMENT")
         self.assertIn("AI 리뷰 실패", posted["body"])
+        self.assertIn("### 미완료/실패 원인\n- c1: boom: crashed", posted["body"])
         self.assertEqual(parse_state(posted["body"])["sha"], "")  # a retry reviews again
 
     def test_failed_followup_keeps_change_request(self):

@@ -106,6 +106,8 @@ def merge(results, cfg, previous, changed, delta_files, no_targets):
     findings = [f for f in findings if f["id"] not in prev_ids]
     prev_out = _previous(results, previous, delta_files)
     incomplete = sorted(r["index"] for r in results if r.get("status") != "ok")
+    errors = [[r["index"], str(r.get("error") or r.get("status"))[:200]]
+              for r in sorted(results, key=lambda x: x["index"]) if r.get("status") != "ok"]
     failed_all = bool(results) and all(r.get("status") == "failed" for r in results)
     blocking = any(f["blocking"] for f in findings) or any(
         p.get("blocking") and p["status"] == "open" for p in prev_out)
@@ -117,7 +119,7 @@ def merge(results, cfg, previous, changed, delta_files, no_targets):
         event = "APPROVE"
     findings.sort(key=lambda f: (_sev(f), -f["confidence"], f["file"], f["line"]))
     return {"event": event, "findings": findings, "previous": prev_out,
-            "incomplete": incomplete, "failed_all": failed_all,
+            "incomplete": incomplete, "errors": errors, "failed_all": failed_all,
             "no_targets": no_targets, "summaries": _summaries(results),
             "dropped": dropped}
 
