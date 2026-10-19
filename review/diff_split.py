@@ -117,7 +117,7 @@ def priority(path: str) -> int:
     return 0 if ext in SRC_EXT else 4
 
 
-def _split_hunks(text: str) -> Tuple[str, List[str]]:
+def split_hunks(text: str) -> Tuple[str, List[str]]:
     pieces = re.split(r"(?m)^(?=@@ )", text)
     return pieces[0], pieces[1:]
 
@@ -126,7 +126,7 @@ def _units(f: dict, limit: int) -> List[Tuple[str, str]]:
     text = f["text"] if f["text"].endswith("\n") else f["text"] + "\n"
     if estimate_tokens(text) <= limit:
         return [(f["path"], text)]
-    header, hunks = _split_hunks(text)
+    header, hunks = split_hunks(text)
     out = []
     for h in hunks or [""]:
         unit = header + h
@@ -144,10 +144,14 @@ def _excluded(path: str, globs: List[str]) -> bool:
     return any(fnmatch.fnmatch(path, g) or fnmatch.fnmatch("/" + path, g) for g in globs)
 
 
+def reviewable(f: dict, cfg: dict) -> bool:
+    return (not f["binary"] and f["status"] != "D"
+            and not _excluded(f["path"], cfg["exclude_globs"]))
+
+
 def build_chunks(files: List[dict], cfg: dict) -> Tuple[List[dict], List[str]]:
     limit = cfg["chunk_max_tokens"]
-    targets = [f for f in files if not f["binary"] and f["status"] != "D"
-               and not _excluded(f["path"], cfg["exclude_globs"])]
+    targets = [f for f in files if reviewable(f, cfg)]
     targets.sort(key=lambda f: (priority(f["path"]), os.path.dirname(f["path"]),
                                 os.path.splitext(os.path.basename(f["path"]))[0], f["path"]))
     packed: List[Tuple[List[str], str]] = []

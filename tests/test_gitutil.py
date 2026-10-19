@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from review.gitutil import GitError, diff_text, git, is_ancestor
+from review.gitutil import GitError, diff_text, git, is_ancestor, read_blobs
 
 
 def run(repo, *args):
@@ -35,6 +35,17 @@ class GitUtilTest(unittest.TestCase):
         run(cls.repo, "add", name)
         run(cls.repo, "commit", "-q", "-m", "m")
         return run(cls.repo, "rev-parse", "HEAD")
+
+    def test_read_blobs(self):
+        c = self._commit("bin.txt", "ok\n")
+        with open(os.path.join(self.repo, "bad.txt"), "wb") as f:
+            f.write(b"a\xffb\nlast")
+        run(self.repo, "add", "bad.txt")
+        run(self.repo, "commit", "-q", "-m", "bad")
+        got = read_blobs(self.repo, "HEAD", ["a.txt", "nope.txt", "bad.txt", "한글.txt", "x\ny"])
+        self.assertEqual(got, {"a.txt": ["first", "second"], "bad.txt": ["a\ufffdb", "last"],
+                               "한글.txt": ["x"]})
+        self.assertEqual(read_blobs(self.repo, c, []), {})
 
     def test_diff_text_two_and_three_dot(self):
         self.assertIn("+second", diff_text(self.repo, self.c1, self.c2, merge_base=True))
