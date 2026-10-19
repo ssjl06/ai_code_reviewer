@@ -69,12 +69,22 @@ def _resolve(prev: dict) -> str:
     return "open"
 
 
-def _previous(results: List[dict], previous: List[dict]):
+def _previous(results: List[dict], previous: List[dict], chunk_files=None):
+    """Model reports win over `_resolve`; "resolved" counts only from an ok chunk that holds
+    the file and only when every chunk holding that file is ok (None: chunks hold all files)."""
+    status = {r["index"]: r.get("status") for r in results}
+    holds = lambda i, path: chunk_files is None or path in chunk_files.get(i, ())
+    files = {p["id"]: p["file"] for p in previous}
     reported: Dict[str, Tuple[str, Optional[str]]] = {}
     for r in results:
         if r.get("status") not in OK_STATUSES or not r.get("output"):
             continue
         for p in r["output"].get("previous_findings", []):
+            path = files.get(p["id"], "")
+            if p["status"] == "resolved" and not (r["status"] == "ok" and holds(r["index"], path)
+                                                  and all(st == "ok" for i, st in status.items()
+                                                          if holds(i, path))):
+                continue
             cur = reported.get(p["id"])
             if cur is None or STATUS_RANK[p["status"]] < STATUS_RANK[cur[0]]:
                 reported[p["id"]] = (p["status"], p.get("note"))
@@ -104,7 +114,8 @@ def _summaries(results: List[dict]) -> List[str]:
     return out
 
 
-def merge(results, cfg, previous, changed, no_targets, skipped=None, anchor=None):
+def merge(results, cfg, previous, changed, no_targets, skipped=None, anchor=None,
+          chunk_files: Optional[Dict[int, List[str]]] = None, truncated=None):
     kept, dropped = _collect(results, cfg, changed)
     findings = _dedupe(kept)
     for f in findings:
@@ -116,21 +127,22 @@ def merge(results, cfg, previous, changed, no_targets, skipped=None, anchor=None
         f["needs_check"] = in_block and not f["blocking"]
     prev_ids = {p["id"] for p in previous}
     # previous entries come from previous.relocate, so their "file" is already the renamed path
-    prev_keys = {(p["file"], p["anchor"]) for p in previous if p.get("anchor")}
-    findings = [f for f in findings if f["id"] not in prev_ids
-                and not (f.get("anchor") and (f["file"], f["anchor"]) in prev_keys)]
-    prev_out = _previous(results, previous)
+    prev_keys = {(p["file"], p["anchor"]): p.get("blocking") for p in previous if p.get("anchor")}
+    findings = [f for f in findings if f["id"] not in prev_ids and not (
+        (f["file"], f.get("anchor")) in prev_keys
+        and not (f["blocking"] and not prev_keys[(f["file"], f["anchor"])]))]
+    prev_out = _previous(results, previous, chunk_files)
     incomplete = sorted(r["index"] for r in results if r.get("status") != "ok")
     errors = [[r["index"], str(r.get("error") or r.get("status"))[:200]]
               for r in sorted(results, key=lambda x: x["index"]) if r.get("status") != "ok"]
     failed_all = bool(results) and all(r.get("status") == "failed" for r in results)
-    skipped = list(skipped or [])
+    skipped, truncated = list(skipped or []), list(truncated or [])
     unclear_blocking = any(p.get("blocking") and p["status"] == "unclear" for p in prev_out)
     blocking = any(f["blocking"] for f in findings) or any(
         p.get("blocking") and p["status"] == "open" for p in prev_out)
     if blocking:
         event = "REQUEST_CHANGES"
-    elif no_targets or incomplete or failed_all or skipped or unclear_blocking:
+    elif no_targets or incomplete or failed_all or skipped or truncated or unclear_blocking:
         event = "COMMENT"
     else:
         event = "APPROVE"
@@ -139,7 +151,8 @@ def merge(results, cfg, previous, changed, no_targets, skipped=None, anchor=None
             "incomplete": incomplete, "errors": errors, "failed_all": failed_all,
             "no_targets": no_targets, "summaries": _summaries(results),
             "dropped": dropped, "skipped": skipped, "unclear_blocking": unclear_blocking,
-            "complete": not incomplete and not skipped and not failed_all}
+            "truncated": truncated,
+            "complete": not (incomplete or skipped or truncated or failed_all)}
 
 
 def split_inline(findings, right_lines):

@@ -24,7 +24,7 @@ def run(repo, *args):
 
 def state_for(scope, head, findings=(), complete=True):
     """StateV2 after a review in which every chunk was ok."""
-    chunks, _ = build_chunks(scope["targets"], CFG)
+    chunks, _, _ = build_chunks(scope["targets"], CFG)
     results = [{"index": c["index"], "status": "ok"} for c in chunks]
     prev = [dict(p, status="open") for p in scope["previous"] if p["pre"] != "resolved"]
     review = {"findings": list(findings), "previous": prev, "complete": complete}
@@ -66,7 +66,7 @@ class ScopeTest(unittest.TestCase):
         h = self.branch({"a.py": code("a"), "b.py": code("b")})
         s = determine(self.R, self.BASE, h, None, CFG)
         self.assertEqual((s["mode"], s["range"]), ("full", "%s...%s" % (self.BASE[:7], h[:7])))
-        self.assertIsNone(s["changed"])
+        self.assertEqual(s["changed"], {"a.py": set(range(1, 11)), "b.py": set(range(1, 11))})
         self.assertEqual({f["path"] for f in s["targets"]}, {"a.py", "b.py"})
         self.assertEqual(s["reviewable"], 2)
 

@@ -75,6 +75,18 @@ class RenderTest(unittest.TestCase):
         b = render_body(REVIEW("COMMENT", skipped=["x"]), [], META, ST)
         self.assertIn("생략된 파일 있음 (조각 수 한도)", b)
 
+    def test_reason_blocking_wins_over_failed_all(self):
+        prev = [{"id": "p", "file": "x", "line": 1, "title": "t", "severity": "major",
+                 "blocking": True, "status": "open"}]
+        b = render_body(REVIEW("REQUEST_CHANGES", failed_all=True, previous=prev), [], META, ST)
+        self.assertIn("머지 차단 1건 (critical 0, major 1)", b)
+        self.assertNotIn("AI 리뷰 실패", b)
+
+    def test_reason_and_scope_truncated(self):
+        b = render_body(REVIEW("COMMENT", truncated=["big.py"]), [], META, ST)
+        self.assertIn("잘린 변경 있음 (조각 크기 한도)", b)
+        self.assertIn("잘림 1 files (`big.py`)", b)
+
     def test_body_no_targets_reason(self):
         self.assertIn("리뷰 대상 변경 없음", render_body(REVIEW(no_targets=True), [], META, ST))
 

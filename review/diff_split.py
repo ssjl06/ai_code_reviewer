@@ -140,23 +140,23 @@ def _units(f: dict, limit: int) -> List[Tuple[str, str]]:
     return out
 
 
-def _excluded(path: str, globs: List[str]) -> bool:
-    return any(fnmatch.fnmatch(path, g) or fnmatch.fnmatch("/" + path, g) for g in globs)
-
-
 def reviewable(f: dict, cfg: dict) -> bool:
-    return (not f["binary"] and f["status"] != "D"
-            and not _excluded(f["path"], cfg["exclude_globs"]))
+    return not f["binary"] and f["status"] != "D" and not any(
+        fnmatch.fnmatch(f["path"], g) or fnmatch.fnmatch("/" + f["path"], g)
+        for g in cfg["exclude_globs"])
 
 
-def build_chunks(files: List[dict], cfg: dict) -> Tuple[List[dict], List[str]]:
+def build_chunks(files: List[dict], cfg: dict) -> Tuple[List[dict], List[str], List[str]]:
+    """(chunks, skipped paths, truncated paths: cut as a last resort -> review incomplete)."""
     limit = cfg["chunk_max_tokens"]
     targets = [f for f in files if reviewable(f, cfg)]
     targets.sort(key=lambda f: (priority(f["path"]), os.path.dirname(f["path"]),
                                 os.path.splitext(os.path.basename(f["path"]))[0], f["path"]))
     packed: List[Tuple[List[str], str]] = []
+    truncated: List[str] = []
     for f in targets:
         for path, unit in _units(f, limit):
+            truncated += [path] if MARKER in unit and path not in truncated else []
             if packed and estimate_tokens(packed[-1][1] + unit) <= limit:
                 if path not in packed[-1][0]:
                     packed[-1][0].append(path)
@@ -169,7 +169,7 @@ def build_chunks(files: List[dict], cfg: dict) -> Tuple[List[dict], List[str]]:
         skipped.extend(p for p in paths if p not in skipped)
     chunks = [{"index": i, "files": p, "diff": d, "est_tokens": estimate_tokens(d)}
               for i, (p, d) in enumerate(keep)]
-    return chunks, skipped
+    return chunks, skipped, truncated
 
 
 def line_map(files: List[dict], key: str) -> Dict[str, Set[int]]:

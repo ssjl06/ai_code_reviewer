@@ -96,7 +96,7 @@ class UpdateSeenTest(unittest.TestCase):
         text = ("diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n" + body(2) + body(55))
         f = parse_unified_diff(text)[0]
         cfg = {"chunk_max_tokens": 30, "max_chunks": 5, "exclude_globs": []}
-        chunks, skipped = build_chunks([f], cfg)
+        chunks, skipped, _ = build_chunks([f], cfg)
         self.assertEqual((len(chunks), skipped), (2, []))
         joined = "".join(c["diff"] for c in chunks)  # two units, header repeated
         self.assertEqual(joined.count("diff --git"), 2)

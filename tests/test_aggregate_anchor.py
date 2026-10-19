@@ -30,7 +30,7 @@ class AnchorMergeTest(unittest.TestCase):
 
     def test_rereport_same_anchor_other_title_dropped(self):
         r = run([res(0, [F(title="other")])],
-                [P(anchor="aaaa0000", pre="ask", located=True)],
+                [P(anchor="aaaa0000", pre="ask", located=True, blocking=True)],
                 anchor=lambda p, l: "aaaa0000")
         self.assertEqual(r["findings"], [])
 

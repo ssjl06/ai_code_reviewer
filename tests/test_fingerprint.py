@@ -79,6 +79,15 @@ class FingerprintTest(unittest.TestCase):
         self.assertEqual(seen, {"a": Counter({b"abcd": 1})})
         self.assertEqual(files, {"f": b"abcd"})
 
+    def test_golden_wire_format(self):
+        """Stored states depend on these exact bytes; never change them silently."""
+        self.assertEqual(fp_line(["a", "b", "c"], 2), bytes.fromhex("2074e277"))  # sha1("a\nb\nc")
+        self.assertEqual(fp_removed(["a", "b"], 3, "x"),
+                         bytes.fromhex("62d760fd"))  # sha1("-\nb\nx\n"), at EOF
+        c = Counter([b"\x05\x06\x07\x08", b"\x01\x02\x03\x04"])
+        self.assertEqual(whole_hash(c), bytes.fromhex("dd5783bc"))  # sha1(sorted, joined)
+        self.assertEqual(pack(c), "AQIDBAUGBwg=")
+
 
 if __name__ == "__main__":
     unittest.main()

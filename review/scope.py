@@ -6,13 +6,14 @@ import os
 from collections import Counter
 from typing import Any, Dict, List, Optional, Set
 
-from review.diff_split import parse_unified_diff, reviewable
+from review.diff_split import line_map, parse_unified_diff, reviewable
 from review.fingerprint import decode_seen, encode_seen, whole_hash
 from review.gitutil import diff_text, read_blobs
-from review.hunks import select_file
+from review.hunks import near_hunks, select_file
 from review.previous import relocate
 from review.render import render_step_summary
 from review.seen import update_seen
+from review.state_fit import fit_state
 from review.validate import normalize_state
 
 STATE_KEYS = ("id", "file", "line", "anchor", "title", "severity", "blocking")
@@ -44,12 +45,14 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
     findings = (prev or {}).get("findings") or []
     blobs = read_blobs(repo, head, _blob_paths(rev, findings, pr_paths, renames))
     seen, whole = decode_seen(prev)
+    limit = int(cfg["chunk_max_tokens"] * 3.5)
     targets: List[dict] = []
     for f in rev:
         path, old = f["path"], f["old_path"]
         s = seen.get(path) or seen.get(old) or Counter()
         w = whole.get(path) or whole.get(old)
-        sel = select_file(f, blobs.get(path, []), None if prev is None else s, w)
+        sel = select_file(f, blobs.get(path, []), None if prev is None else s, w,
+                          limit_chars=limit)
         out["head_prints"][path] = sel["head"]
         out["prev_seen"][path] = sel["head"] if w is not None and w == whole_hash(
             sel["head"]) else s
@@ -58,6 +61,9 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
             out["added"][path], out["deleted"][path] = sel["added"], sel["deleted"]
     tpaths = {t["path"] for t in targets}
     previous = relocate(findings, pr_paths, blobs, tpaths, renames)
+    changed = line_map(targets, "right_lines") if prev is None else {
+        p: out["added"][p] | out["deleted"][p] for p in tpaths}
+    targets += _recheck(previous, rev, tpaths, limit)
     if prev is None:
         mode = "full"
     elif not targets and not any(p["pre"] == "resolved" for p in previous):
@@ -65,8 +71,24 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
     else:
         mode = "incremental"
     out.update(mode=mode, targets=targets, reviewable=len(rev), blobs=blobs, previous=previous,
-               changed=None if prev is None else {p: out["added"][p] | out["deleted"][p]
-                                                  for p in tpaths})
+               changed=changed)
+    return out
+
+
+def _recheck(previous: List[dict], rev: List[dict], tpaths: Set[str], limit: int) -> List[dict]:
+    """A lost previous finding in a PR file without new lines: the hunks nearest its old
+    line become targets (none of their lines is in `changed`) and the model is asked."""
+    lost: Dict[str, List[dict]] = {}
+    for p in previous:
+        if p["pre"] == "open" and not p["located"] and p["file"] not in tpaths:
+            lost.setdefault(p["file"], []).append(p)
+    out = []
+    for f in rev:
+        t = near_hunks(f, [p.get("line") or 0 for p in lost.get(f["path"], [])], limit)
+        if t is not None:
+            out.append(t)
+            for p in lost[f["path"]]:
+                p["pre"] = "ask"
     return out
 
 
@@ -101,8 +123,8 @@ def next_state(head: str, review: dict, scope: dict, chunks: List[dict],
     keep = [p for p in review.get("previous", []) if p.get("status") in ("open", "unclear")]
     findings = [dict({k: f.get(k) for k in STATE_KEYS}, anchor=f.get("anchor") or "")
                 for f in list(review["findings"]) + keep]
-    return {"v": 2, "sha": head, "complete": bool(review["complete"]), "seen": seen,
-            "seen_files": seen_files, "findings": findings}
+    return fit_state({"v": 2, "sha": head, "complete": bool(review["complete"]), "seen": seen,
+                      "seen_files": seen_files, "findings": findings})
 
 
 def reviewed_files(chunks: List[dict]) -> List[str]:

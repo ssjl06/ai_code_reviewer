@@ -49,8 +49,6 @@ def render_inline(f: dict) -> str:
 
 
 def _reason(review: dict) -> str:
-    if review.get("failed_all"):
-        return "AI 리뷰 실패"
     if review["event"] == "REQUEST_CHANGES":
         prev = [p for p in review.get("previous", [])
                 if p.get("blocking") and p.get("status") == "open"]
@@ -58,6 +56,8 @@ def _reason(review: dict) -> str:
         cnt = {s: sum(1 for f in blocking if f["severity"] == s) for s in ("critical", "major")}
         text = "머지 차단 %d건 (critical %d, major %d)" % (len(blocking), cnt["critical"], cnt["major"])
         return text + (" · 이전 미해결 %d건 포함" % len(prev) if prev else "")
+    if review.get("failed_all"):
+        return "AI 리뷰 실패"
     if review.get("no_targets"):
         return "리뷰 대상 변경 없음"
     if review.get("unclear_blocking"):
@@ -66,6 +66,8 @@ def _reason(review: dict) -> str:
         return "리뷰 미완료 조각 있음"
     if review.get("skipped"):
         return "생략된 파일 있음 (조각 수 한도)"
+    if review.get("truncated"):
+        return "잘린 변경 있음 (조각 크기 한도)"
     return "차단 사유 없음"
 
 
@@ -101,6 +103,9 @@ def _sections(review: dict, body_only: list, meta: dict) -> list:
     scope = "리뷰 %d files · 생략 %d files" % (len(meta.get("reviewed", [])), len(meta.get("skipped", [])))
     if meta.get("skipped"):
         scope += " (%s)" % ", ".join("`%s`" % p for p in meta["skipped"])
+    if review.get("truncated"):
+        scope += " · 잘림 %d files (%s)" % (len(review["truncated"]), ", ".join(
+            "`%s`" % p for p in review["truncated"]))
     if review.get("incomplete"):
         scope += " · 미완료 조각 " + ", ".join(str(i + 1) for i in review["incomplete"])
     secs.append("### 리뷰 범위\n" + scope)
