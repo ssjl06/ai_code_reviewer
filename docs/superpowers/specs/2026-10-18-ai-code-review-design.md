@@ -262,6 +262,11 @@ Hidden in the bot review body; the latest bot review with a parsable marker
   Over the cap, the largest files move to `seen_files`: one hash of all of the
   file's added- and removed-line fingerprints. Such a file is reviewed again in full when any
   of its added lines changes.
+- The whole marker is budgeted at 40,000 characters. Over it, in order: the largest
+  files move from `seen` to `seen_files` (measured on the serialized marker, path
+  keys included); then `seen` and `seen_files` are dropped entirely (the next run
+  reviews everything again); then non-blocking findings are dropped, oldest first.
+  Blocking findings are never dropped.
 - `seen` and `seen_files` only keep paths that are still in the PR diff.
 - `complete` is true only when the run reviewed everything in scope (6.5).
   `sha` is used only for the "same commit, nothing to do" shortcut, and only when
@@ -283,6 +288,12 @@ Hidden in the bot review body; the latest bot review with a parsable marker
 3. Review targets = hunks of `pr_files` that contain at least one new added or
    removed line. A hunk mixing new and seen lines is sent whole, for context.
    With no previous state every hunk is a target, including deletion-only hunks.
+   Before selection, a hunk longer than the chunk size (chars = tokens x 3.5,
+   minus the file header and 200) is split into consecutive valid sub-hunks with
+   recomputed `@@` headers; only sub-hunks with new lines are kept, so reviewed
+   parts are not sent again. Truncation (`[truncated by ai-review]`) remains only
+   for a single line longer than a chunk; a truncated file makes the run
+   incomplete like a skipped file (6.5).
 4. `changed` = per file, the new added lines plus the anchor lines of new
    removed lines. New findings are accepted only on these lines (enforced in
    `aggregate.py`). With no previous state, every right-side line of the reviewed
@@ -319,10 +330,14 @@ Hidden in the bot review body; the latest bot review with a parsable marker
 | File no longer in the PR diff | `resolved` (note: 파일이 PR에서 빠짐) |
 | Anchor found at head, file has no new lines | `open`, line updated, no LLM call |
 | Anchor found at head, file has new lines | sent to the model; unreported -> `open` |
-| Anchor not found (line changed or removed) | sent to the model with its title and old line; unreported -> `unclear` |
+| Anchor not found (line changed or removed) | sent to the model with its title and old line; unreported -> `unclear`. If the file has no new lines, the hunk nearest the old line is sent (no new findings accepted on it) |
 
+- A model-reported `resolved` counts only from an `ok` chunk containing the file,
+  and only when every chunk containing that file is `ok`; `open`/`unclear` are
+  accepted from `ok` and `partial` chunks. Otherwise the table above applies.
 - A new finding whose anchor equals the anchor of a previous finding in the same
-  file is treated as a re-report and dropped, whatever its title.
+  file is treated as a re-report and dropped, whatever its title, unless it is
+  blocking and the previous one was not.
 
 ### 6.5 Failures and Caps
 
@@ -333,7 +348,7 @@ Hidden in the bot review body; the latest bot review with a parsable marker
   inside `ok` chunks (plus still-matching previous entries); it gains only the lines of `ok` chunks. Lines of `partial`,
   `incomplete` and `failed` chunks, and of files skipped by `max_chunks`, stay new
   and are reviewed on the next run (re-reports are dropped by anchor, 6.4).
-- `complete` = every chunk `ok` and no file skipped by `max_chunks`. When it is
+- `complete` = every chunk `ok`, no file skipped by `max_chunks` and no file truncated. When it is
   false the verdict cannot be APPROVE (section 8).
 - First review: instructions demand reporting all issues at once. LiteLLM sets
   `temperature: 0` for the model to reduce run-to-run drift.
@@ -420,7 +435,7 @@ Hidden in the bot review body; the latest bot review with a parsable marker
 | Any new blocking finding, or a previous blocking finding still `open` | REQUEST_CHANGES | success |
 | All chunks complete, nothing blocking | APPROVE (dismiss previous bot REQUEST_CHANGES) | success |
 | A previous blocking finding is `unclear`, nothing else blocking | COMMENT "이전 차단 지적 확인 필요" | success |
-| Some chunk `partial`/`incomplete`/timed out, or files skipped by `max_chunks`, nothing blocking | COMMENT, listing unreviewed files and reasons | success |
+| Some chunk `partial`/`incomplete`/timed out, or files skipped by `max_chunks` or truncated, nothing blocking | COMMENT, listing unreviewed files and reasons | success |
 | All chunks failed | COMMENT "AI 리뷰 실패" with cause | failure |
 | Posting failed | retry once with all inline comments moved to the body | failure if retry fails |
 
