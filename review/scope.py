@@ -58,10 +58,10 @@ def read_state_file(path: Optional[str]) -> Optional[dict]:
 
 def next_state(head: str, review: dict, prev: Optional[dict]) -> dict:
     """State for the posted review: new findings + carried open/unclear previous ones.
-    If any chunk was not reviewed (failed or incomplete), the previous sha (or "") is kept
-    instead of head, so the next run re-reviews the code those chunks never covered."""
+    If the review is not complete (failed, partial or skipped), the previous sha (or "") is
+    kept instead of head, so the next run re-reviews the code that was never covered."""
     sha = head
-    if review.get("failed_all") or review.get("incomplete"):
+    if not review["complete"]:
         sha = (prev or {}).get("sha") or ""
     keep = [p for p in review.get("previous", []) if p.get("status") in ("open", "unclear")]
     return {"sha": sha, "findings": [{k: f.get(k) for k in STATE_KEYS}

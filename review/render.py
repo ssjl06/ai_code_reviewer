@@ -60,8 +60,12 @@ def _reason(review: dict) -> str:
         return text + (" · 이전 미해결 %d건 포함" % len(prev) if prev else "")
     if review.get("no_targets"):
         return "리뷰 대상 변경 없음"
+    if review.get("unclear_blocking"):
+        return "이전 차단 지적 확인 필요"
     if review.get("incomplete"):
         return "리뷰 미완료 조각 있음"
+    if review.get("skipped"):
+        return "생략된 파일 있음 (조각 수 한도)"
     return "차단 사유 없음"
 
 

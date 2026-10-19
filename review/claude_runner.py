@@ -83,6 +83,13 @@ def _empty_stats() -> Dict[str, Any]:
     return StreamLogger("-", out=sys.stdout).stats()
 
 
+def _finish(idx, out, stats, sid, error):
+    reason = out.get("incomplete_reason")
+    if reason:
+        return _result(idx, "partial", out, stats, sid, "미완료 사유: " + str(reason)[:200])
+    return _result(idx, "ok", out, stats, sid, error)
+
+
 def run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadline=None):
     idx, t0 = chunk["index"], time.monotonic()
     cdir = os.path.join(paths["work"], "chunk-%d" % (idx + 1))
@@ -107,7 +114,7 @@ def run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadli
     st, out, sid, stats, info = attempt(build_command(cfg, paths["agents_file"]), prompt, limit)
     error = "timeout" if st == "timeout" else None
     if out:
-        return _result(idx, "ok", out, stats, sid, error)
+        return _finish(idx, out, stats, sid, error)
     if not sid:
         msg = error or info["stderr"] or "no output (exit %s)" % info["rc"]
         return _result(idx, "failed", None, stats, None, msg)
@@ -119,7 +126,7 @@ def run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadli
     st2, out, _, stats2, _ = attempt(build_command(cfg, paths["agents_file"], sid),
                                      FALLBACK_PROMPT, limit)
     if out:
-        return _result(idx, "ok", out, stats2, sid, error)
+        return _finish(idx, out, stats2, sid, error)
     return _result(idx, "incomplete", None, stats2, sid, error or "no structured output")
 
 

@@ -105,7 +105,8 @@ class HelpersTest(unittest.TestCase):
                "blocking": True, "confidence": 90, "detail": "d"}
         prev = [dict(new, id="p1", status="open"), dict(new, id="p2", status="resolved"),
                 dict(new, id="p3", status="unclear", note="x")]
-        review = {"findings": [new], "previous": prev, "failed_all": False}
+        review = {"findings": [new], "previous": prev, "failed_all": False,
+                  "complete": True}
         st = next_state("h", review, None)
         self.assertEqual(st["sha"], "h")
         self.assertEqual([f["id"] for f in st["findings"]], ["n1", "p1", "p3"])
@@ -118,13 +119,18 @@ class HelpersTest(unittest.TestCase):
         carried = dict(new, id="p1", status="open")
         prev = {"sha": "old", "findings": [carried]}
         incomplete = {"findings": [new], "previous": [carried], "incomplete": [1],
-                      "failed_all": False}
+                      "failed_all": False, "complete": False}
         st = next_state("h", incomplete, prev)
         self.assertEqual(st["sha"], "old")
         self.assertEqual([f["id"] for f in st["findings"]], ["n1", "p1"])
         self.assertEqual(next_state("h", incomplete, None)["sha"], "")
-        failed = {"findings": [], "previous": [], "incomplete": [0], "failed_all": True}
+        failed = {"findings": [], "previous": [], "incomplete": [0], "failed_all": True,
+                  "complete": False}
         self.assertEqual(next_state("h", failed, None), {"sha": "", "findings": []})
+
+    def test_next_state_keeps_prev_sha_when_skipped(self):
+        review = {"findings": [], "previous": [], "complete": False, "skipped": ["x"]}
+        self.assertEqual(next_state("h", review, {"sha": "p", "findings": []})["sha"], "p")
 
     def test_read_state_file(self):
         self.assertIsNone(read_state_file(None))

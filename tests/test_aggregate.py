@@ -26,8 +26,8 @@ def res(i, findings, status="ok", prev=(), summary="s", reason=None):
             "session_id": None, "error": None}
 
 
-def run(results, prev=(), changed=None, delta=None, no_targets=False):
-    return merge(results, CFG, list(prev), changed, delta, no_targets)
+def run(results, prev=(), changed=None, delta=None, no_targets=False, skipped=None):
+    return merge(results, CFG, list(prev), changed, delta, no_targets, skipped=skipped)
 
 
 class AggregateTest(unittest.TestCase):
@@ -77,11 +77,29 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual(r["previous"][0]["status"], "open")
         self.assertEqual(r["event"], "REQUEST_CHANGES")
 
-    def test_previous_unreported_touched_is_unclear_not_blocking(self):
+    def test_partial_keeps_findings_but_blocks_approve(self):
+        r = run([res(0, [F(sev="minor")], status="partial", reason="x")])
+        self.assertEqual((len(r["findings"]), r["event"], r["complete"]), (1, "COMMENT", False))
+
+    def test_partial_blocking_finding_requests_changes(self):
+        r = run([res(0, [F()], status="partial", reason="x")])
+        self.assertEqual(r["event"], "REQUEST_CHANGES")
+
+    def test_skipped_files_block_approve(self):
+        r = run([res(0, [])], skipped=["big.cu"])
+        self.assertEqual((r["event"], r["skipped"], r["complete"]), ("COMMENT", ["big.cu"], False))
+
+    def test_previous_unreported_touched_is_unclear_and_blocks_approve(self):
         r = run([res(0, [])], [P(blocking=True)], {}, {"a.cu"})
-        self.assertEqual(r["previous"][0]["status"], "unclear")
+        self.assertEqual((r["previous"][0]["status"], r["event"]), ("unclear", "COMMENT"))
+        self.assertTrue(r["unclear_blocking"])
+
+    def test_unclear_nonblocking_previous_still_approves(self):
+        r = run([res(0, [])], [P(blocking=False)], {}, {"a.cu"})
         self.assertEqual(r["event"], "APPROVE")
 
+    def test_complete_when_all_ok(self):
+        self.assertTrue(run([res(0, [])])["complete"])
     def test_previous_resolved_approves(self):
         r = run([res(0, [], prev=[("f1", "resolved")])], [P(blocking=True)], {}, {"a.cu"})
         self.assertEqual((r["previous"][0]["status"], r["event"]), ("resolved", "APPROVE"))

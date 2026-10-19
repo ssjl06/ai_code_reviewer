@@ -112,7 +112,7 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, prev, 
                  "agents_file": write_agents_file(AGENT_MD, out_dir)}
         results = run_all(chunks, prompts, cfg, paths, env, deadline)
     review = merge(results, cfg, previous, scope["changed"], scope["delta_files"],
-                   no_targets=not chunks)
+                   no_targets=not chunks, skipped=skipped)
     inline, body_only = split_inline(review["findings"],
                                      line_map(scope["pr_files"], "right_lines"))
     state = sc.next_state(head, review, prev)

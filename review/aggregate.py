@@ -6,6 +6,7 @@ import re
 from typing import Dict, List, Optional, Set, Tuple
 
 SEV_RANK = {"critical": 0, "major": 1, "minor": 2, "info": 3}
+OK_STATUSES = ("ok", "partial")
 STATUS_RANK = {"open": 0, "unclear": 1, "resolved": 2}
 _PREFIX = re.compile(r"^(?:\./|a/|b/|/)")
 
@@ -30,7 +31,7 @@ def _strength(f: dict) -> Tuple[int, int]:
 def _collect(results: List[dict], cfg: dict, changed: Optional[Dict[str, Set[int]]]):
     kept, dropped = [], 0
     for r in results:
-        if r.get("status") != "ok" or not r.get("output"):
+        if r.get("status") not in OK_STATUSES or not r.get("output"):
             continue
         for raw in r["output"].get("findings", []):
             f = dict(raw)
@@ -61,7 +62,7 @@ def _dedupe(findings: List[dict]) -> List[dict]:
 def _previous(results: List[dict], previous: List[dict], delta_files: Optional[Set[str]]):
     reported: Dict[str, Tuple[str, Optional[str]]] = {}
     for r in results:
-        if r.get("status") != "ok" or not r.get("output"):
+        if r.get("status") not in OK_STATUSES or not r.get("output"):
             continue
         for p in r["output"].get("previous_findings", []):
             cur = reported.get(p["id"])
@@ -84,7 +85,7 @@ def _previous(results: List[dict], previous: List[dict], delta_files: Optional[S
 def _summaries(results: List[dict]) -> List[str]:
     out = []
     for r in sorted(results, key=lambda x: x["index"]):
-        if r.get("status") != "ok" or not r.get("output"):
+        if r.get("status") not in OK_STATUSES or not r.get("output"):
             continue
         o = r["output"]
         line = "[c%d] %s" % (r["index"] + 1, o.get("summary", ""))
@@ -94,7 +95,7 @@ def _summaries(results: List[dict]) -> List[str]:
     return out
 
 
-def merge(results, cfg, previous, changed, delta_files, no_targets):
+def merge(results, cfg, previous, changed, delta_files, no_targets, skipped=None):
     kept, dropped = _collect(results, cfg, changed)
     findings = _dedupe(kept)
     for f in findings:
@@ -109,11 +110,13 @@ def merge(results, cfg, previous, changed, delta_files, no_targets):
     errors = [[r["index"], str(r.get("error") or r.get("status"))[:200]]
               for r in sorted(results, key=lambda x: x["index"]) if r.get("status") != "ok"]
     failed_all = bool(results) and all(r.get("status") == "failed" for r in results)
+    skipped = list(skipped or [])
+    unclear_blocking = any(p.get("blocking") and p["status"] == "unclear" for p in prev_out)
     blocking = any(f["blocking"] for f in findings) or any(
         p.get("blocking") and p["status"] == "open" for p in prev_out)
     if blocking:
         event = "REQUEST_CHANGES"
-    elif no_targets or incomplete or failed_all:
+    elif no_targets or incomplete or failed_all or skipped or unclear_blocking:
         event = "COMMENT"
     else:
         event = "APPROVE"
@@ -121,7 +124,8 @@ def merge(results, cfg, previous, changed, delta_files, no_targets):
     return {"event": event, "findings": findings, "previous": prev_out,
             "incomplete": incomplete, "errors": errors, "failed_all": failed_all,
             "no_targets": no_targets, "summaries": _summaries(results),
-            "dropped": dropped}
+            "dropped": dropped, "skipped": skipped, "unclear_blocking": unclear_blocking,
+            "complete": not incomplete and not skipped and not failed_all}
 
 
 def split_inline(findings, right_lines):

@@ -107,6 +107,16 @@ class IntegrationTest(IntegrationBase):
         self.assertEqual(len(self.gh.posted), 2)
         self.assertIn("이미 리뷰한 커밋", self.stdout)
 
+    def test_skipped_files_comment_not_approve(self):
+        self.gh.head = self.add_commit({"src/z.py": "z = 1\n" * 40})
+        rc = self.run_main("silent", "--repo", self.R, "--pr", "1",
+                           "--set", "max_chunks=1", "--set", "chunk_max_tokens=60")
+        self.assertEqual(rc, 0)
+        posted = self.gh.posted[-1]
+        self.assertEqual(posted["event"], "COMMENT")
+        self.assertIn("생략된 파일 있음 (조각 수 한도)", posted["body"])
+        self.assertEqual(self.gh.dismissed, [])
+
     def test_dry_run_posts_nothing(self):
         out_dir = os.path.join(self.tmp, "dry")
         rc = self.run_main("blocking", "--repo", self.R, "--dry-run", "--base", self.BASE,

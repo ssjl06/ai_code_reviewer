@@ -41,6 +41,12 @@ class RunnerTest(unittest.TestCase):
         with open(self.log, encoding="utf-8") as f:
             return [json.loads(x) for x in f]
 
+    def test_incomplete_reason_is_partial(self):
+        r = self.run_scn("partial")
+        self.assertEqual(r["status"], "partial")
+        self.assertEqual(r["error"], "미완료 사유: 탐색 예산 부족")
+        self.assertEqual(len(r["output"]["findings"]), 1)  # findings kept
+
     def test_ok(self):
         r = self.run_scn("ok")
         self.assertEqual((r["status"], r["session_id"]), ("ok", "sess-fake"))

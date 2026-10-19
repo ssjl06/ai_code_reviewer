@@ -67,6 +67,14 @@ class RenderTest(unittest.TestCase):
         self.assertIn("리뷰 미완료 조각 있음", render_body(REVIEW(incomplete=[1]), [], META, ST))
         self.assertIn("차단 사유 없음", render_body(REVIEW(), [], META, ST))
 
+    def test_reason_unclear_blocking(self):
+        b = render_body(REVIEW("COMMENT", unclear_blocking=True), [], META, ST)
+        self.assertIn("이전 차단 지적 확인 필요", b)
+
+    def test_reason_skipped(self):
+        b = render_body(REVIEW("COMMENT", skipped=["x"]), [], META, ST)
+        self.assertIn("생략된 파일 있음 (조각 수 한도)", b)
+
     def test_body_no_targets_reason(self):
         self.assertIn("리뷰 대상 변경 없음", render_body(REVIEW(no_targets=True), [], META, ST))
 
