@@ -1,0 +1,19 @@
+# LiteLLM proxy config for the ai-review kit (example; adapt names and hosts).
+#
+# vLLM requirements (start the vLLM server with):
+#   --enable-auto-tool-choice          required: the reviewer relies on tool calls
+#   --tool-call-parser <parser>        must match the served model family (e.g. hermes, deepseek_v3);
+#                                      a wrong parser makes tool calls arrive as plain text
+#   --max-model-len <N>                ~128k is assumed by the kit (chunk_max_tokens 20000); verify
+#                                      with: curl http://<vllm-host>:8000/v1/models
+#   --served-model-name <name>         use the same name below
+model_list:
+  - model_name: deepseek-v4-flash          # name the kit sends (AI_REVIEW_MODEL / config "model")
+    litellm_params:
+      model: hosted_vllm/<served-model-name>
+      api_base: http://<vllm-host>:8000/v1
+      temperature: 0
+      drop_params: true                    # drop Anthropic-only params vLLM rejects
+
+litellm_settings:
+  drop_params: true

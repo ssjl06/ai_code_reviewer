@@ -1,0 +1,4 @@
+{"type": "system", "subtype": "init", "session_id": "sess-den", "model": "deepseek-v4-flash"}
+{"type": "assistant", "message": {"id": "msg_1", "role": "assistant", "content": [{"type": "tool_use", "id": "toolu_1", "name": "Read", "input": {"file_path": "/etc/hosts"}}], "usage": {"input_tokens": 5000, "output_tokens": 40}}, "session_id": "sess-den"}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "path outside repo: /etc/hosts", "is_error": true}]}}
+{"type": "result", "subtype": "error_max_turns", "is_error": false, "num_turns": 10, "duration_ms": 9000, "duration_api_ms": 8000, "session_id": "sess-den"}

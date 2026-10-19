@@ -1,0 +1,57 @@
+diff --git a/src/k.cu b/src/k.cu
+index 1111111..2222222 100644
+--- a/src/k.cu
++++ b/src/k.cu
+@@ -8,5 +8,7 @@ void run() {
+ int a = 1;
+ int b = 2;
+ int c = 3;
++int d = 4;
++int e = 5;
+ int f = 6;
+ int g = 7;
+@@ -36,4 +38,5 @@ void stop() {
+ x = 1;
+ y = 2;
++z = 3;
+ w = 4;
+ v = 5;
+diff --git a/docs/a.md b/docs/a.md
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/docs/a.md
+@@ -0,0 +1,2 @@
++# Title
++text
+diff --git a/old.py b/old.py
+deleted file mode 100644
+index 4444444..0000000
+--- a/old.py
++++ /dev/null
+@@ -1,2 +0,0 @@
+-print(1)
+-print(2)
+diff --git a/img.png b/img.png
+new file mode 100644
+index 0000000..5555555
+Binary files /dev/null and b/img.png differ
+diff --git a/x.h b/y.h
+similarity index 90%
+rename from x.h
+rename to y.h
+index 6666666..7777777 100644
+--- a/x.h
++++ b/y.h
+@@ -1,3 +1,3 @@
+ #pragma once
+-int old;
++int renamed;
+ int keep;
+diff --git a/vendor/z.c b/vendor/z.c
+index 8888888..9999999 100644
+--- a/vendor/z.c
++++ b/vendor/z.c
+@@ -1 +1 @@
+-a
++b

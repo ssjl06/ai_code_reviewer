@@ -1,0 +1,26 @@
+{
+  "model": "deepseek-v4-flash",
+  "claude_bin": "claude",
+  "chunk_max_tokens": 20000,
+  "max_chunks": 6,
+  "concurrency": 3,
+  "max_turns": 10,
+  "explore_budget": 6,
+  "llm_timeout_ms": 180000,
+  "bash_timeout_ms": 60000,
+  "chunk_timeout_s": 480,
+  "fallback_timeout_s": 120,
+  "deadline_s": 1200,
+  "block_severities": ["critical", "major"],
+  "block_confidence": 80,
+  "min_confidence": 50,
+  "exclude_globs": [
+    "vendor/**",
+    "third_party/**",
+    "**/*.lock",
+    "**/package-lock.json",
+    "**/*.min.js",
+    "**/*.pb.go",
+    "**/*_pb2.py"
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ai-review chunk output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "findings", "previous_findings", "incomplete_reason"],
+  "properties": {
+    "summary": {"type": "string", "maxLength": 600},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "line", "severity", "confidence", "category", "title", "detail"],
+        "properties": {
+          "file": {"type": "string"},
+          "line": {"type": "integer", "minimum": 1},
+          "end_line": {"type": "integer", "minimum": 1},
+          "severity": {"type": "string", "enum": ["critical", "major", "minor", "info"]},
+          "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+          "category": {"type": "string", "enum": ["bug", "security", "concurrency", "memory",
+                       "performance", "api-misuse", "maintainability", "docs"]},
+          "title": {"type": "string", "maxLength": 80},
+          "detail": {"type": "string"},
+          "suggestion": {"type": "string"}
+        }
+      }
+    },
+    "previous_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status"],
+        "properties": {
+          "id": {"type": "string"},
+          "status": {"type": "string", "enum": ["resolved", "open", "unclear"]},
+          "note": {"type": "string"}
+        }
+      }
+    },
+    "incomplete_reason": {"type": ["string", "null"]}
+  }
+}

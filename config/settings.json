@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(./**)", "Grep(./**)", "Glob(./**)",
+      "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
+      "Bash(git blame:*)", "Bash(git grep:*)", "Bash(git ls-files:*)"
+    ],
+    "deny": [
+      "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch",
+      "Bash(git push:*)", "Bash(git commit:*)", "Bash(git checkout:*)",
+      "Bash(git reset:*)", "Bash(git config:*)", "Bash(git diff --no-index:*)"
+    ],
+    "defaultMode": "dontAsk"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "timeout": 10,
+           "command": "python3 -I \"$AI_REVIEW_KIT/review/hooks/guard.py\""}
+        ]
+      }
+    ]
+  }
+}
