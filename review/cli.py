@@ -17,6 +17,7 @@ from review.diff_split import build_chunks, line_map
 from review.failure import log, post, report_failure
 from review.github_api import GitHub, GitHubError
 from review.gitutil import GitError
+from review.previous import anchor_of
 from review.prompt import build_prompt
 from review.render import render_body, render_inline
 from review.validate import normalize_state
@@ -56,7 +57,7 @@ def _missing(args, env) -> List[str]:
 def _inputs(args, env):
     """Return (gh, base, head, title, prev)."""
     if args.dry_run:
-        return None, args.base, args.head, "", normalize_state(sc.read_state_file(args.state_file))
+        return None, args.base, args.head, "", sc.read_state_file(args.state_file)
     gh = GitHub(env["GITHUB_API_URL"], env["AI_REVIEW_BOT_PAT"], env["GITHUB_REPOSITORY"], args.pr)
     pr = gh.get_pr()
     base, head = args.base or pr["base"]["sha"], args.head or pr["head"]["sha"]
@@ -80,7 +81,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     repo = os.path.abspath(args.repo)
     try:
         gh, base, head, title, prev = _inputs(args, env)
-        scope = sc.determine(repo, base, head, prev)
+        scope = sc.determine(repo, base, head, prev, cfg)
     except GitHubError as e:
         log("GitHub 조회 실패: %s" % e)
         return 1
@@ -88,21 +89,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("ai-review: error: %s" % e, file=sys.stderr, flush=True)
         return 1
     try:
-        return _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, prev, scope)
+        return _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
     except Exception as e:  # unexpected bug: never leave the PR without a comment
         return report_failure(gh, head, e)
 
 
-def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, prev, scope) -> int:
+def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope) -> int:
     if scope["mode"] == "unchanged":
-        log("이미 리뷰한 커밋 %s — 리뷰를 건너뜀" % head[:7])
+        log("새로 리뷰할 변경 없음 — 리뷰를 건너뜀")
         return 0
     mode_ko = {"full": "전체 리뷰", "incremental": "증분 리뷰"}[scope["mode"]]
     log("리뷰 범위: %s (%s, 대상 파일 %d개)" % (mode_ko, scope["range"], len(scope["targets"])))
     os.makedirs(out_dir, exist_ok=True)
     chunks, skipped = build_chunks(scope["targets"], cfg)
     log("조각 %d개 · 생략 파일 %d개" % (len(chunks), len(skipped)))
-    previous = (prev or {}).get("findings") or []
+    previous = scope["previous"]
     results: List[dict] = []
     if chunks:
         ctx = {"chunk_total": len(chunks), "mode": scope["mode"], "range": scope["range"],
@@ -111,11 +112,11 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, prev, 
         paths = {"repo": repo, "work": out_dir,
                  "agents_file": write_agents_file(AGENT_MD, out_dir)}
         results = run_all(chunks, prompts, cfg, paths, env, deadline)
-    review = merge(results, cfg, previous, scope["changed"], scope["delta_files"],
-                   no_targets=not chunks, skipped=skipped)
+    review = merge(results, cfg, previous, scope["changed"], scope["reviewable"] == 0,
+                   skipped=skipped, anchor=anchor_of(scope["blobs"]))
     inline, body_only = split_inline(review["findings"],
                                      line_map(scope["pr_files"], "right_lines"))
-    state = sc.next_state(head, review, prev)
+    state = sc.next_state(head, review, scope, chunks, results)
     meta = {"model": env.get("AI_REVIEW_MODEL") or cfg["model"], "chunks": len(chunks),
             "duration_s": time.monotonic() - t0, "range": scope["range"], "mode": scope["mode"],
             "reviewed": sc.reviewed_files(chunks), "skipped": skipped}

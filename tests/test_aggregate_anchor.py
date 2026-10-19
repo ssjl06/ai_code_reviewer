@@ -14,7 +14,7 @@ def P(anchor="", pre=None, located=False, **kw):
 
 
 def run(results, prev=(), anchor=None):
-    return merge(results, CFG, list(prev), None, None, False, anchor=anchor)
+    return merge(results, CFG, list(prev), None, False, anchor=anchor)
 
 
 class AnchorMergeTest(unittest.TestCase):
@@ -59,10 +59,6 @@ class AnchorMergeTest(unittest.TestCase):
         r = run([res(0, [], prev=[("f1", "resolved")])],
                 [P(blocking=True, pre="ask", located=True)])
         self.assertEqual(r["previous"][0]["status"], "resolved")
-
-    def test_no_pre_keeps_delta_rule(self):
-        r = merge([res(0, [])], CFG, [P0()], None, {"a.cu"}, False)
-        self.assertEqual(r["previous"][0]["status"], "unclear")
 
 
 if __name__ == "__main__":

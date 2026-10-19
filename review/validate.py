@@ -81,13 +81,23 @@ def _state_entry(e: Any) -> bool:
             and isinstance(e.get("severity"), str) and isinstance(e.get("blocking"), bool))
 
 
+def _str_map(v: Any) -> dict:
+    return {k: x for k, x in v.items() if isinstance(k, str) and isinstance(x, str)} \
+        if isinstance(v, dict) else {}
+
+
 def normalize_state(state: Any) -> Optional[dict]:
-    """Previous bot State with malformed entries dropped; None when not a dict."""
-    if not isinstance(state, dict):
+    """Previous bot State v2 with malformed parts dropped; None unless a v2 dict
+    (a v1 state means "no previous state": the next review is a full one)."""
+    if not isinstance(state, dict) or state.get("v") != 2:
         return None
     sha, findings = state.get("sha"), state.get("findings")
-    return {"sha": sha if isinstance(sha, str) else "",
-            "findings": [dict(e) for e in (findings if isinstance(findings, list) else [])
+    return {"v": 2, "sha": sha if isinstance(sha, str) else "",
+            "complete": state.get("complete") is True,
+            "seen": _str_map(state.get("seen")), "seen_files": _str_map(state.get("seen_files")),
+            "findings": [dict(e, anchor=e.get("anchor") if isinstance(e.get("anchor"), str)
+                              else "")
+                         for e in (findings if isinstance(findings, list) else [])
                          if _state_entry(e)]}
 
 

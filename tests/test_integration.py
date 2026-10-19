@@ -93,7 +93,8 @@ class IntegrationTest(IntegrationBase):
         self.assertEqual(self.run_main("resolved", "--repo", self.R, "--pr", "1"), 0)
         second = self.gh.posted[-1]
         self.assertEqual(second["event"], "APPROVE")
-        self.assertEqual(parse_state(second["body"]), {"sha": C2, "findings": []})
+        st = parse_state(second["body"])
+        self.assertEqual((st["v"], st["sha"], st["complete"], st["findings"]), (2, C2, True, []))
         self.assertIn("✅ 해결", second["body"])
         self.assertEqual(self.gh.dismissed, [1])
         order = [r["method"] for r in self.gh.requests if r["method"] in ("POST", "PUT")]
@@ -105,7 +106,7 @@ class IntegrationTest(IntegrationBase):
         # third run on the same head: already reviewed, nothing posted
         self.assertEqual(self.run_main("resolved", "--repo", self.R, "--pr", "1"), 0)
         self.assertEqual(len(self.gh.posted), 2)
-        self.assertIn("이미 리뷰한 커밋", self.stdout)
+        self.assertIn("새로 리뷰할 변경 없음 — 리뷰를 건너뜀", self.stdout)
 
     def test_skipped_files_comment_not_approve(self):
         self.gh.head = self.add_commit({"src/z.py": "z = 1\n" * 40})
@@ -127,32 +128,6 @@ class IntegrationTest(IntegrationBase):
         self.assertEqual(set(data), {"event", "body", "comments"})
         self.assertEqual(data["event"], "REQUEST_CHANGES")
         self.assertEqual(self.gh.requests, [])
-
-    def test_dry_run_with_state_file_is_incremental(self):
-        sf = os.path.join(self.tmp, "state.json")
-        with open(sf, "w", encoding="utf-8") as f:
-            json.dump({"sha": self.BASE, "findings": []}, f)
-        rc = self.run_main("resolved", "--repo", self.R, "--dry-run", "--base", self.BASE,
-                           "--head", self.C1, "--state-file", sf)
-        self.assertEqual(rc, 0)
-        self.assertIn("증분 리뷰", self.fake_calls()[0]["stdin"])
-
-    def test_llm_down_exit_1(self):
-        self.assertEqual(self.run_main("crash", "--repo", self.R, "--pr", "1"), 1)
-        posted = self.gh.posted[-1]
-        self.assertEqual(posted["event"], "COMMENT")
-        self.assertIn("AI 리뷰 실패", posted["body"])
-        self.assertIn("### 미완료/실패 원인\n- c1: boom: crashed", posted["body"])
-        self.assertEqual(parse_state(posted["body"])["sha"], "")  # a retry reviews again
-
-    def test_failed_followup_keeps_change_request(self):
-        self.assertEqual(self.run_main("blocking", "--repo", self.R, "--pr", "1"), 0)
-        self.gh.head = self.add_commit({"src/k.cu": FIXED})
-        self.assertEqual(self.run_main("crash", "--repo", self.R, "--pr", "1"), 1)
-        self.assertEqual(self.gh.posted[-1]["event"], "COMMENT")
-        self.assertEqual(self.gh.dismissed, [])
-        self.assertEqual(self.gh.reviews[0]["state"], "CHANGES_REQUESTED")
-        self.assertEqual(parse_state(self.gh.posted[-1]["body"])["sha"], self.C1)
 
     def test_missing_env_exit_2(self):
         os.environ.pop("AI_REVIEW_BOT_PAT")

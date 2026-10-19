@@ -59,18 +59,17 @@ def _dedupe(findings: List[dict]) -> List[dict]:
     return out
 
 
-def _resolve(prev: dict, touched: Set[str]) -> str:
+def _resolve(prev: dict) -> str:
+    """Status of a previous finding the model did not report, from `previous.relocate`."""
     pre = prev.get("pre")
     if pre == "resolved":
         return "resolved"
-    if pre == "open" or (pre == "ask" and prev.get("located")):
-        return "open"
-    if pre == "ask":
+    if pre == "ask" and not prev.get("located"):
         return "unclear"
-    return "unclear" if prev["file"] in touched else "open"
+    return "open"
 
 
-def _previous(results: List[dict], previous: List[dict], delta_files: Optional[Set[str]]):
+def _previous(results: List[dict], previous: List[dict]):
     reported: Dict[str, Tuple[str, Optional[str]]] = {}
     for r in results:
         if r.get("status") not in OK_STATUSES or not r.get("output"):
@@ -79,7 +78,6 @@ def _previous(results: List[dict], previous: List[dict], delta_files: Optional[S
             cur = reported.get(p["id"])
             if cur is None or STATUS_RANK[p["status"]] < STATUS_RANK[cur[0]]:
                 reported[p["id"]] = (p["status"], p.get("note"))
-    touched = delta_files or set()
     out = []
     for prev in previous:
         e = dict(prev)
@@ -88,7 +86,7 @@ def _previous(results: List[dict], previous: List[dict], delta_files: Optional[S
             if reported[prev["id"]][1] is not None:
                 e["note"] = reported[prev["id"]][1]
         else:
-            e["status"] = _resolve(prev, touched)
+            e["status"] = _resolve(prev)
         out.append(e)
     return out
 
@@ -106,8 +104,7 @@ def _summaries(results: List[dict]) -> List[str]:
     return out
 
 
-def merge(results, cfg, previous, changed, delta_files, no_targets, skipped=None,
-          anchor=None):
+def merge(results, cfg, previous, changed, no_targets, skipped=None, anchor=None):
     kept, dropped = _collect(results, cfg, changed)
     findings = _dedupe(kept)
     for f in findings:
@@ -118,10 +115,11 @@ def merge(results, cfg, previous, changed, delta_files, no_targets, skipped=None
         f["blocking"] = in_block and f["confidence"] >= cfg["block_confidence"]
         f["needs_check"] = in_block and not f["blocking"]
     prev_ids = {p["id"] for p in previous}
+    # previous entries come from previous.relocate, so their "file" is already the renamed path
     prev_keys = {(p["file"], p["anchor"]) for p in previous if p.get("anchor")}
     findings = [f for f in findings if f["id"] not in prev_ids
                 and not (f.get("anchor") and (f["file"], f["anchor"]) in prev_keys)]
-    prev_out = _previous(results, previous, delta_files)
+    prev_out = _previous(results, previous)
     incomplete = sorted(r["index"] for r in results if r.get("status") != "ok")
     errors = [[r["index"], str(r.get("error") or r.get("status"))[:200]]
               for r in sorted(results, key=lambda x: x["index"]) if r.get("status") != "ok"]

@@ -26,8 +26,8 @@ def res(i, findings, status="ok", prev=(), summary="s", reason=None):
             "session_id": None, "error": None}
 
 
-def run(results, prev=(), changed=None, delta=None, no_targets=False, skipped=None):
-    return merge(results, CFG, list(prev), changed, delta, no_targets, skipped=skipped)
+def run(results, prev=(), changed=None, no_targets=False, skipped=None):
+    return merge(results, CFG, list(prev), changed, no_targets, skipped=skipped)
 
 
 class AggregateTest(unittest.TestCase):
@@ -64,16 +64,16 @@ class AggregateTest(unittest.TestCase):
         self.assertFalse(r["failed_all"])
 
     def test_incremental_filter_drops_unchanged_lines(self):
-        r = run([res(0, [F(line=10), F(line=50)])], changed={"a.cu": {50}}, delta={"a.cu"})
+        r = run([res(0, [F(line=10), F(line=50)])], changed={"a.cu": {50}})
         self.assertEqual([f["line"] for f in r["findings"]], [50])
         self.assertEqual(r["dropped"], 1)
 
     def test_previous_open_blocks(self):
-        r = run([res(0, [], prev=[("f1", "open")])], [P(blocking=True)], {}, {"a.cu"})
+        r = run([res(0, [], prev=[("f1", "open")])], [P(blocking=True)], {})
         self.assertEqual(r["event"], "REQUEST_CHANGES")
 
     def test_previous_untouched_file_stays_open(self):
-        r = run([res(0, [])], [P(file="b.cu", blocking=True)], {}, {"a.cu"})
+        r = run([res(0, [])], [P(file="b.cu", blocking=True)], {})
         self.assertEqual(r["previous"][0]["status"], "open")
         self.assertEqual(r["event"], "REQUEST_CHANGES")
 
@@ -89,30 +89,25 @@ class AggregateTest(unittest.TestCase):
         r = run([res(0, [])], skipped=["big.cu"])
         self.assertEqual((r["event"], r["skipped"], r["complete"]), ("COMMENT", ["big.cu"], False))
 
-    def test_previous_unreported_touched_is_unclear_and_blocks_approve(self):
-        r = run([res(0, [])], [P(blocking=True)], {}, {"a.cu"})
-        self.assertEqual((r["previous"][0]["status"], r["event"]), ("unclear", "COMMENT"))
-        self.assertTrue(r["unclear_blocking"])
-
     def test_unclear_nonblocking_previous_still_approves(self):
-        r = run([res(0, [])], [P(blocking=False)], {}, {"a.cu"})
-        self.assertEqual(r["event"], "APPROVE")
+        r = run([res(0, [])], [dict(P(blocking=False), pre="ask", located=False)], {})
+        self.assertEqual((r["previous"][0]["status"], r["event"]), ("unclear", "APPROVE"))
 
     def test_complete_when_all_ok(self):
         self.assertTrue(run([res(0, [])])["complete"])
     def test_previous_resolved_approves(self):
-        r = run([res(0, [], prev=[("f1", "resolved")])], [P(blocking=True)], {}, {"a.cu"})
+        r = run([res(0, [], prev=[("f1", "resolved")])], [P(blocking=True)], {})
         self.assertEqual((r["previous"][0]["status"], r["event"]), ("resolved", "APPROVE"))
 
     def test_previous_worst_status_wins(self):
         r = run([res(0, [], prev=[("f1", "resolved")]), res(1, [], prev=[("f1", "open")])],
-                [P(blocking=True)], {}, {"a.cu"})
+                [P(blocking=True)], {})
         self.assertEqual(r["previous"][0]["status"], "open")
 
     def test_previous_rereported_as_new_removed(self):
         f = F(line=10, title="t")
         pid = finding_id({"file": "a.cu", "line": 10, "title": "t"})
-        r = run([res(0, [f])], [P(id=pid)], {"a.cu": {10}}, {"a.cu"})
+        r = run([res(0, [f])], [P(id=pid)], {"a.cu": {10}})
         self.assertEqual(r["findings"], [])
 
     def test_dedupe_keeps_stronger(self):
@@ -145,7 +140,7 @@ class AggregateTest(unittest.TestCase):
     def test_previous_note_carried(self):
         results = [res(0, [])]
         results[0]["output"]["previous_findings"] = [{"id": "f1", "status": "open", "note": "n"}]
-        r = run(results, [P()], {}, {"a.cu"})
+        r = run(results, [P()], {})
         self.assertEqual(r["previous"][0]["note"], "n")
 
     def test_errors_listed_for_non_ok(self):

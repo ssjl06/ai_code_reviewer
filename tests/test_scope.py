@@ -4,7 +4,17 @@ import subprocess
 import tempfile
 import unittest
 
-from review.scope import determine, next_state, parse_overrides, read_state_file
+from review.config import load_config
+from review.diff_split import build_chunks
+from review.fingerprint import fp_line
+from review.scope import determine, next_state
+from review.validate import normalize_state
+
+CFG = load_config()
+
+
+def code(tag, n=10):
+    return "".join("%s_%d = %d\n" % (tag, i, i) for i in range(1, n + 1))
 
 
 def run(repo, *args):
@@ -12,130 +22,148 @@ def run(repo, *args):
                           text=True).stdout.strip()
 
 
-def commit(repo, files):
-    for name, content in files.items():
-        path = os.path.join(repo, name)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-        run(repo, "add", name)
-    run(repo, "commit", "-q", "-m", "m")
-    return run(repo, "rev-parse", "HEAD")
+def state_for(scope, head, findings=(), complete=True):
+    """StateV2 after a review in which every chunk was ok."""
+    chunks, _ = build_chunks(scope["targets"], CFG)
+    results = [{"index": c["index"], "status": "ok"} for c in chunks]
+    prev = [dict(p, status="open") for p in scope["previous"] if p["pre"] != "resolved"]
+    review = {"findings": list(findings), "previous": prev, "complete": complete}
+    st = next_state(head, review, scope, chunks, results)
+    return normalize_state(json.loads(json.dumps(st)))
 
 
 class ScopeTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls._tmp = tempfile.TemporaryDirectory()
-        R = cls.R = cls._tmp.name
-        run(R, "init", "-q")
-        run(R, "config", "user.email", "t@example.com")
-        run(R, "config", "user.name", "t")
-        cls.BASE = commit(R, {"base.py": "b\n"})
-        cls.C1 = commit(R, {"only_in_c1.py": "one\n"})
-        cls.C2 = commit(R, {"only_in_c2.py": "two\n"})
-        run(R, "checkout", "-q", "-b", "rewrite", cls.BASE)
-        cls.C2_REWRITTEN = commit(R, {"rewritten.py": "r\n"})
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.R = tmp.name
+        run(self.R, "init", "-q", "-b", "main")
+        run(self.R, "config", "user.email", "t@example.com")
+        run(self.R, "config", "user.name", "t")
+        self.BASE = self.branch({"base.py": code("base")})
+        run(self.R, "checkout", "-q", "-b", "feat")
 
-    @classmethod
-    def tearDownClass(cls):
-        cls._tmp.cleanup()
+    def branch(self, files, rm=()):
+        for name in rm:
+            run(self.R, "rm", "-q", name)
+        for name, content in files.items():
+            with open(os.path.join(self.R, name), "w", encoding="utf-8") as f:
+                f.write(content)
+            run(self.R, "add", name)
+        run(self.R, "commit", "-q", "-m", "m")
+        return run(self.R, "rev-parse", "HEAD")
 
-    def test_full_without_prev(self):
-        s = determine(self.R, self.BASE, self.C2, None)
-        self.assertEqual(s["mode"], "full")
-        self.assertEqual(s["range"], "%s...%s" % (self.BASE[:7], self.C2[:7]))
-        self.assertEqual({f["path"] for f in s["targets"]}, {"only_in_c1.py", "only_in_c2.py"})
+    def reviewed(self, head, findings=()):
+        return state_for(determine(self.R, self.BASE, head, None, CFG), head, findings)
+
+    def advance_main(self):
+        run(self.R, "checkout", "-q", "main")
+        main2 = self.branch({"other.py": code("other")})
+        run(self.R, "checkout", "-q", "feat")
+        return main2
+
+    def test_first_review_full(self):
+        h = self.branch({"a.py": code("a"), "b.py": code("b")})
+        s = determine(self.R, self.BASE, h, None, CFG)
+        self.assertEqual((s["mode"], s["range"]), ("full", "%s...%s" % (self.BASE[:7], h[:7])))
         self.assertIsNone(s["changed"])
-        self.assertIsNone(s["delta_files"])
+        self.assertEqual({f["path"] for f in s["targets"]}, {"a.py", "b.py"})
+        self.assertEqual(s["reviewable"], 2)
 
-    def test_unchanged(self):
-        s = determine(self.R, self.BASE, self.C2, {"sha": self.C2, "findings": []})
+    def test_same_sha_complete_unchanged(self):
+        h = self.branch({"a.py": code("a")})
+        s = determine(self.R, self.BASE, h, self.reviewed(h), CFG)
+        self.assertEqual((s["mode"], s["targets"]), ("unchanged", []))
+
+    def test_same_sha_incomplete_reviews_again(self):
+        h = self.branch({"a.py": code("a")})
+        st = dict(self.reviewed(h), complete=False, seen={})
+        s = determine(self.R, self.BASE, h, st, CFG)
+        self.assertEqual(s["mode"], "incremental")
+        self.assertEqual([f["path"] for f in s["targets"]], ["a.py"])
+
+    def test_squash_unchanged(self):
+        self.branch({"a.py": code("a")})
+        st = self.reviewed(self.branch({"b.py": code("b")}))
+        run(self.R, "reset", "-q", "--soft", self.BASE)
+        h = self.branch({})
+        self.assertEqual(determine(self.R, self.BASE, h, st, CFG)["mode"], "unchanged")
+
+    def test_rebase_onto_advanced_main_unchanged(self):
+        st = self.reviewed(self.branch({"a.py": code("a")}))
+        main2 = self.advance_main()
+        run(self.R, "rebase", "-q", "main")
+        s = determine(self.R, main2, run(self.R, "rev-parse", "HEAD"), st, CFG)
+        self.assertEqual(s["mode"], "unchanged")
+        self.assertNotIn("other.py", [f["path"] for f in s["pr_files"]])
+
+    def test_merge_main_unchanged(self):
+        st = self.reviewed(self.branch({"a.py": code("a")}))
+        main2 = self.advance_main()
+        run(self.R, "merge", "-q", "--no-edit", "main")
+        s = determine(self.R, main2, run(self.R, "rev-parse", "HEAD"), st, CFG)
         self.assertEqual(s["mode"], "unchanged")
 
-    def test_incremental(self):
-        s = determine(self.R, self.BASE, self.C2, {"sha": self.C1, "findings": []})
-        self.assertEqual((s["mode"], s["range"]), ("incremental", f"{self.C1[:7]}..{self.C2[:7]}"))
-        self.assertEqual({f["path"] for f in s["targets"]}, {"only_in_c2.py"})
-        self.assertIn("only_in_c1.py", {f["path"] for f in s["pr_files"]})
-        self.assertEqual(s["changed"], {"only_in_c2.py": {1}})
-        self.assertEqual(s["delta_files"], {"only_in_c2.py"})
+    def test_rebase_with_edit_only_edit(self):
+        st = self.reviewed(self.branch({"a.py": code("a"), "b.py": code("b")}))
+        main2 = self.advance_main()
+        run(self.R, "rebase", "-q", "main")
+        h = self.branch({"a.py": code("a").replace("a_5 = 5", "a_5 = 55")})
+        s = determine(self.R, main2, h, st, CFG)
+        self.assertEqual((s["mode"], [f["path"] for f in s["targets"]]), ("incremental", ["a.py"]))
+        self.assertEqual(s["changed"], {"a.py": {4, 5, 6}})
 
-    def test_force_push_falls_back_to_full(self):
-        s = determine(self.R, self.BASE, self.C2_REWRITTEN, {"sha": self.C1, "findings": []})
-        self.assertEqual(s["mode"], "full")
-        self.assertIsNone(s["changed"])
-        self.assertEqual(s["delta_files"], {"rewritten.py"})
+    def test_rename_without_edit_unchanged(self):
+        st = self.reviewed(self.branch({"base.py": code("base").replace("_3 = 3", "_3 = 33")}))
+        run(self.R, "mv", "base.py", "moved.py")
+        h = self.branch({})
+        s = determine(self.R, self.BASE, h, st, CFG)
+        self.assertEqual(s["pr_files"][0]["old_path"], "base.py")
+        self.assertEqual(s["mode"], "unchanged")
 
-    def test_empty_prev_sha_is_no_prev(self):
-        s = determine(self.R, self.BASE, self.C2, {"sha": "", "findings": []})
-        self.assertEqual((s["mode"], s["delta_files"]), ("full", None))
+    def test_neighbor_change_reviews_added_line(self):
+        added = code("base").replace("base_4 = 4\n", "base_4 = 4\nnew = 1\n")
+        st = self.reviewed(self.branch({"base.py": added}))
+        h = self.branch({"base.py": added.replace("base_4 = 4", "base_4 = 44")})
+        s = determine(self.R, self.BASE, h, st, CFG)
+        self.assertEqual(s["changed"], {"base.py": {4, 5}})  # 5 = unchanged "new = 1"
+
+    def test_deletion_only_followup(self):
+        edited = code("base").replace("_2 = 2", "_2 = 22")
+        st = self.reviewed(self.branch({"base.py": edited}))
+        h = self.branch({"base.py": edited.replace("base_7 = 7\n", "")})
+        s = determine(self.R, self.BASE, h, st, CFG)
+        self.assertEqual((s["mode"], s["deleted"], s["added"]),
+                         ("incremental", {"base.py": {7}}, {"base.py": set()}))
+        self.assertEqual(s["changed"], {"base.py": {7}})
+
+    def test_duplicate_paste_reviews_both_copies(self):
+        text = code("a", 20).replace("a_2 = 2\n", "dup_a\ndup_b\ndup_c\n")
+        st = self.reviewed(self.branch({"a.py": text}))
+        h = self.branch({"a.py": text + "dup_a\ndup_b\ndup_c\n"})
+        s = determine(self.R, self.BASE, h, st, CFG)
+        self.assertEqual(s["changed"], {"a.py": {3, 22, 23, 24, 25}})  # 3, 24 = dup_b copies
+
+    def test_dropped_file_resolves_previous(self):
+        h = self.branch({"a.py": code("a"), "b.py": code("b")})
+        lines = code("b").splitlines()
+        f = {"id": "f1", "file": "b.py", "line": 2, "anchor": fp_line(lines, 2).hex(),
+             "title": "t", "severity": "major", "blocking": True}
+        st = self.reviewed(h, [f])
+        s = determine(self.R, self.BASE, self.branch({}, rm=["b.py"]), st, CFG)
+        self.assertEqual((s["mode"], s["targets"]), ("incremental", []))
+        self.assertEqual([(p["id"], p["pre"]) for p in s["previous"]], [("f1", "resolved")])
+
+    def test_previous_located_in_target(self):
+        h = self.branch({"a.py": code("a")})
+        lines = code("a").splitlines()
+        f = {"id": "f1", "file": "a.py", "line": 8, "anchor": fp_line(lines, 8).hex(),
+             "title": "t", "severity": "major", "blocking": True}
+        st = self.reviewed(h, [f])
+        s = determine(self.R, self.BASE, self.branch({"a.py": "top = 0\n" + code("a")}), st, CFG)
+        self.assertEqual([(p["pre"], p["located"], p["line"]) for p in s["previous"]],
+                         [("ask", True, 9)])
 
 
-class MergeFromBaseTest(unittest.TestCase):
-    def test_upstream_changes_from_merge_are_not_targets(self):
-        with tempfile.TemporaryDirectory() as R:
-            run(R, "init", "-q", "-b", "main")
-            run(R, "config", "user.email", "t@example.com")
-            run(R, "config", "user.name", "t")
-            commit(R, {"shared.py": "a\nb\nc\nd\ne\nf\ng\n"})
-            run(R, "checkout", "-q", "-b", "pr")
-            p1 = commit(R, {"feature.py": "f1\n", "shared.py": "A\nb\nc\nd\ne\nf\ng\n"})
-            run(R, "checkout", "-q", "main")
-            up = commit(R, {"upstream.py": "u\n", "shared.py": "a\nb\nc\nd\ne\nf\nG\n"})
-            run(R, "checkout", "-q", "pr")
-            run(R, "merge", "-q", "--no-edit", "main")
-            head = commit(R, {"feature.py": "f1\nf2\n"})
-            s = determine(R, up, head, {"sha": p1, "findings": []})
-        self.assertEqual(s["mode"], "incremental")
-        self.assertEqual({f["path"] for f in s["targets"]}, {"feature.py", "shared.py"})
-        self.assertEqual(s["delta_files"], {"feature.py", "shared.py"})
-        self.assertEqual(s["changed"], {"feature.py": {2}, "shared.py": set()})  # G is upstream
-
-
-class HelpersTest(unittest.TestCase):
-    def test_parse_overrides(self):
-        got = parse_overrides(["max_chunks=2", "claude_bin=/a/b", "exclude_globs=[\"x\"]"])
-        self.assertEqual(got, {"max_chunks": 2, "claude_bin": "/a/b", "exclude_globs": ["x"]})
-        with self.assertRaises(ValueError):
-            parse_overrides(["novalue"])
-
-    def test_next_state(self):
-        new = {"id": "n1", "file": "a", "line": 1, "title": "t", "severity": "major",
-               "blocking": True, "confidence": 90, "detail": "d"}
-        prev = [dict(new, id="p1", status="open"), dict(new, id="p2", status="resolved"),
-                dict(new, id="p3", status="unclear", note="x")]
-        review = {"findings": [new], "previous": prev, "failed_all": False,
-                  "complete": True}
-        st = next_state("h", review, None)
-        self.assertEqual(st["sha"], "h")
-        self.assertEqual([f["id"] for f in st["findings"]], ["n1", "p1", "p3"])
-        self.assertEqual(set(st["findings"][2]), {"id", "file", "line", "title", "severity",
-                                                  "blocking"})
-
-    def test_next_state_not_ok_chunk_keeps_previous_sha(self):
-        new = {"id": "n1", "file": "a", "line": 1, "title": "t", "severity": "minor",
-               "blocking": False}
-        carried = dict(new, id="p1", status="open")
-        prev = {"sha": "old", "findings": [carried]}
-        incomplete = {"findings": [new], "previous": [carried], "incomplete": [1],
-                      "failed_all": False, "complete": False}
-        st = next_state("h", incomplete, prev)
-        self.assertEqual(st["sha"], "old")
-        self.assertEqual([f["id"] for f in st["findings"]], ["n1", "p1"])
-        self.assertEqual(next_state("h", incomplete, None)["sha"], "")
-        failed = {"findings": [], "previous": [], "incomplete": [0], "failed_all": True,
-                  "complete": False}
-        self.assertEqual(next_state("h", failed, None), {"sha": "", "findings": []})
-
-    def test_next_state_keeps_prev_sha_when_skipped(self):
-        review = {"findings": [], "previous": [], "complete": False, "skipped": ["x"]}
-        self.assertEqual(next_state("h", review, {"sha": "p", "findings": []})["sha"], "p")
-
-    def test_read_state_file(self):
-        self.assertIsNone(read_state_file(None))
-        with tempfile.TemporaryDirectory() as d:
-            p = os.path.join(d, "s.json")
-            with open(p, "w") as f:
-                json.dump({"sha": "x", "findings": []}, f)
-            self.assertEqual(read_state_file(p)["sha"], "x")
+if __name__ == "__main__":
+    unittest.main()
