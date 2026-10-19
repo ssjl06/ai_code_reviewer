@@ -36,9 +36,32 @@ Copy `docs/caller-example.yml` to `.github/workflows/ai-review.yml` in the targe
 - No blocking findings and all chunks complete: `APPROVE`.
 
 ## Incremental review
-The first run reviews the whole PR. Later pushes review only the diff since the last reviewed sha
-(stored as state in the previous review body) and re-check earlier findings (resolved/open).
-Issues missed in the first review are not raised in later incremental reviews.
+Detection is content-based, not sha-based. The first run reviews the whole PR. The review body
+stores a "seen" set of line fingerprints (the changed line plus its neighbours). On each later run
+the kit diffs the PR against its base, and only hunks with lines whose fingerprint is not yet seen
+are sent to the model; the prompt lists them as "검토 대상 줄" (added lines) and "삭제 지점"
+(deletion anchors). Earlier findings are relocated to their current line and re-checked
+(resolved/open/unclear) instead of being re-raised.
+
+- Squash, rebase, force-push and "merge main into the PR" keep the same line content, so they cost
+  no LLM call. Moved code keeps its findings and their ids.
+- When there are no new lines the run logs `새로 리뷰할 변경 없음 — 리뷰를 건너뜀` and posts
+  nothing. A previous blocking review stays as it is; dismissal happens only on `APPROVE`.
+- A run that cannot finish gives `COMMENT` (never `APPROVE`): a partial chunk, files skipped by the
+  chunk limit, or a previous blocking finding the model could not confirm
+  ("이전 차단 지적 확인 필요"). Lines of failed or skipped chunks stay "new" for the next run.
+- If the file with a previous blocking finding is dropped from the PR, the finding is resolved and
+  the review is approved without an LLM call.
+
+Trade-offs:
+- A whole-file reformat (clang-format) changes every fingerprint, so the whole file is reviewed
+  again, and previous findings there may become `unclear`.
+- A hunk that mixes new and already-seen lines is sent whole, for context; only the new lines are
+  accepted for findings.
+- If a fingerprint now occurs more often than before (a reviewed block pasted again in the same
+  file), every copy is reviewed again.
+- An issue missed in an earlier review is not raised later, and a semantic interaction between an
+  unchanged PR line and a base-branch change is not reviewed again.
 
 ## Log symbols
 | Symbol | Meaning |
@@ -96,4 +119,4 @@ Result:
 ## Known limitations
 - `git grep` patterns containing shell metacharacters are denied (use the Grep tool).
 - There is no `/ai-review full` trigger to force a full re-review.
-- Issues missed in the first review are not raised in later incremental reviews.
+- Issues missed in an earlier review are not raised again unless their lines change.

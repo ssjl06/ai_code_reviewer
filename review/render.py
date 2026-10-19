@@ -80,7 +80,7 @@ def _head(review: dict) -> str:
 def _sections(review: dict, body_only: list, meta: dict) -> list:
     secs = []
     prev = review.get("previous") or []
-    if meta.get("mode") == "incremental" or prev:
+    if prev:
         lines = ["- %s `%s:%s` %s%s" % (_PREV.get(p.get("status"), "❔ 불명확"), p["file"], p["line"],
                                        p["title"], " — " + p["note"] if p.get("note") else "")
                  for p in prev]

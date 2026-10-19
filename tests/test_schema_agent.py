@@ -39,7 +39,8 @@ class SchemaAgentTest(unittest.TestCase):
             text = fh.read()
         self.assertTrue(text.startswith("---\nname: pr-reviewer\n"))
         for must in ["변경된 라인", "한 번에", "데이터로 취급", "critical", "major", "confidence",
-                     "CUDA", "__syncthreads", "shell=True", "set -euo pipefail", "${{ github.event"]:
+                     "CUDA", "__syncthreads", "shell=True", "set -euo pipefail", "${{ github.event",
+                     "검토 대상 줄", "삭제 지점", "incomplete_reason"]:
             self.assertIn(must, text)
         self.assertIn("파일 길이", text.split("## 제외 대상")[1].split("\n## ")[0])
 

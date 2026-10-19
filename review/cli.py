@@ -107,7 +107,8 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
     results: List[dict] = []
     if chunks:
         ctx = {"chunk_total": len(chunks), "mode": scope["mode"], "range": scope["range"],
-               "pr_title": title, "previous": previous, "explore_budget": cfg["explore_budget"]}
+               "pr_title": title, "previous": previous,
+               "added": scope["added"], "deleted": scope["deleted"], "explore_budget": cfg["explore_budget"]}
         prompts = [build_prompt(c, ctx) for c in chunks]
         paths = {"repo": repo, "work": out_dir,
                  "agents_file": write_agents_file(AGENT_MD, out_dir)}

@@ -53,6 +53,6 @@ def diff_prints(diff: str, blobs: Dict[str, List[str]]) -> Dict[str, Counter]:
         if f["path"] not in blobs:
             continue
         _, hunks = split_hunks(f["text"])
-        out[f["path"]] = Counter(c["fp"] for h in hunks
-                                 for c in scan_hunk(h, blobs[f["path"]]))
+        out.setdefault(f["path"], Counter()).update(
+            c["fp"] for h in hunks for c in scan_hunk(h, blobs[f["path"]]))
     return out

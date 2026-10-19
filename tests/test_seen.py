@@ -1,7 +1,7 @@
 import unittest
 from collections import Counter
 
-from review.diff_split import MARKER, parse_unified_diff
+from review.diff_split import MARKER, build_chunks, parse_unified_diff
 from review.fingerprint import decode_seen, encode_seen, fp_line, whole_hash
 from review.hunks import diff_prints, select_file
 from review.seen import update_seen
@@ -84,6 +84,29 @@ class UpdateSeenTest(unittest.TestCase):
         nxt = {"targets": [], "blobs": scope["blobs"], "head_prints": {"a.py": sel["head"]},
                "prev_seen": {"a.py": sel["head"]}}
         self.assertEqual(update_seen(nxt, [], []), {"a.py": sel["head"]})
+
+
+    def test_two_units_of_one_file_in_one_chunk_all_counted(self):
+        blob = ["ctx_%d" % i for i in range(1, 61)]
+        blob[1], blob[54] = "new_a", "new_b"
+
+        def body(at):  # one changed line (1-based `at`) with one context line each side
+            return ("@@ -%d,3 +%d,3 @@\n %s\n-old\n+%s\n %s\n"
+                    % (at - 1, at - 1, blob[at - 2], blob[at - 1], blob[at]))
+        text = ("diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n" + body(2) + body(55))
+        f = parse_unified_diff(text)[0]
+        cfg = {"chunk_max_tokens": 30, "max_chunks": 5, "exclude_globs": []}
+        chunks, skipped = build_chunks([f], cfg)
+        self.assertEqual((len(chunks), skipped), (2, []))
+        joined = "".join(c["diff"] for c in chunks)  # two units, header repeated
+        self.assertEqual(joined.count("diff --git"), 2)
+        want = diff_prints(text, {"f.py": blob})["f.py"]
+        self.assertEqual(sum(want.values()), 4)  # 2 added + 2 removed
+        self.assertEqual(diff_prints(joined, {"f.py": blob})["f.py"], want)
+        scope = {"targets": [f], "blobs": {"f.py": blob}, "head_prints": {"f.py": want},
+                 "prev_seen": {"f.py": Counter()}}
+        got = update_seen(scope, [chunk(0, joined)], [res(0)])
+        self.assertEqual(got, {"f.py": want})
 
 
 if __name__ == "__main__":

@@ -78,7 +78,7 @@ class RenderTest(unittest.TestCase):
     def test_body_no_targets_reason(self):
         self.assertIn("리뷰 대상 변경 없음", render_body(REVIEW(no_targets=True), [], META, ST))
 
-    def test_body_previous_section_incremental_only(self):
+    def test_body_previous_section_whenever_previous(self):
         prev = [{"id": "p", "file": "x.c", "line": 1, "title": "old", "severity": "major",
                  "blocking": False, "status": "resolved"}]
         self.assertNotIn("이전 지적 처리 현황", render_body(REVIEW(), [], META, ST))
@@ -87,8 +87,8 @@ class RenderTest(unittest.TestCase):
         self.assertIn("✅ 해결", b)
         self.assertIn("### 이전 지적 처리 현황",
                       render_body(REVIEW(previous=prev), [], META, ST))
-        self.assertIn("### 이전 지적 처리 현황",
-                      render_body(REVIEW(), [], dict(META, mode="incremental"), ST))
+        self.assertNotIn("### 이전 지적 처리 현황",
+                         render_body(REVIEW(), [], dict(META, mode="incremental"), ST))
 
     def test_sections(self):
         r = REVIEW(findings=[FIND(conf=70, nc=True, blocking=False)], incomplete=[0, 2],

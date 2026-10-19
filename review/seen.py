@@ -4,7 +4,6 @@ from __future__ import annotations
 from collections import Counter
 from typing import Dict, List
 
-from review.diff_split import parse_unified_diff
 from review.hunks import diff_prints
 
 Seen = Dict[str, Counter]
@@ -15,14 +14,6 @@ def _add(dst: Seen, src: Seen) -> None:
         dst.setdefault(path, Counter()).update(c)
 
 
-def _prints(diff: str, blobs: Dict[str, List[str]]) -> Seen:
-    """Prints per path; a chunk may hold several units (header + hunks) of one file."""
-    out: Seen = {}
-    for f in parse_unified_diff(diff):
-        _add(out, diff_prints(f["text"], blobs))
-    return out
-
-
 def update_seen(scope: dict, chunks: List[dict], results: List[dict]) -> Seen:
     """A print counts as reviewed only when every copy of it in the targets went through
     an `ok` chunk; otherwise the previous count is kept (capped at the head count)."""
@@ -31,9 +22,9 @@ def update_seen(scope: dict, chunks: List[dict], results: List[dict]) -> Seen:
     ok: Seen = {}
     bad: Seen = {}
     for c in chunks:
-        _add(ok if status.get(c["index"]) == "ok" else bad, _prints(c["diff"], blobs))
+        _add(ok if status.get(c["index"]) == "ok" else bad, diff_prints(c["diff"], blobs))
     for t in scope["targets"]:
-        left = _prints(t["text"], blobs).get(t["path"], Counter())
+        left = diff_prints(t["text"], blobs).get(t["path"], Counter())
         _add(bad, {t["path"]: left - ok.get(t["path"], Counter())})
     out: Seen = {}
     for path, head in scope["head_prints"].items():
