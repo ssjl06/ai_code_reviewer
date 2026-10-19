@@ -51,12 +51,15 @@ def read_blobs(repo: str, rev: str, paths: List[str]) -> Dict[str, List[str]]:
     out, pos, blobs = proc.stdout, 0, {}
     for p in paths:
         end = out.index(b"\n", pos)
-        head = out[pos:end].decode("utf-8", errors="replace").split(" ")
+        head = out[pos:end].decode("utf-8", errors="replace").rsplit(" ", 2)
         pos = end + 1
-        if len(head) != 3 or head[1] != "blob":
-            continue  # "<name> missing", or a non-blob object
+        if len(head) != 3 or not head[2].isdigit():
+            continue  # "<name> missing" (no content follows)
         size = int(head[2])
-        lines = out[pos:pos + size].decode("utf-8", errors="replace").split("\n")
-        pos += size + 1
+        body = out[pos:pos + size]
+        pos += size + 1  # content and its trailing newline, whatever the type
+        if head[1] != "blob":
+            continue
+        lines = body.decode("utf-8", errors="replace").split("\n")
         blobs[p] = lines[:-1] if lines[-1] == "" else lines
     return blobs

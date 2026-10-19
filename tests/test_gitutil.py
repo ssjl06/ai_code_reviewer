@@ -47,6 +47,15 @@ class GitUtilTest(unittest.TestCase):
                                "한글.txt": ["x"]})
         self.assertEqual(read_blobs(self.repo, c, []), {})
 
+    def test_read_blobs_skips_non_blobs_without_desync(self):
+        os.makedirs(os.path.join(self.repo, "dir"), exist_ok=True)
+        self._commit("dir/in.txt", "inner\n")
+        sub = run(self.repo, "rev-parse", "HEAD")
+        run(self.repo, "update-index", "--add", "--cacheinfo", "160000,%s,sub" % sub)
+        run(self.repo, "commit", "-q", "-m", "gitlink")
+        got = read_blobs(self.repo, "HEAD", ["dir", "sub", "a.txt", "dir/in.txt"])
+        self.assertEqual(got, {"a.txt": ["first", "second"], "dir/in.txt": ["inner"]})
+
     def test_diff_text_two_and_three_dot(self):
         self.assertIn("+second", diff_text(self.repo, self.c1, self.c2, merge_base=True))
         self.assertIn("+second", diff_text(self.repo, self.c1, self.c2, merge_base=False))
