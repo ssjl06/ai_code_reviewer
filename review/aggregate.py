@@ -12,7 +12,7 @@ _PREFIX = re.compile(r"^(?:\./|a/|b/|/)")
 
 
 def finding_id(f: dict) -> str:
-    key = "%s:%s:%s" % (f.get("file"), f.get("line"), f.get("title"))
+    key = "%s:%s:%s" % (f.get("file"), f.get("anchor") or f.get("line"), f.get("title"))
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
 
 
@@ -59,6 +59,17 @@ def _dedupe(findings: List[dict]) -> List[dict]:
     return out
 
 
+def _resolve(prev: dict, touched: Set[str]) -> str:
+    pre = prev.get("pre")
+    if pre == "resolved":
+        return "resolved"
+    if pre == "open" or (pre == "ask" and prev.get("located")):
+        return "open"
+    if pre == "ask":
+        return "unclear"
+    return "unclear" if prev["file"] in touched else "open"
+
+
 def _previous(results: List[dict], previous: List[dict], delta_files: Optional[Set[str]]):
     reported: Dict[str, Tuple[str, Optional[str]]] = {}
     for r in results:
@@ -77,7 +88,7 @@ def _previous(results: List[dict], previous: List[dict], delta_files: Optional[S
             if reported[prev["id"]][1] is not None:
                 e["note"] = reported[prev["id"]][1]
         else:
-            e["status"] = "unclear" if prev["file"] in touched else "open"
+            e["status"] = _resolve(prev, touched)
         out.append(e)
     return out
 
@@ -95,16 +106,21 @@ def _summaries(results: List[dict]) -> List[str]:
     return out
 
 
-def merge(results, cfg, previous, changed, delta_files, no_targets, skipped=None):
+def merge(results, cfg, previous, changed, delta_files, no_targets, skipped=None,
+          anchor=None):
     kept, dropped = _collect(results, cfg, changed)
     findings = _dedupe(kept)
     for f in findings:
         in_block = f.get("severity") in cfg["block_severities"]
+        if anchor is not None:
+            f["anchor"] = anchor(f["file"], f["line"])
         f["id"] = finding_id(f)
         f["blocking"] = in_block and f["confidence"] >= cfg["block_confidence"]
         f["needs_check"] = in_block and not f["blocking"]
     prev_ids = {p["id"] for p in previous}
-    findings = [f for f in findings if f["id"] not in prev_ids]
+    prev_keys = {(p["file"], p["anchor"]) for p in previous if p.get("anchor")}
+    findings = [f for f in findings if f["id"] not in prev_ids
+                and not (f.get("anchor") and (f["file"], f["anchor"]) in prev_keys)]
     prev_out = _previous(results, previous, delta_files)
     incomplete = sorted(r["index"] for r in results if r.get("status") != "ok")
     errors = [[r["index"], str(r.get("error") or r.get("status"))[:200]]
