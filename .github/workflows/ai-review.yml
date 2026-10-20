@@ -32,9 +32,10 @@ on:
       AI_REVIEW_LLM_BASE_URL:
         required: true
 
+# GITHUB_TOKEN only reads; checkouts and all API posts use the bot PAT.
+# A called workflow cannot elevate the caller's GITHUB_TOKEN anyway.
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: ai-review-${{ github.event.pull_request.number }}
@@ -49,8 +50,9 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner_labels) }}
     timeout-minutes: 25
     steps:
-      # Note: older GHES versions may require actions/checkout@v3 and
-      # actions/upload-artifact@v3; v4 is the default here.
+      # Note: upload-artifact v4 is not supported on GHES; the kit pins
+      # v3.2.2-node20 (Node 20, like checkout@v4). Sync both actions to GHES
+      # when the instance is air-gapped.
       - name: Checkout target PR head
         uses: actions/checkout@v4
         with:
@@ -93,7 +95,7 @@ jobs:
 
       - name: Upload review artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3.2.2-node20
         with:
           name: ai-review-${{ github.event.pull_request.number }}
           path: |

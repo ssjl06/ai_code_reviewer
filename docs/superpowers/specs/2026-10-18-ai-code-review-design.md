@@ -487,7 +487,8 @@ review payload instead of posting.
 - `on: workflow_call` with inputs (model, max chunks, concurrency) and secrets.
 - `concurrency: group: ai-review-${{ github.event.pull_request.number }}`,
   `cancel-in-progress: true`.
-- `permissions: contents: read, pull-requests: write` (the bot PAT does the posting).
+- `permissions: contents: read` (the bot PAT does the posting; a called workflow cannot elevate
+  the caller's `GITHUB_TOKEN`).
 - Steps: checkout target PR (`persist-credentials: false`, `fetch-depth: 0`),
   checkout `ai-review` kit into a separate path, run `review/cli.py`, upload logs.
 

@@ -20,7 +20,8 @@ Copy `docs/caller-example.yml` to `.github/workflows/ai-review.yml` in the targe
 `your-org` with the org that hosts this kit. `secrets: inherit` passes the org secrets.
 
 ## GHES notes
-- `actions/upload-artifact@v4` needs GHES >= 3.13; on older versions use `@v3`.
+- `actions/upload-artifact@v4` is not supported on GHES; the kit uses `@v3.2.2-node20`.
+  In an air gap, sync `actions/upload-artifact` (and `actions/checkout`) to GHES first.
 - The LiteLLM config example is in `docs/litellm-config.example.yaml`.
 
 ## Branch protection
@@ -91,7 +92,7 @@ Fixture: `examples/buggy-pr/make_repo.sh /tmp/x` creates a repo with four plante
 | Context length errors | `--max-model-len` too small; lower `chunk_max_tokens` |
 | `✖ ... denied` lines | guard blocked a command; harmless unless the model needed it |
 | Review is always `COMMENT` | chunks incomplete (timeout/turn limit) or bot cannot approve its own PR |
-| Artifact upload fails | GHES < 3.13: use `upload-artifact@v3` |
+| Artifact upload fails | `upload-artifact@v3.2.2-node20` not synced to the air-gapped GHES (v4 is unsupported on GHES) |
 | 403/422 posting review | bot lacks write access, or PAT scope too small |
 
 ## Pending verification on the runner
