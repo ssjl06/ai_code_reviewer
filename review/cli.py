@@ -8,6 +8,7 @@ import sys
 import time
 from typing import List, Optional
 
+from review import cli_util as cu
 from review import scope as sc
 from review.aggregate import merge, split_inline
 from review.claude_cmd import write_agents_file
@@ -57,7 +58,7 @@ def _missing(args, env) -> List[str]:
 def _inputs(args, env):
     """Return (gh, base, head, title, prev)."""
     if args.dry_run:
-        return None, args.base, args.head, "", sc.read_state_file(args.state_file)
+        return None, args.base, args.head, "", cu.read_state_file(args.state_file)
     gh = GitHub(env["GITHUB_API_URL"], env["AI_REVIEW_BOT_PAT"], env["GITHUB_REPOSITORY"], args.pr)
     pr = gh.get_pr()
     base, head = args.base or pr["base"]["sha"], args.head or pr["head"]["sha"]
@@ -70,14 +71,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = _parser().parse_args(argv)
     env = dict(os.environ)
     try:
-        cfg = load_config(args.config, sc.parse_overrides(args.set))
+        cfg = load_config(args.config, cu.parse_overrides(args.set))
     except (KeyError, ValueError, OSError) as e:
         return _fail("invalid config: %s" % e)
     missing = _missing(args, env)
     if missing:
         return _fail("missing required environment/arguments: " + ", ".join(missing))
     deadline = t0 + cfg["deadline_s"]
-    out_dir = os.path.abspath(args.out_dir or sc.default_out_dir(env))
+    out_dir = os.path.abspath(args.out_dir or cu.default_out_dir(env))
     repo = os.path.abspath(args.repo)
     try:
         gh, base, head, title, prev = _inputs(args, env)
@@ -121,14 +122,14 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
     state = sc.next_state(head, review, scope, chunks, results)
     meta = {"model": env.get("AI_REVIEW_MODEL") or cfg["model"], "chunks": len(chunks),
             "duration_s": time.monotonic() - t0, "range": scope["range"], "mode": scope["mode"],
-            "reviewed": sc.reviewed_files(chunks), "skipped": skipped}
+            "reviewed": cu.reviewed_files(chunks), "skipped": skipped}
     body = render_body(review, body_only, meta, state)
     fallback = render_body(review, inline + body_only, meta, state)
     comments = [{"path": f["file"], "line": f["line"], "side": "RIGHT", "body": render_inline(f)}
                 for f in inline]
     log("판정: %s · 새 지적 %d건 (inline %d) · 미완료 조각 %d개" % (
         review["event"], len(review["findings"]), len(inline), len(review["incomplete"])))
-    sc.append_step_summary(env, results)
+    cu.append_step_summary(env, results)
     payload = {"event": review["event"], "body": body, "comments": comments}
     with open(os.path.join(out_dir, "review.json"), "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)

@@ -95,6 +95,7 @@ def normalize_state(state: Any) -> Optional[dict]:
     return {"v": 2, "sha": sha if isinstance(sha, str) else "",
             "complete": state.get("complete") is True,
             "seen": _str_map(state.get("seen")), "seen_files": _str_map(state.get("seen_files")),
+            "seen_hunks": _str_map(state.get("seen_hunks")),
             "findings": [dict(e, anchor=e.get("anchor") if isinstance(e.get("anchor"), str)
                               else "")
                          for e in (findings if isinstance(findings, list) else [])

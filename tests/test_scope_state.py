@@ -5,7 +5,8 @@ import unittest
 from collections import Counter
 
 from review.fingerprint import decode_seen
-from review.scope import next_state, parse_overrides, read_state_file
+from review.cli_util import parse_overrides, read_state_file
+from review.scope import next_state
 
 NEW = {"id": "n1", "file": "a", "line": 1, "anchor": "0a0b0c0d", "title": "t",
        "severity": "major", "blocking": True, "confidence": 90, "detail": "d"}
@@ -27,7 +28,7 @@ class NextStateTest(unittest.TestCase):
         review = {"findings": [NEW], "previous": prev, "complete": True}
         scope = empty_scope(head_prints={"a": Counter([P1])}, prev_seen={"a": Counter([P1])})
         st = next_state("h", review, scope, [], [])
-        self.assertEqual(set(st), {"v", "sha", "complete", "seen", "seen_files", "findings"})
+        self.assertEqual(set(st), {"v", "sha", "complete", "seen", "seen_files", "seen_hunks", "findings"})
         self.assertEqual((st["v"], st["sha"], st["complete"]), (2, "h", True))
         self.assertEqual([f["id"] for f in st["findings"]], ["n1", "p1", "p3"])
         self.assertEqual(set(st["findings"][1]), {"id", "file", "line", "anchor", "title",
@@ -60,7 +61,8 @@ class HelpersTest(unittest.TestCase):
             with open(p, "w") as f:
                 json.dump({"v": 2, "sha": "x", "complete": True, "findings": []}, f)
             self.assertEqual(read_state_file(p), {"v": 2, "sha": "x", "complete": True,
-                                                  "seen": {}, "seen_files": {}, "findings": []})
+                                                  "seen": {}, "seen_files": {}, "seen_hunks": {},
+                                                  "findings": []})
 
 
 if __name__ == "__main__":

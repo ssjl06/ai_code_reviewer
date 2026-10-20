@@ -67,21 +67,26 @@ class NormalizeStateTest(unittest.TestCase):
 
     def test_v2_round_trip(self):
         st = {"v": 2, "sha": "abc", "complete": True, "seen": {"a.c": "AQIDBA=="},
-              "seen_files": {"b.c": "AQIDBA=="}, "findings": [self.OK]}
+              "seen_files": {"b.c": "AQIDBA=="}, "seen_hunks": {"a.c": "BQYHCA=="},
+              "findings": [self.OK]}
         self.assertEqual(normalize_state(st), st)
+        old = {k: v for k, v in st.items() if k != "seen_hunks"}  # states before seen_hunks
+        self.assertEqual(normalize_state(old), dict(old, seen_hunks={}))
 
     def test_bad_entries_dropped(self):
         ok = self.OK
         bad = [dict(ok, id=1), dict(ok, line="2"), dict(ok, blocking="yes"), "x",
                {k: v for k, v in ok.items() if k != "title"}]
         st = {"v": 2, "sha": "abc", "findings": bad + [ok, dict(ok, anchor=5)],
-              "seen": {"a.c": 1, "b.c": "x", 3: "y"}, "seen_files": "z"}
+              "seen": {"a.c": 1, "b.c": "x", 3: "y"}, "seen_files": "z",
+              "seen_hunks": {"a.c": 2, "c.c": "y"}}
         self.assertEqual(normalize_state(st),
                          {"v": 2, "sha": "abc", "complete": False, "seen": {"b.c": "x"},
-                          "seen_files": {}, "findings": [ok, dict(ok, anchor="")]})
+                          "seen_files": {}, "seen_hunks": {"c.c": "y"},
+                          "findings": [ok, dict(ok, anchor="")]})
         self.assertEqual(normalize_state({"v": 2, "sha": 1, "complete": "yes", "findings": "x"}),
                          {"v": 2, "sha": "", "complete": False, "seen": {}, "seen_files": {},
-                          "findings": []})
+                          "seen_hunks": {}, "findings": []})
 
     def test_not_v2_is_none(self):
         self.assertIsNone(normalize_state({"sha": "abc", "findings": [self.OK]}))  # v1

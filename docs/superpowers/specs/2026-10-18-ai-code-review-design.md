@@ -253,19 +253,30 @@ Hidden in the bot review body; the latest bot review with a parsable marker
   "complete": true,
   "seen": {"<path>": "<base64 of concatenated 4-byte fingerprints>"},
   "seen_files": {"<path>": "<base64 of one 4-byte whole-file hash>"},
+  "seen_hunks": {"<path>": "<base64 of concatenated 4-byte hunk keys>"},
   "findings": [{"id", "file", "line", "anchor", "title", "severity", "blocking"}]} -->
 ```
 
 - `seen` is a **multiset**: a fingerprint appears once per reviewed occurrence
   (added and removed lines together). It holds about 5.3 characters per reviewed line. The fingerprint part is
   capped at 24,000 characters (about 4,500 lines; GitHub body limit is 65,536).
-  Over the cap, the largest files move to `seen_files`: one hash of all of the
+  Over the cap, files move to `seen_files`: one hash of all of the
   file's added- and removed-line fingerprints. Such a file is reviewed again in full when any
-  of its added lines changes.
+  of its added lines changes. Fully reviewed files move first (largest first), since the
+  hash of a partially reviewed file never matches its head.
+- `seen_hunks` (optional; older states without it are fine) holds, for a file not yet
+  fully reviewed line by line, the **hunk keys** of the (sub-)hunks already reviewed in
+  an `ok` chunk: `sha1("<new-side start>\n" + sorted change fingerprints)[:4]`. A
+  (sub-)hunk whose key is listed is not sent again, and its lines count as reviewed. Same
+  content at the same position gives the same key; a moved or edited hunk gets a new key,
+  and a truncated hunk never gets one. This lets a capped (`max_chunks`) or oversized
+  review resume on the same head even when line counts cannot progress (identical lines)
+  or the line-level `seen` of the file does not fit the cap. Keys of fully reviewed
+  files, and keys no longer in the head diff, are dropped.
 - The whole marker is budgeted at 40,000 characters. Over it, in order: the largest
   files move from `seen` to `seen_files` (measured on the serialized marker, path
-  keys included); then `seen` and `seen_files` are dropped entirely (the next run
-  reviews everything again); then non-blocking findings are dropped, oldest first.
+  keys included; partially reviewed files last); then `seen`, `seen_files` and
+  `seen_hunks` are dropped entirely (the next run reviews everything again); then non-blocking findings are dropped, oldest first.
   Blocking findings are never dropped.
 - `seen` and `seen_files` only keep paths that are still in the PR diff.
 - `complete` is true only when the run reviewed everything in scope (6.5).
@@ -352,7 +363,9 @@ Hidden in the bot review body; the latest bot review with a parsable marker
 - After a run, `seen[path]` holds, per fingerprint, the number of its occurrences
   inside `ok` chunks (plus still-matching previous entries); it gains only the lines of `ok` chunks. Lines of `partial`,
   `incomplete` and `failed` chunks, and of files skipped by `max_chunks`, stay new
-  and are reviewed on the next run (re-reports are dropped by anchor, 6.4).
+  and are reviewed on the next run (re-reports are dropped by anchor, 6.4). The keys of
+  the (sub-)hunks of `ok` chunks go to `seen_hunks` (6.2), so the next run on the same
+  head continues with the next hunks instead of starting over.
 - `complete` = every chunk `ok`, no file skipped by `max_chunks` and no file truncated. When it is
   false the verdict cannot be APPROVE (section 8).
 - First review: instructions demand reporting all issues at once. LiteLLM sets
