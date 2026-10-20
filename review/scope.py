@@ -81,7 +81,7 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
     targets += _recheck(previous, rev, tpaths, limit)
     if prev is None:
         mode = "full"
-    elif not targets and not any(p["pre"] == "resolved" for p in previous):
+    elif not targets and not any(p["pre"] == "resolved" or p.get("moved") for p in previous):
         mode = "unchanged"
     else:
         mode = "incremental"
@@ -91,8 +91,8 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
 
 
 def _recheck(previous: List[dict], rev: List[dict], tpaths: Set[str], limit: int) -> List[dict]:
-    """A lost previous finding in a PR file without new lines: the hunks nearest its old
-    line become targets (none of their lines is in `changed`) and the model is asked."""
+    """A lost (or anchor-moved) previous finding in a PR file without new lines: the hunks
+    nearest its line become targets (none of their lines is in `changed`); the model is asked."""
     lost: Dict[str, List[dict]] = {}
     for p in previous:
         if p["pre"] == "open" and not p["located"] and p["file"] not in tpaths:

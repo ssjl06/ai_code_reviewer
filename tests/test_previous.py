@@ -28,8 +28,8 @@ class RelocateTest(unittest.TestCase):
         blobs = {"a.py": ["x"], "src/new.cu": ["//"] + LINES}
         r = relocate([E(file="src/mid.cu")], {"a.py", "src/new.cu"}, blobs, set(), {},
                      search=["a.py", "src/new.cu"])[0]
-        self.assertEqual((r["file"], r["line"], r["located"], r["pre"]),
-                         ("src/new.cu", 3, True, "open"))
+        self.assertEqual((r["file"], r["line"], r["located"], r["pre"], r.get("moved")),
+                         ("src/new.cu", 3, False, "open", True))
 
     def test_reverted_file_not_searched(self):
         blobs = {"src/k.cu": LINES, "src/new.cu": LINES}

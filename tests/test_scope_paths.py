@@ -48,7 +48,7 @@ class MovedToExcludedFileTest(unittest.TestCase):
         self.assertIn("D\tk.cu", names)
         s, _, rv, _ = review(r, base, head, st)
         self.assertEqual([(p["file"], p["pre"], p["located"]) for p in s["previous"]],
-                         [("vendor/module.cu", "open", True)])
+                         [("vendor/module.cu", "open", False)])
         self.assertEqual(rv["event"], "REQUEST_CHANGES")
 
     def test_moved_into_excluded_file_already_loaded_for_other_finding(self):
@@ -70,7 +70,8 @@ class MovedToExcludedFileTest(unittest.TestCase):
                          + pad, "a.py": PY + "w = 2\n"})
         s, _, rv, _ = review(r, base, head, st)
         self.assertEqual(sorted((p["file"], p["pre"], p["located"]) for p in s["previous"]),
-                         [("vendor/module.cu", "open", True)] * 2)
+                         [("vendor/module.cu", "open", False),
+                          ("vendor/module.cu", "open", True)])
         self.assertEqual(rv["event"], "REQUEST_CHANGES")
 
 
@@ -85,9 +86,9 @@ class RenameChainTest(unittest.TestCase):
         self.assertEqual(self.st["findings"][0]["file"], "middle.py")
         self.r.git("mv", "middle.py", "final.py")
 
-    def _assert_open(self, previous):
+    def _assert_open(self, previous, located=True):
         self.assertEqual([(p["file"], p["pre"] in ("open", "ask"), p["located"], p["line"])
-                          for p in previous], [("final.py", True, True, 6)])
+                          for p in previous], [("final.py", True, located, 6)])
 
     def test_rename_only_keeps_finding(self):
         head = self.r.commit({})
@@ -107,8 +108,9 @@ class RenameChainTest(unittest.TestCase):
         head = self.r.commit({})
         st = dict(self.st, sha="0" * 40)
         s, _, rv, nxt = review(self.r, self.base, head, st)
-        self._assert_open(s["previous"])
-        self.assertEqual(rv["event"], "REQUEST_CHANGES")
+        # found only by the anchor search: asked, unreported -> unclear (not trusted as open)
+        self._assert_open(s["previous"], located=False)
+        self.assertEqual((rv["event"], rv["unclear_blocking"]), ("COMMENT", True))
         self.assertEqual([f["file"] for f in nxt["findings"]], ["final.py"])
 
 
