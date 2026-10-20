@@ -68,7 +68,14 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
             targets.append(sel["file"])
             out["added"][path], out["deleted"][path] = sel["added"], sel["deleted"]
     tpaths = {t["path"] for t in targets}
-    previous = relocate(findings, live, blobs, tpaths, names, gone, [f["path"] for f in rev])
+    search = [f["path"] for f in rev]
+    sblobs = blobs
+    if any(names[e["file"]] not in live and names[e["file"]] not in blobs for e in findings):
+        # the flagged code may have moved into a live file that is not reviewed (vendor/...)
+        more = [f["path"] for f in pr_files if f["status"] != "D" and not f["binary"]
+                and f["path"] not in blobs]
+        sblobs, search = dict(blobs, **read_blobs(repo, head, more)), search + more
+    previous = relocate(findings, live, sblobs, tpaths, names, gone, search)
     changed = line_map(targets, "right_lines") if prev is None else {
         p: out["added"][p] | out["deleted"][p] for p in tpaths}
     targets += _recheck(previous, rev, tpaths, limit)

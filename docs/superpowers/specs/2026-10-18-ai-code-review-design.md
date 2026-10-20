@@ -345,7 +345,7 @@ Hidden in the bot review body; the latest bot review with a parsable marker
 | Case | Status |
 |---|---|
 | File no longer in the PR diff, present at head (reverted) | `resolved` (note: 파일이 PR에서 빠짐) |
-| File deleted in the PR (or gone along an unknown rename) | anchor searched in the live PR files (first match in diff order moves the finding there); not found -> `resolved` (note: 파일이 삭제됨, or 파일이 PR에서 빠짐 if not a deletion) |
+| File deleted in the PR (or gone along an unknown rename) | anchor searched in the live PR files (first match in diff order moves the finding there); not found -> `resolved` (note: 파일이 삭제됨, or 파일이 PR에서 빠짐 if not a deletion). The search also covers live PR files that are not reviewed (excluded globs), so a finding moved into e.g. `vendor/` stays open and keeps blocking |
 | Anchor found at head, file has no new lines | `open`, line updated, no LLM call |
 | Anchor found at head, file has new lines | sent to the model; unreported -> `open` |
 | Anchor not found (line changed or removed) | sent to the model with its title and old line; unreported -> `unclear`. If the file has no new lines, the hunk nearest the old line is sent (no new findings accepted on it) |

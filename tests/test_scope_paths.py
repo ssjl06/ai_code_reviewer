@@ -1,4 +1,5 @@
 """Previous findings on files that a later push deletes or renames again."""
+import os
 import unittest
 
 from tests.test_scope_regress import Repo, review
@@ -27,6 +28,27 @@ class DeletedFileTest(unittest.TestCase):
         self.assertEqual([(p["status"], p["note"]) for p in rv["previous"]],
                          [("resolved", "파일이 삭제됨")])
         self.assertEqual(rv["event"], "APPROVE")
+
+
+class MovedToExcludedFileTest(unittest.TestCase):
+    def test_finding_moved_into_excluded_file_stays_open(self):
+        r = Repo(self)
+        base = r.commit({"k.cu": K, "a.py": PY})
+        head = r.commit({"k.cu": K.replace("int k5 = 5;", "int k5 = *null;"),
+                         "a.py": PY + "w = 1\n"})
+        _, _, rv, st = review(r, base, head, None, finds=[bad("k.cu", 6)])
+        self.assertEqual(rv["event"], "REQUEST_CHANGES")
+        r.git("rm", "-q", "k.cu")
+        os.makedirs(os.path.join(r.d, "vendor"))
+        pad = "".join("static int pad%d = %d;\n" % (i, i * 7) for i in range(200))
+        head = r.commit({"vendor/module.cu": K.replace("int k5 = 5;", "int k5 = *null;") + pad,
+                         "a.py": PY + "w = 2\n"})
+        names = r.git("diff", "-M", "--name-status", base, head).split("\n")
+        self.assertIn("D\tk.cu", names)
+        s, _, rv, _ = review(r, base, head, st)
+        self.assertEqual([(p["file"], p["pre"], p["located"]) for p in s["previous"]],
+                         [("vendor/module.cu", "open", True)])
+        self.assertEqual(rv["event"], "REQUEST_CHANGES")
 
 
 class RenameChainTest(unittest.TestCase):
