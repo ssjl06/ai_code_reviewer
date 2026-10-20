@@ -75,7 +75,8 @@ def scan_hunk(hunk: str, lines: List[str]) -> List[dict]:
 
 
 def _key(hunk: str, changes: List[dict]) -> bytes:
-    return hunk_key(int(HUNK_RE.match(hunk).group(1)), (c["fp"] for c in changes))
+    m = _FULL.match(hunk.split("\n", 1)[0])
+    return hunk_key(int(m.group(1)), int(m.group(3)), (c["fp"] for c in changes))
 
 
 def select_file(f: dict, lines: List[str], seen: Optional[Counter],

@@ -15,18 +15,20 @@ def _add(dst: Seen, src: Seen) -> None:
 
 
 def update_seen(scope: dict, chunks: List[dict], results: List[dict]) -> Seen:
-    """A print counts as reviewed only when every copy of it in the targets went through
-    an `ok` chunk (or a hunk skipped as reviewed by its key: `prior`); otherwise the
-    previous count is kept (capped at the head count)."""
+    """A print counts as reviewed only when it went through an `ok` chunk of this run (or a
+    hunk skipped as reviewed by its key: `prior`) and no copy of it is left unreviewed: in
+    a non-ok chunk or in a target beyond this run's ok copies (`prior` is not subtracted:
+    those copies are not in the targets). Otherwise the previous count is kept (capped)."""
     blobs = scope["blobs"]
     status = {r["index"]: r.get("status") for r in results}
-    ok: Seen = {p: Counter(c) for p, c in scope.get("prior", {}).items()}
+    ok: Seen = {}
     bad: Seen = {}
     for c in chunks:
         _add(ok if status.get(c["index"]) == "ok" else bad, diff_prints(c["diff"], blobs))
     for t in scope["targets"]:
         left = diff_prints(t["text"], blobs).get(t["path"], Counter())
         _add(bad, {t["path"]: left - ok.get(t["path"], Counter())})
+    _add(ok, scope.get("prior", {}))
     out: Seen = {}
     for path, head in scope["head_prints"].items():
         o, b = ok.get(path, Counter()), bad.get(path, Counter())

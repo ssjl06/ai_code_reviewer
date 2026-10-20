@@ -35,9 +35,11 @@ def anchor_line(lines: List[str], pos: int) -> int:
     return pos if pos <= len(lines) else max(len(lines), 1)
 
 
-def hunk_key(start: int, prints: Iterable[bytes]) -> bytes:
-    """Position + content of one (sub-)hunk: `start` is the new-side start of its header."""
-    return hashlib.sha1(b"%d\n" % start + b"".join(sorted(prints))).digest()[:4]
+def hunk_key(old_start: int, new_start: int, prints: Iterable[bytes]) -> bytes:
+    """Position + content of one (sub-)hunk: both header starts, since the sub-hunks of a
+    deletion share their new-side start (and, for repeated text, their prints)."""
+    head = b"%d,%d\n" % (old_start, new_start)
+    return hashlib.sha1(head + b"".join(sorted(prints))).digest()[:4]
 
 
 def pack(c: Counter) -> str:

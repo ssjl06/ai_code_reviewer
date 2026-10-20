@@ -29,9 +29,20 @@ def scope_of(f, lines, sel, prev_hunks=()):
 class HunkKeyTest(unittest.TestCase):
     def test_key_is_position_and_content(self):
         a, b = b"\x01\x02\x03\x04", b"\x05\x06\x07\x08"
-        self.assertEqual(hunk_key(3, [a, b]), hunk_key(3, [b, a]))
-        self.assertNotEqual(hunk_key(3, [a, b]), hunk_key(4, [a, b]))
-        self.assertNotEqual(hunk_key(3, [a, b]), hunk_key(3, [a]))
+        self.assertEqual(hunk_key(1, 3, [a, b]), hunk_key(1, 3, [b, a]))
+        self.assertNotEqual(hunk_key(1, 3, [a, b]), hunk_key(1, 4, [a, b]))
+        self.assertNotEqual(hunk_key(1, 3, [a, b]), hunk_key(2, 3, [a, b]))
+        self.assertNotEqual(hunk_key(1, 3, [a, b]), hunk_key(1, 3, [a]))
+
+    def test_identical_deletion_sub_hunks_differ(self):
+        rows = "".join("-  0, 0,\n" for _ in range(400))
+        f = parse_unified_diff(HDR + "@@ -1,401 +1,1 @@\n keep\n" + rows)[0]
+        sel = select_file(f, ["keep"], None, None, limit_chars=LIMIT)
+        subs = split_hunks(sel["file"]["text"])[1]
+        self.assertGreater(len(subs), 3)
+        self.assertEqual(len(sel["keys"]), len(subs))
+        self.assertEqual(diff_hunk_keys(sel["file"]["text"], {"f.py": ["keep"]})["f.py"],
+                         sel["keys"])
 
     def test_key_survives_split_and_chunking(self):
         sel = select_file(big(), LINES, None, None, limit_chars=LIMIT)
@@ -102,8 +113,8 @@ class HunkKeyTest(unittest.TestCase):
 
 class FullFirstTest(unittest.TestCase):
     def test_encode_seen_compacts_full_files_first(self):
-        part = Counter(hunk_key(i, [b"p"]) for i in range(50))
-        done = Counter(hunk_key(i, [b"d"]) for i in range(10))
+        part = Counter(hunk_key(0, i, [b"p"]) for i in range(50))
+        done = Counter(hunk_key(0, i, [b"d"]) for i in range(10))
         raw, files = encode_seen({"part.py": part, "done.py": done}, cap=len(pack(part)),
                                  full={"done.py"})
         self.assertEqual((set(raw), set(files)), ({"part.py"}, {"done.py"}))
@@ -111,8 +122,8 @@ class FullFirstTest(unittest.TestCase):
                          {"done.py": whole_hash(done)})
 
     def test_fit_state_pops_partial_last_and_drop_clears_hunks(self):
-        part = pack(Counter(hunk_key(i, [b"p"]) for i in range(50)))
-        done = pack(Counter(hunk_key(i, [b"d"]) for i in range(10)))
+        part = pack(Counter(hunk_key(0, i, [b"p"]) for i in range(50)))
+        done = pack(Counter(hunk_key(0, i, [b"d"]) for i in range(10)))
         st = {"v": 2, "sha": "h", "complete": False, "seen": {"part.py": part, "done.py": done},
               "seen_files": {}, "seen_hunks": {"part.py": "AQIDBA=="}, "findings": []}
         out = fit_state(st, budget=len(state_marker(st)) - 10, partial={"part.py"})

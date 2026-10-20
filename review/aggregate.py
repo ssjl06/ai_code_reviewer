@@ -33,15 +33,19 @@ def _strength(f: dict) -> Tuple[int, int]:
 
 def _collect(results: List[dict], cfg: dict, changed: Optional[Dict[str, Set[int]]],
              chunk_files=None):
+    """Paths resolve against the reporting chunk's own files first (a literal `b/x` and `x`
+    may sit in different chunks), then against the whole PR."""
     known = set(changed) if changed is not None else (
         {f for fs in chunk_files.values() for f in fs} if chunk_files else None)
     kept, dropped = [], 0
     for r in results:
         if r.get("status") not in OK_STATUSES or not r.get("output"):
             continue
+        own = set(chunk_files.get(r["index"], ())) if chunk_files is not None else set()
         for raw in r["output"].get("findings", []):
             f = dict(raw)
-            f["file"] = normalize_path(f["file"], known)
+            path = normalize_path(f["file"], own)
+            f["file"] = path if path in own else normalize_path(f["file"], known)
             if f.get("confidence", 0) < cfg["min_confidence"]:
                 dropped += 1
             elif changed is not None and f.get("line") not in changed.get(f["file"], set()):

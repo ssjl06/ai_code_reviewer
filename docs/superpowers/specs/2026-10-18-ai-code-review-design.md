@@ -266,7 +266,9 @@ Hidden in the bot review body; the latest bot review with a parsable marker
   hash of a partially reviewed file never matches its head.
 - `seen_hunks` (optional; older states without it are fine) holds, for a file not yet
   fully reviewed line by line, the **hunk keys** of the (sub-)hunks already reviewed in
-  an `ok` chunk: `sha1("<new-side start>\n" + sorted change fingerprints)[:4]`. A
+  an `ok` chunk: `sha1("<old-side start>,<new-side start>\n" + sorted change
+  fingerprints)[:4]`, both starts taken from the (sub-)hunk header (the sub-hunks of a
+  deletion share their new-side start, and repeated deleted text their prints). A
   (sub-)hunk whose key is listed is not sent again, and its lines count as reviewed. Same
   content at the same position gives the same key; a moved or edited hunk gets a new key,
   and a truncated hunk never gets one. This lets a capped (`max_chunks`) or oversized
@@ -365,7 +367,11 @@ Hidden in the bot review body; the latest bot review with a parsable marker
   `incomplete` and `failed` chunks, and of files skipped by `max_chunks`, stay new
   and are reviewed on the next run (re-reports are dropped by anchor, 6.4). The keys of
   the (sub-)hunks of `ok` chunks go to `seen_hunks` (6.2), so the next run on the same
-  head continues with the next hunks instead of starting over.
+  head continues with the next hunks instead of starting over. A fingerprint reaches
+  its head count only when it appears in an `ok` chunk of this run or in a hunk skipped
+  by key, and no copy of it is left in a non-`ok` chunk or in this run's targets beyond
+  the copies sent in `ok` chunks (skipped-by-key copies are not subtracted, as they are
+  not in the targets).
 - `complete` = every chunk `ok`, no file skipped by `max_chunks` and no file truncated. When it is
   false the verdict cannot be APPROVE (section 8).
 - First review: instructions demand reporting all issues at once. LiteLLM sets

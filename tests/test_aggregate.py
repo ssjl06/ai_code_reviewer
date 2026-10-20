@@ -139,6 +139,17 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual([f["file"] for f in r["findings"]], ["a/m.py"])
         self.assertEqual(normalize_path("b/a/m.py", {"a/m.py"}), "a/m.py")
 
+    def test_prefix_resolved_by_reporting_chunk(self):
+        changed = {"src/x.py": {10}, "b/src/x.py": {20}}
+        files = {0: ["src/x.py"], 1: ["b/src/x.py"]}
+        r = merge([res(0, [F(file="b/src/x.py", line=10, sev="critical")]), res(1, [])], CFG,
+                  [], changed, False, chunk_files=files)
+        self.assertEqual(r["event"], "REQUEST_CHANGES")
+        self.assertEqual([f["file"] for f in r["findings"]], ["src/x.py"])
+        r = merge([res(0, []), res(1, [F(file="b/src/x.py", line=20, sev="critical")])], CFG,
+                  [], changed, False, chunk_files=files)
+        self.assertEqual([f["file"] for f in r["findings"]], ["b/src/x.py"])
+
     def test_finding_id_stable(self):
         f = {"file": "a", "line": 1, "title": "t"}
         self.assertEqual(finding_id(f), finding_id(dict(f)))
