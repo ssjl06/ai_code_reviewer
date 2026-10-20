@@ -68,13 +68,13 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
             targets.append(sel["file"])
             out["added"][path], out["deleted"][path] = sel["added"], sel["deleted"]
     tpaths = {t["path"] for t in targets}
-    search = [f["path"] for f in rev]
     sblobs = blobs
+    search = [f["path"] for f in rev]
     if any(names[e["file"]] not in live and names[e["file"]] not in blobs for e in findings):
-        # the flagged code may have moved into a live file that is not reviewed (vendor/...)
-        more = [f["path"] for f in pr_files if f["status"] != "D" and not f["binary"]
-                and f["path"] not in blobs]
-        sblobs, search = dict(blobs, **read_blobs(repo, head, more)), search + more
+        # the flagged code may have moved into any live file, reviewed or not (vendor/...)
+        search += [f["path"] for f in pr_files if f["status"] != "D" and not f["binary"]
+                   and f["path"] not in search]
+        sblobs = dict(blobs, **read_blobs(repo, head, [p for p in search if p not in blobs]))
     previous = relocate(findings, live, sblobs, tpaths, names, gone, search)
     changed = line_map(targets, "right_lines") if prev is None else {
         p: out["added"][p] | out["deleted"][p] for p in tpaths}

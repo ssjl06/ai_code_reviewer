@@ -2,6 +2,7 @@
 import os
 import unittest
 
+from review.previous import anchor_of
 from tests.test_scope_regress import Repo, review
 
 K = "".join("int k%d = %d;\n" % (i, i) for i in range(20))
@@ -48,6 +49,28 @@ class MovedToExcludedFileTest(unittest.TestCase):
         s, _, rv, _ = review(r, base, head, st)
         self.assertEqual([(p["file"], p["pre"], p["located"]) for p in s["previous"]],
                          [("vendor/module.cu", "open", True)])
+        self.assertEqual(rv["event"], "REQUEST_CHANGES")
+
+    def test_moved_into_excluded_file_already_loaded_for_other_finding(self):
+        r = Repo(self)
+        os.makedirs(os.path.join(r.d, "vendor"))
+        vend = PY.replace("v5 = 5", "v5 = *null")
+        base = r.commit({"k.cu": K, "a.py": PY})
+        head = r.commit({"k.cu": K.replace("int k5 = 5;", "int k5 = *null;"),
+                         "vendor/module.cu": vend, "a.py": PY + "w = 1\n"})
+        _, _, rv, st = review(r, base, head, None, finds=[bad("k.cu", 6)])
+        self.assertEqual(rv["event"], "REQUEST_CHANGES")
+        lines = vend.split("\n")
+        other = dict(st["findings"][0], id="deadbeef", file="vendor/module.cu", line=6,
+                     anchor=anchor_of({"vendor/module.cu": lines[:-1]})("vendor/module.cu", 6))
+        st = dict(st, findings=st["findings"] + [other])
+        r.git("rm", "-q", "k.cu")
+        pad = "".join("static int pad%d = %d;\n" % (i, i * 7) for i in range(200))
+        head = r.commit({"vendor/module.cu": vend + K.replace("int k5 = 5;", "int k5 = *null;")
+                         + pad, "a.py": PY + "w = 2\n"})
+        s, _, rv, _ = review(r, base, head, st)
+        self.assertEqual(sorted((p["file"], p["pre"], p["located"]) for p in s["previous"]),
+                         [("vendor/module.cu", "open", True)] * 2)
         self.assertEqual(rv["event"], "REQUEST_CHANGES")
 
 

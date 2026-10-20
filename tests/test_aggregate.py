@@ -150,6 +150,17 @@ class AggregateTest(unittest.TestCase):
                   [], changed, False, chunk_files=files)
         self.assertEqual([f["file"] for f in r["findings"]], ["b/src/x.py"])
 
+    def test_prefix_ambiguous_in_one_chunk_resolved_by_line(self):
+        changed = {"src/x.py": {10}, "b/src/x.py": {20}}
+        files = {0: ["src/x.py", "b/src/x.py"]}
+        r = merge([res(0, [F(file="b/src/x.py", line=10, sev="critical")])], CFG, [], changed,
+                  False, chunk_files=files)
+        self.assertEqual(r["event"], "REQUEST_CHANGES")
+        self.assertEqual([(f["file"], f["line"]) for f in r["findings"]], [("src/x.py", 10)])
+        r = merge([res(0, [F(file="b/src/x.py", line=20, sev="critical")])], CFG, [], changed,
+                  False, chunk_files=files)
+        self.assertEqual([(f["file"], f["line"]) for f in r["findings"]], [("b/src/x.py", 20)])
+
     def test_finding_id_stable(self):
         f = {"file": "a", "line": 1, "title": "t"}
         self.assertEqual(finding_id(f), finding_id(dict(f)))

@@ -31,6 +31,19 @@ def _strength(f: dict) -> Tuple[int, int]:
     return (_sev(f), -f.get("confidence", 0))
 
 
+def _resolve_path(f: dict, own: Set[str], known: Optional[Set[str]],
+                  changed: Optional[Dict[str, Set[int]]]) -> str:
+    raw = _ROOT.sub("", f["file"])
+    cands = list(dict.fromkeys((raw, _DIFF_PREFIX.sub("", raw))))
+    for pool in (own, known):
+        hit = [c for c in cands if pool and c in pool]
+        if len(hit) > 1 and changed is not None:
+            hit = [c for c in hit if f.get("line") in changed.get(c, set())] or hit
+        if hit:
+            return hit[0]
+    return cands[-1]
+
+
 def _collect(results: List[dict], cfg: dict, changed: Optional[Dict[str, Set[int]]],
              chunk_files=None):
     """Paths resolve against the reporting chunk's own files first (a literal `b/x` and `x`
@@ -44,8 +57,7 @@ def _collect(results: List[dict], cfg: dict, changed: Optional[Dict[str, Set[int
         own = set(chunk_files.get(r["index"], ())) if chunk_files is not None else set()
         for raw in r["output"].get("findings", []):
             f = dict(raw)
-            path = normalize_path(f["file"], own)
-            f["file"] = path if path in own else normalize_path(f["file"], known)
+            f["file"] = _resolve_path(f, own, known, changed)
             if f.get("confidence", 0) < cfg["min_confidence"]:
                 dropped += 1
             elif changed is not None and f.get("line") not in changed.get(f["file"], set()):
