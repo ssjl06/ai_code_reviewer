@@ -313,13 +313,17 @@ Hidden in the bot review body; the latest bot review with a parsable marker
 | Rebase with some edits | Only edited lines (and their neighbors) are reviewed |
 | A line deleted (no line added) | The deletion is reviewed; findings go on its anchor line |
 | A reviewed block pasted again in the same file | Count rises, every copy is reviewed again |
-| File renamed | Fingerprints carried over from the old path |
+| File renamed | Fingerprints carried over from the old path (or the previous head's path, 6.4) |
 | Reformat of a whole file (clang-format) | Whole file reviewed again; previous findings there may become `unclear` |
 
 ### 6.4 Previous Findings
 
 - Each finding stores `anchor` = fingerprint of its line. `id` = short hash of
   file, anchor and title, so it survives line shifts.
+- A state path (finding file, `seen`/`seen_files` key) is the previous head's path.
+  It is mapped to head by the renames `previous sha -> head` (`git diff -M`, only
+  when that commit is available locally), then by the renames `base -> head`.
+  Only PR files that are not deleted ("live") count as present.
 - Previous findings in the chunk's files are always passed to the model (full and
   incremental runs), which must not re-report them and only judges
   `resolved/open/unclear`.
@@ -327,7 +331,8 @@ Hidden in the bot review body; the latest bot review with a parsable marker
 
 | Case | Status |
 |---|---|
-| File no longer in the PR diff | `resolved` (note: 파일이 PR에서 빠짐) |
+| File no longer in the PR diff, present at head (reverted) | `resolved` (note: 파일이 PR에서 빠짐) |
+| File deleted in the PR (or gone along an unknown rename) | anchor searched in the live PR files (first match in diff order moves the finding there); not found -> `resolved` (note: 파일이 삭제됨, or 파일이 PR에서 빠짐 if not a deletion) |
 | Anchor found at head, file has no new lines | `open`, line updated, no LLM call |
 | Anchor found at head, file has new lines | sent to the model; unreported -> `open` |
 | Anchor not found (line changed or removed) | sent to the model with its title and old line; unreported -> `unclear`. If the file has no new lines, the hunk nearest the old line is sent (no new findings accepted on it) |

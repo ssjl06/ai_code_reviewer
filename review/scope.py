@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from review.diff_split import line_map, parse_unified_diff, reviewable
 from review.fingerprint import decode_seen, encode_seen, whole_hash
-from review.gitutil import diff_text, read_blobs
+from review.gitutil import diff_text, read_blobs, renames_between
 from review.hunks import near_hunks, select_file
 from review.previous import relocate
 from review.render import render_step_summary
@@ -19,14 +19,16 @@ from review.validate import normalize_state
 STATE_KEYS = ("id", "file", "line", "anchor", "title", "severity", "blocking")
 
 
-def _blob_paths(rev: List[dict], findings: List[dict], pr_paths: Set[str],
-                renames: Dict[str, str]) -> List[str]:
-    """Head files to read: reviewable PR files + files of previous findings still in the PR."""
-    out = [f["path"] for f in rev]
-    for e in findings:
-        p = renames.get(e["file"], e["file"])
-        if p in pr_paths and p not in out:
-            out.append(p)
+def _path_map(repo: str, prev: Optional[dict], head: str, pr_files: List[dict],
+              findings: List[dict]) -> Dict[str, str]:
+    """State path -> head path: renames since the previous head, then base -> head."""
+    base_ren = {f["old_path"]: f["path"] for f in pr_files if f["old_path"]}
+    prev_ren = renames_between(repo, prev["sha"], head) if prev else {}
+    out = {}
+    for p in list((prev or {}).get("seen") or {}) + list((prev or {}).get("seen_files") or {}) \
+            + [e["file"] for e in findings]:
+        q = prev_ren.get(p, p)
+        out[p] = base_ren.get(q, q)
     return out
 
 
@@ -39,18 +41,22 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
                            "prev_seen": {}, "previous": []}
     if prev and prev["sha"] == head and prev["complete"]:
         return out
-    renames = {f["old_path"]: f["path"] for f in pr_files if f["old_path"]}
-    pr_paths = {f["path"] for f in pr_files}
+    live = {f["path"] for f in pr_files if f["status"] != "D"}
+    gone = {f["path"] for f in pr_files if f["status"] == "D"}
     rev = [f for f in pr_files if reviewable(f, cfg)]
     findings = (prev or {}).get("findings") or []
-    blobs = read_blobs(repo, head, _blob_paths(rev, findings, pr_paths, renames))
+    names = _path_map(repo, prev, head, pr_files, findings)
+    want = [f["path"] for f in rev]
+    want += [p for p in dict.fromkeys(names[e["file"]] for e in findings) if p not in want]
+    blobs = read_blobs(repo, head, want)
     seen, whole = decode_seen(prev)
+    alias = {names[k]: k for k in list(seen) + list(whole) if names.get(k, k) != k}
     limit = int(cfg["chunk_max_tokens"] * 3.5)
     targets: List[dict] = []
     for f in rev:
         path, old = f["path"], f["old_path"]
-        s = seen.get(path) or seen.get(old) or Counter()
-        w = whole.get(path) or whole.get(old)
+        s = seen.get(path) or seen.get(alias.get(path)) or seen.get(old) or Counter()
+        w = whole.get(path) or whole.get(alias.get(path)) or whole.get(old)
         sel = select_file(f, blobs.get(path, []), None if prev is None else s, w,
                           limit_chars=limit)
         out["head_prints"][path] = sel["head"]
@@ -60,7 +66,7 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
             targets.append(sel["file"])
             out["added"][path], out["deleted"][path] = sel["added"], sel["deleted"]
     tpaths = {t["path"] for t in targets}
-    previous = relocate(findings, pr_paths, blobs, tpaths, renames)
+    previous = relocate(findings, live, blobs, tpaths, names, gone, [f["path"] for f in rev])
     changed = line_map(targets, "right_lines") if prev is None else {
         p: out["added"][p] | out["deleted"][p] for p in tpaths}
     targets += _recheck(previous, rev, tpaths, limit)

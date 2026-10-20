@@ -20,6 +20,22 @@ class RelocateTest(unittest.TestCase):
         self.assertEqual((r["pre"], r["note"], r["located"]),
                          ("resolved", "파일이 PR에서 빠짐", False))
 
+    def test_deleted_file_note(self):
+        r = relocate([E()], set(), {}, set(), {}, {"src/k.cu"})[0]
+        self.assertEqual((r["pre"], r["note"]), ("resolved", "파일이 삭제됨"))
+
+    def test_gone_file_anchor_found_elsewhere(self):
+        blobs = {"a.py": ["x"], "src/new.cu": ["//"] + LINES}
+        r = relocate([E(file="src/mid.cu")], {"a.py", "src/new.cu"}, blobs, set(), {},
+                     search=["a.py", "src/new.cu"])[0]
+        self.assertEqual((r["file"], r["line"], r["located"], r["pre"]),
+                         ("src/new.cu", 3, True, "open"))
+
+    def test_reverted_file_not_searched(self):
+        blobs = {"src/k.cu": LINES, "src/new.cu": LINES}
+        r = relocate([E()], {"src/new.cu"}, blobs, set(), {}, search=["src/new.cu"])[0]
+        self.assertEqual((r["file"], r["pre"], r["note"]), ("src/k.cu", "resolved", "파일이 PR에서 빠짐"))
+
     def test_shifted_line_relocated(self):
         blobs = {"src/k.cu": ["//"] * 10 + LINES}
         r = relocate([E()], {"src/k.cu"}, blobs, set(), {})[0]

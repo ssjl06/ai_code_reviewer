@@ -1,6 +1,7 @@
 """Thin git subprocess helpers."""
 from __future__ import annotations
 
+import re
 import subprocess
 from typing import Dict, List
 
@@ -63,3 +64,24 @@ def read_blobs(repo: str, rev: str, paths: List[str]) -> Dict[str, List[str]]:
         lines = body.decode("utf-8", errors="replace").split("\n")
         blobs[p] = lines[:-1] if lines[-1] == "" else lines
     return blobs
+
+
+def renames_between(repo: str, old_rev: str, new_rev: str) -> Dict[str, str]:
+    """Renames old path -> new path from `old_rev` to `new_rev`; {} when `old_rev` is not a
+    commit sha available locally (e.g. a force-pushed head that was never fetched)."""
+    if not re.fullmatch(r"[0-9a-f]{7,64}", old_rev or ""):
+        return {}
+    ok = subprocess.run(["git", "cat-file", "-e", old_rev + "^{commit}"], cwd=repo,
+                        capture_output=True, timeout=60)
+    if ok.returncode != 0:
+        return {}
+    parts = git(repo, "diff", "--name-status", "-M", "-z", old_rev, new_rev,
+                timeout=120).split("\0")
+    out, i = {}, 0
+    while i < len(parts) and parts[i]:
+        status = parts[i]
+        n = 2 if status[:1] in ("R", "C") else 1
+        if status[:1] == "R" and i + 2 < len(parts):
+            out[parts[i + 1]] = parts[i + 2]
+        i += 1 + n
+    return out

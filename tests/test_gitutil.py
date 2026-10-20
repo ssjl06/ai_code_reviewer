@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from review.gitutil import GitError, diff_text, git, is_ancestor, read_blobs
+from review.gitutil import GitError, diff_text, git, is_ancestor, read_blobs, renames_between
 
 
 def run(repo, *args):
@@ -73,6 +73,18 @@ class GitUtilTest(unittest.TestCase):
         with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["git"], 1)):
             with self.assertRaises(GitError):
                 git(self.repo, "status")
+
+    def test_renames_between(self):
+        start = run(self.repo, "rev-parse", "HEAD")
+        self._commit("ren src.txt", "".join("row %d\n" % i for i in range(20)))
+        mid = run(self.repo, "rev-parse", "HEAD")
+        run(self.repo, "mv", "ren src.txt", "ren dst.txt")
+        run(self.repo, "commit", "-q", "-m", "mv")
+        end = run(self.repo, "rev-parse", "HEAD")
+        self.assertEqual(renames_between(self.repo, mid, end), {"ren src.txt": "ren dst.txt"})
+        self.assertEqual(renames_between(self.repo, start, end), {})
+        for rev in ("", "0" * 40, "--output=x", "HEAD"):
+            self.assertEqual(renames_between(self.repo, rev, end), {}, rev)
 
     def test_unicode_path_not_quoted(self):
         self.assertIn("b/한글.txt", diff_text(self.repo, self.c2, self.c3, merge_base=True))
