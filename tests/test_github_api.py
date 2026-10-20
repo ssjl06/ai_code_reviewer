@@ -111,6 +111,19 @@ class GitHubApiTest(unittest.TestCase):
         gh.post_with_fallback("sha", "APPROVE", "b", [C()], "fb")
         self.assertEqual(json.loads(op.requests[1].data)["event"], "COMMENT")
 
+    def test_own_pr_422_errors_array_falls_back_to_comment(self):
+        body = {"message": "Unprocessable Entity",
+                "errors": ["Can not approve your own pull request"]}
+        gh, op = make([(422, body), (200, {})])
+        gh.post_with_fallback("sha", "APPROVE", "b", [C()], "fb")
+        self.assertEqual(json.loads(op.requests[1].data)["event"], "COMMENT")
+        gh, op = make([(422, {"message": "Validation Failed",
+                              "errors": [{"message": "x own pull request"}, {"code": "c"}]})])
+        with self.assertRaises(GitHubError) as cm:
+            gh.request("POST", "/p", {})
+        self.assertEqual(cm.exception.message,
+                         'Validation Failed: x own pull request; {"code": "c"}')
+
     def test_second_failure_raises(self):
         gh, _ = make([(422, {"message": "a"}), (422, {"message": "b"})])
         with self.assertRaises(GitHubError) as cm:

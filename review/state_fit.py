@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import base64
-from typing import Any
+from typing import AbstractSet, Any
 
 from review.fingerprint import unpack, whole_hash
 from review.render import state_marker
@@ -15,16 +15,18 @@ def _len(obj: Any) -> int:
     return len(state_marker(obj)) - len(state_marker(0)) + 1
 
 
-def fit_state(state: dict, budget: int = MARKER_BUDGET) -> dict:
-    """In order, until the marker fits: move the largest files from seen to seen_files,
-    drop seen and seen_files (the next run reviews everything again), drop the oldest
+def fit_state(state: dict, budget: int = MARKER_BUDGET,
+              partial: AbstractSet[str] = frozenset()) -> dict:
+    """In order, until the marker fits: move the largest files from seen to seen_files
+    (`partial` files, not fully reviewed, last: their hash never matches), drop seen,
+    seen_files and seen_hunks (the next run reviews everything again), drop the oldest
     non-blocking findings (state order is newest first). Blocking findings always stay."""
     st = dict(state, seen=dict(state.get("seen") or {}),
               seen_files=dict(state.get("seen_files") or {}),
               findings=list(state.get("findings") or []))
     seen, files = st["seen"], st["seen_files"]
     total = len(state_marker(st))
-    order = sorted(seen, key=lambda p: (_len({p: seen[p]}), p))
+    order = sorted(seen, key=lambda p: (p not in partial, _len({p: seen[p]}), p))
     while order and total > budget:
         path = order.pop()
         total -= _len({path: seen[path]}) - 1
@@ -34,6 +36,8 @@ def fit_state(state: dict, budget: int = MARKER_BUDGET) -> dict:
             total = len(state_marker(st))  # the estimate may be off by a comma
     if total > budget:
         st["seen"], st["seen_files"] = {}, {}
+        if "seen_hunks" in st:
+            st["seen_hunks"] = {}
         total = len(state_marker(st))
     found = st["findings"]
     for i in range(len(found) - 1, -1, -1):

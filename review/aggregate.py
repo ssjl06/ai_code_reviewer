@@ -8,7 +8,8 @@ from typing import Dict, List, Optional, Set, Tuple
 SEV_RANK = {"critical": 0, "major": 1, "minor": 2, "info": 3}
 OK_STATUSES = ("ok", "partial")
 STATUS_RANK = {"open": 0, "unclear": 1, "resolved": 2}
-_PREFIX = re.compile(r"^(?:\./|a/|b/|/)")
+_ROOT = re.compile(r"^(?:\./|/)+")
+_DIFF_PREFIX = re.compile(r"^[ab]/")
 
 
 def finding_id(f: dict) -> str:
@@ -16,8 +17,10 @@ def finding_id(f: dict) -> str:
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
 
 
-def normalize_path(p: str) -> str:
-    return _PREFIX.sub("", p)
+def normalize_path(p: str, known: Optional[Set[str]] = None) -> str:
+    """Strip `./` and `/`; strip one `a/`/`b/` diff prefix unless the path is a known file."""
+    raw = _ROOT.sub("", p)
+    return raw if known and raw in known else _DIFF_PREFIX.sub("", raw)
 
 
 def _sev(f: dict) -> int:
@@ -28,14 +31,33 @@ def _strength(f: dict) -> Tuple[int, int]:
     return (_sev(f), -f.get("confidence", 0))
 
 
-def _collect(results: List[dict], cfg: dict, changed: Optional[Dict[str, Set[int]]]):
+def _resolve_path(f: dict, own: Set[str], known: Optional[Set[str]],
+                  changed: Optional[Dict[str, Set[int]]]) -> str:
+    raw = _ROOT.sub("", f["file"])
+    cands = list(dict.fromkeys((raw, _DIFF_PREFIX.sub("", raw))))
+    for pool in (own, known):
+        hit = [c for c in cands if pool and c in pool]
+        if len(hit) > 1 and changed is not None:
+            hit = [c for c in hit if f.get("line") in changed.get(c, set())] or hit
+        if hit:
+            return hit[0]
+    return cands[-1]
+
+
+def _collect(results: List[dict], cfg: dict, changed: Optional[Dict[str, Set[int]]],
+             chunk_files=None):
+    """Paths resolve against the reporting chunk's own files first (a literal `b/x` and `x`
+    may sit in different chunks), then against the whole PR."""
+    known = set(changed) if changed is not None else (
+        {f for fs in chunk_files.values() for f in fs} if chunk_files else None)
     kept, dropped = [], 0
     for r in results:
         if r.get("status") not in OK_STATUSES or not r.get("output"):
             continue
+        own = set(chunk_files.get(r["index"], ())) if chunk_files is not None else set()
         for raw in r["output"].get("findings", []):
             f = dict(raw)
-            f["file"] = normalize_path(f["file"])
+            f["file"] = _resolve_path(f, own, known, changed)
             if f.get("confidence", 0) < cfg["min_confidence"]:
                 dropped += 1
             elif changed is not None and f.get("line") not in changed.get(f["file"], set()):
@@ -116,7 +138,7 @@ def _summaries(results: List[dict]) -> List[str]:
 
 def merge(results, cfg, previous, changed, no_targets, skipped=None, anchor=None,
           chunk_files: Optional[Dict[int, List[str]]] = None, truncated=None):
-    kept, dropped = _collect(results, cfg, changed)
+    kept, dropped = _collect(results, cfg, changed, chunk_files)
     findings = _dedupe(kept)
     for f in findings:
         in_block = f.get("severity") in cfg["block_severities"]

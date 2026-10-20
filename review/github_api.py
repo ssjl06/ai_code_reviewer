@@ -19,12 +19,23 @@ class GitHubError(Exception):
         self.message = message
 
 
+def _error_item(e: Any) -> str:
+    if isinstance(e, str):
+        return e
+    if isinstance(e, dict) and e.get("message"):
+        return str(e["message"])
+    return json.dumps(e)
+
+
 def _error_message(raw: bytes) -> str:
+    """`message` plus GitHub's `errors` details (e.g. "Can not approve your own pull request")."""
     text = raw.decode("utf-8", "replace")
     try:
         data = json.loads(text)
         if isinstance(data, dict) and data.get("message"):
-            return str(data["message"])
+            errs = data.get("errors")
+            items = [_error_item(e) for e in (errs if isinstance(errs, list) else [])]
+            return str(data["message"]) + (": " + "; ".join(items) if items else "")
     except ValueError:
         pass
     return text[:500]

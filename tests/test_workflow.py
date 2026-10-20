@@ -16,12 +16,17 @@ class WorkflowTest(unittest.TestCase):
     def test_required_settings(self):
         for s in ["workflow_call:", "shell: bash", "cancel-in-progress: true",
                   "timeout-minutes: 25", "persist-credentials: false",
-                  "fetch-depth: 0", "pull-requests: write", "contents: read",
+                  "fetch-depth: 0", "contents: read",
+                  "uses: actions/upload-artifact@v3.2.2-node20",
                   "group: ai-review-${{ github.event.pull_request.number }}",
                   "python3 -E -s -m review", "runs-on: ${{ fromJSON(inputs.runner_labels) }}",
                   "if: always()", "retention-days: 7", "if-no-files-found: ignore"]:
             self.assertIn(s, W)
         self.assertNotIn("python3 -I -m review", W)
+        # Posting uses the bot PAT; a called workflow cannot elevate GITHUB_TOKEN.
+        self.assertNotIn("pull-requests: write", W)
+        # upload-artifact v4 is not supported on GHES.
+        self.assertNotIn("upload-artifact@v4", W)
 
     def test_inputs_and_secrets_declared(self):
         for s in ["AI_REVIEW_BOT_PAT", "AI_REVIEW_BOT_NAME",
@@ -40,6 +45,8 @@ class WorkflowTest(unittest.TestCase):
         c = _read("docs/caller-example.yml")
         self.assertIn("types: [opened, synchronize, reopened]", c)
         self.assertIn("secrets: inherit", c)
+        self.assertIn("permissions:\n      contents: read", c)
+        self.assertNotIn("pull-requests: write", c)
 
 
 if __name__ == "__main__":

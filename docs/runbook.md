@@ -20,7 +20,8 @@ Copy `docs/caller-example.yml` to `.github/workflows/ai-review.yml` in the targe
 `your-org` with the org that hosts this kit. `secrets: inherit` passes the org secrets.
 
 ## GHES notes
-- `actions/upload-artifact@v4` needs GHES >= 3.13; on older versions use `@v3`.
+- `actions/upload-artifact@v4` is not supported on GHES; the kit uses `@v3.2.2-node20`.
+  In an air gap, sync `actions/upload-artifact` (and `actions/checkout`) to GHES first.
 - The LiteLLM config example is in `docs/litellm-config.example.yaml`.
 
 ## Branch protection
@@ -50,8 +51,9 @@ are sent to the model; the prompt lists them as "검토 대상 줄" (added lines
 - A run that cannot finish gives `COMMENT` (never `APPROVE`): a partial chunk, files skipped by the
   chunk limit, or a previous blocking finding the model could not confirm
   ("이전 차단 지적 확인 필요"). Lines of failed or skipped chunks stay "new" for the next run.
-- If the file with a previous blocking finding is dropped from the PR, the finding is resolved and
-  the review is approved without an LLM call.
+- If the file with a previous blocking finding is dropped from the PR (reverted or deleted), the
+  finding is resolved and the review is approved without an LLM call, unless its line is found in
+  another PR file (code moved): then it follows the line. Renames across pushes are followed.
 
 Trade-offs:
 - A whole-file reformat (clang-format) changes every fingerprint, so the whole file is reviewed
@@ -60,6 +62,9 @@ Trade-offs:
   accepted for findings.
 - If a fingerprint now occurs more often than before (a reviewed block pasted again in the same
   file), every copy is reviewed again.
+- A capped or oversized review (files skipped by the chunk limit, or a file too large for the
+  line-level seen set) resumes by hunk position on the same head: the next run sends the hunks
+  not yet reviewed. A push that shifts a partially reviewed file re-reviews its shifted hunks.
 - An issue missed in an earlier review is not raised later, and a semantic interaction between an
   unchanged PR line and a base-branch change is not reviewed again.
 
@@ -91,7 +96,7 @@ Fixture: `examples/buggy-pr/make_repo.sh /tmp/x` creates a repo with four plante
 | Context length errors | `--max-model-len` too small; lower `chunk_max_tokens` |
 | `✖ ... denied` lines | guard blocked a command; harmless unless the model needed it |
 | Review is always `COMMENT` | chunks incomplete (timeout/turn limit) or bot cannot approve its own PR |
-| Artifact upload fails | GHES < 3.13: use `upload-artifact@v3` |
+| Artifact upload fails | `upload-artifact@v3.2.2-node20` not synced to the air-gapped GHES (v4 is unsupported on GHES) |
 | 403/422 posting review | bot lacks write access, or PAT scope too small |
 
 ## Pending verification on the runner

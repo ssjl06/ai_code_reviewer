@@ -5,8 +5,8 @@ import re
 from collections import Counter
 from typing import Dict, List, Optional, Set
 
-from review.diff_split import HUNK_RE, parse_unified_diff, split_hunks
-from review.fingerprint import anchor_line, fp_line, fp_removed, whole_hash
+from review.diff_split import HUNK_RE, MARKER, parse_unified_diff, split_hunks
+from review.fingerprint import anchor_line, fp_line, fp_removed, hunk_key, whole_hash
 
 _FULL = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
 
@@ -74,16 +74,34 @@ def scan_hunk(hunk: str, lines: List[str]) -> List[dict]:
     return out
 
 
+def _key(hunk: str, changes: List[dict]) -> bytes:
+    m = _FULL.match(hunk.split("\n", 1)[0])
+    return hunk_key(int(m.group(1)), int(m.group(3)), (c["fp"] for c in changes))
+
+
 def select_file(f: dict, lines: List[str], seen: Optional[Counter],
-                whole: Optional[bytes], limit_chars: Optional[int] = None) -> dict:
+                whole: Optional[bytes], limit_chars: Optional[int] = None,
+                seen_hunks: Optional[Counter] = None) -> dict:
+    """Hunks with new prints. A hunk whose key is in `seen_hunks` (reviewed in an ok chunk
+    with this content at this position) is skipped; its prints are returned as `prior`."""
     header, hunks = _hunks(f, limit_chars)
     scans = [scan_hunk(h, lines) for h in hunks]
     head = Counter(c["fp"] for ch in scans for c in ch)
     eff = head if whole is not None and whole == whole_hash(head) else (seen or Counter())
+    done = (seen_hunks or Counter()) if seen is not None else Counter()
     kept: List[str] = []
     added: Set[int] = set()
     deleted: Set[int] = set()
+    keys: Set[bytes] = set()
+    prior: Counter = Counter()
     for h, ch in zip(hunks, scans):
+        if not HUNK_RE.match(h):
+            continue
+        key = _key(h, ch)
+        keys.add(key)
+        if done[key] > 0:
+            prior.update(c["fp"] for c in ch)
+            continue
         new = [c for c in ch if head[c["fp"]] > eff[c["fp"]]]
         if new:
             kept.append(h)
@@ -91,7 +109,7 @@ def select_file(f: dict, lines: List[str], seen: Optional[Counter],
         deleted.update(c["line"] for c in new if c["kind"] == "-")
     parsed = parse_unified_diff(header + "".join(kept)) if kept else []
     return {"head": head, "file": parsed[0] if parsed else None,
-            "added": added, "deleted": deleted}
+            "added": added, "deleted": deleted, "keys": keys, "prior": prior}
 
 
 def near_hunks(f: dict, near: List[int], limit_chars: Optional[int]) -> Optional[dict]:
@@ -115,4 +133,17 @@ def diff_prints(diff: str, blobs: Dict[str, List[str]]) -> Dict[str, Counter]:
         _, hunks = split_hunks(f["text"])
         out.setdefault(f["path"], Counter()).update(
             c["fp"] for h in hunks for c in scan_hunk(h, blobs[f["path"]]))
+    return out
+
+
+def diff_hunk_keys(diff: str, blobs: Dict[str, List[str]]) -> Dict[str, Set[bytes]]:
+    """Keys of the hunks of a chunk diff (chunks already hold sub-hunks); a truncated
+    hunk yields no key, so it never counts as reviewed."""
+    out: Dict[str, Set[bytes]] = {}
+    for f in parse_unified_diff(diff):
+        if f["path"] not in blobs:
+            continue
+        for h in split_hunks(f["text"])[1]:
+            if HUNK_RE.match(h) and MARKER not in h:
+                out.setdefault(f["path"], set()).add(_key(h, scan_hunk(h, blobs[f["path"]])))
     return out
