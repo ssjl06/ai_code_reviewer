@@ -14,8 +14,9 @@ Success criteria:
 - Every PR open/push gets one review posted by the bot account within 20 minutes.
 - The verdict is deterministic given the findings: REQUEST_CHANGES when a
   serious finding is confident enough, otherwise APPROVE with comments.
-- The reviewer can only read the checked-out repository; it cannot modify
-  files, reach outside the repository, or see GitHub credentials.
+- The reviewer (the model) can only read the checked-out repository; it cannot
+  modify files, reach outside the repository, or see GitHub credentials. (PR
+  authors are trusted and can change the workflow and kit in their PR; see 3.1.)
 - The Actions log shows every tool call and every LLM response with timing.
 - Follow-up pushes are reviewed incrementally: no new nitpicks on code that the
   author did not touch.
@@ -52,26 +53,32 @@ chunk — needs multiple runners and adds artifact/startup overhead.)
 
 ### 3.1 Distribution
 
-A central repository `ai-review` holds the kit and a reusable workflow. Target
-repositories add a short caller workflow:
+The kit repository `ai-review` is not run centrally. `install.sh <target>` copies
+the kit (`review/`, `agent/`, `config/`, plus `README.md`, `VERSION` with the kit's
+git sha, and `.gitignore`) into `<target>/.github/ai-review/`, replacing any earlier
+copy, and installs `templates/ai-review.yml` as
+`<target>/.github/workflows/ai-review.yml` unless that file already exists
+(`--force-workflow` overwrites it). Updating a target means re-running
+`install.sh` and committing the result. The kit repository itself has no review
+workflow.
 
-```yaml
-on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-jobs:
-  review:
-    uses: <org>/ai-review/.github/workflows/ai-review.yml@v1
-    secrets: inherit
-```
-
-PR authors therefore cannot change the review rules.
+The target's workflow uses a plain `on: pull_request` trigger and runs the kit
+from the PR checkout. Trust model (accepted trade-off): every PR runs its own
+copy of the workflow and of the kit, so a PR author can change the review rules,
+the prompt or the guard in that PR, or change the workflow to read the bot PAT.
+This is accepted because the team is trusted. Branch protection with a required
+human approval stays recommended; the bot's verdict is advisory.
+`pull_request_target` is not used. The installed kit is excluded from review
+by the default `exclude_globs` entry `.github/ai-review/**`.
 
 ### 3.2 Layout
 
+Kit repository:
+
 ```
 ai-review/
-├─ .github/workflows/ai-review.yml  reusable workflow: checkout, env, run cli
+├─ install.sh                       copy the kit + workflow into a target repo
+├─ templates/ai-review.yml          workflow installed in each target
 ├─ agent/pr-reviewer.md             Korean reviewer instructions + rubric
 ├─ config/
 │  ├─ settings.json                 permissions allow/deny + hook wiring
@@ -86,8 +93,21 @@ ai-review/
 │  ├─ github_api.py                 read state, dismiss old review, post review
 │  └─ hooks/guard.py                PreToolUse: path/bash/budget enforcement
 ├─ examples/buggy-pr/               fixture repo with planted bugs (smoke test)
-└─ tests/                           unittest per module + integration
+└─ tests/                           unittest per module + integration (not installed)
 ```
+
+Target repository after installation:
+
+```
+<target>/
+├─ .github/workflows/ai-review.yml  from templates/ai-review.yml
+└─ .github/ai-review/               installed kit (review/, agent/, config/, VERSION)
+```
+
+All kit paths (`config/*.json`, `agent/pr-reviewer.md`, the guard hook via
+`$AI_REVIEW_KIT`) are resolved relative to the kit's own location (`KIT_DIR`),
+so the kit runs the same from the kit repository or from `.github/ai-review/`
+with `--repo` pointing at the target root.
 
 Modules exchange plain dicts/JSON so each can be tested alone; `claude` and the
 GitHub API are replaceable by fakes.
@@ -162,7 +182,7 @@ The child process gets an explicitly built environment:
 - `actions/checkout` with `persist-credentials: false` so the PAT is not written
   to `.git/config` (which `Read` could otherwise expose).
 - Only the parent orchestrator (`github_api.py`) holds the PAT.
-- Secrets (org level): `AI_REVIEW_BOT_PAT`, `AI_REVIEW_BOT_NAME`,
+- Secrets (repository or org level): `AI_REVIEW_BOT_PAT`, `AI_REVIEW_BOT_NAME`,
   `AI_REVIEW_LLM_API_KEY`, `AI_REVIEW_LLM_BASE_URL`. Model name is a non-secret
   input with default `deepseek-v4-flash`.
 
@@ -508,13 +528,21 @@ review payload instead of posting.
 
 ## 10. Workflow Outline
 
-- `on: workflow_call` with inputs (model, max chunks, concurrency) and secrets.
+`templates/ai-review.yml`, installed as `.github/workflows/ai-review.yml`:
+
+- `on: pull_request` with types `opened`, `synchronize`, `reopened`
+  (not `pull_request_target`).
+- `permissions: contents: read` (the bot PAT does the posting).
 - `concurrency: group: ai-review-${{ github.event.pull_request.number }}`,
   `cancel-in-progress: true`.
-- `permissions: contents: read` (the bot PAT does the posting; a called workflow cannot elevate
-  the caller's `GITHUB_TOKEN`).
-- Steps: checkout target PR (`persist-credentials: false`, `fetch-depth: 0`),
-  checkout `ai-review` kit into a separate path, run `review/cli.py`, upload logs.
+- Workflow-level `env:` with `AI_REVIEW_MODEL`, `MAX_CHUNKS`, `CONCURRENCY`;
+  `defaults.run.shell: bash` (runner login shell is tcsh); `runs-on: [self-hosted]`
+  in one place; `timeout-minutes: 25`.
+- Steps: one checkout of the PR head (`ref: head.sha`, `fetch-depth: 0`,
+  `persist-credentials: false`, bot PAT), preflight (`claude`, `python3`, `git`
+  versions), `cd .github/ai-review && python3 -E -s -m review --repo
+  "$GITHUB_WORKSPACE" --pr <n>` with the secrets in the step env, upload logs
+  with `actions/upload-artifact@v3.2.2-node20` (v4 is not supported on GHES).
 
 ## 11. Testing
 
