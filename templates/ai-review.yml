@@ -1,39 +1,17 @@
-# Reusable workflow: AI review of a pull request on self-hosted runners.
+# AI review of pull requests on self-hosted runners.
+# Installed by the kit's install.sh as .github/workflows/ai-review.yml; the kit itself
+# lives in .github/ai-review/. Re-run install.sh to update the kit.
+#
+# Trust model: this runs the PR's own copy of this workflow and of the kit, so a PR
+# author can change the review rules or read the bot PAT in that PR. This is accepted
+# for a trusted team; keep branch protection with a required human approval.
 name: ai-review
 
 on:
-  workflow_call:
-    inputs:
-      model:
-        type: string
-        default: deepseek-v4-flash
-      max_chunks:
-        type: number
-        default: 6
-      concurrency:
-        type: number
-        default: 3
-      kit_ref:
-        type: string
-        default: v1
-      kit_repository:
-        type: string
-        default: your-org/ai-review   # replace <org> with your GHES organization
-      runner_labels:
-        type: string
-        default: '["self-hosted"]'    # JSON array, used via fromJSON
-    secrets:
-      AI_REVIEW_BOT_PAT:
-        required: true
-      AI_REVIEW_BOT_NAME:
-        required: true
-      AI_REVIEW_LLM_API_KEY:
-        required: true
-      AI_REVIEW_LLM_BASE_URL:
-        required: true
+  pull_request:
+    types: [opened, synchronize, reopened]
 
-# GITHUB_TOKEN only reads; checkouts and all API posts use the bot PAT.
-# A called workflow cannot elevate the caller's GITHUB_TOKEN anyway.
+# GITHUB_TOKEN only reads; the checkout and all API posts use the bot PAT.
 permissions:
   contents: read
 
@@ -41,33 +19,30 @@ concurrency:
   group: ai-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+# Review settings: edit here.
+env:
+  AI_REVIEW_MODEL: deepseek-v4-flash
+  MAX_CHUNKS: 6
+  CONCURRENCY: 3
+
 defaults:
   run:
     shell: bash   # runner login shell is tcsh
 
 jobs:
   review:
-    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    # Runner labels: edit here, e.g. [self-hosted, linux].
+    runs-on: [self-hosted]
     timeout-minutes: 25
     steps:
       # Note: upload-artifact v4 is not supported on GHES; the kit pins
       # v3.2.2-node20 (Node 20, like checkout@v4). Sync both actions to GHES
       # when the instance is air-gapped.
-      - name: Checkout target PR head
+      - name: Checkout PR head
         uses: actions/checkout@v4
         with:
-          path: target
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-          persist-credentials: false
-          token: ${{ secrets.AI_REVIEW_BOT_PAT }}
-
-      - name: Checkout review kit
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ inputs.kit_repository }}
-          ref: ${{ inputs.kit_ref }}
-          path: .ai-review-kit
           persist-credentials: false
           token: ${{ secrets.AI_REVIEW_BOT_PAT }}
 
@@ -83,13 +58,10 @@ jobs:
           AI_REVIEW_BOT_NAME: ${{ secrets.AI_REVIEW_BOT_NAME }}
           AI_REVIEW_LLM_API_KEY: ${{ secrets.AI_REVIEW_LLM_API_KEY }}
           AI_REVIEW_LLM_BASE_URL: ${{ secrets.AI_REVIEW_LLM_BASE_URL }}
-          AI_REVIEW_MODEL: ${{ inputs.model }}
           GITHUB_API_URL: ${{ github.api_url }}
-          MAX_CHUNKS: ${{ inputs.max_chunks }}
-          CONCURRENCY: ${{ inputs.concurrency }}
         run: |
-          cd .ai-review-kit
-          python3 -E -s -m review --repo "$GITHUB_WORKSPACE/target" \
+          cd .github/ai-review
+          python3 -E -s -m review --repo "$GITHUB_WORKSPACE" \
             --pr "${{ github.event.pull_request.number }}" \
             --set max_chunks="$MAX_CHUNKS" --set concurrency="$CONCURRENCY"
 

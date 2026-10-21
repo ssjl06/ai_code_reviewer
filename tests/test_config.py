@@ -18,6 +18,9 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(c["block_severities"], ["critical", "major"])
         self.assertEqual(c["block_confidence"], 80)
         self.assertEqual(c["min_confidence"], 50)
+        self.assertEqual(c["exclude_globs"], [
+            "vendor/**", "third_party/**", "**/*.lock", "**/package-lock.json",
+            "**/*.min.js", "**/*.pb.go", "**/*_pb2.py", ".github/ai-review/**"])
 
     def test_file_and_overrides_merge(self):
         with tempfile.TemporaryDirectory() as tmp:

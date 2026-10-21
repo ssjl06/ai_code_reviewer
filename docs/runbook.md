@@ -7,7 +7,9 @@
 - Python 3.9+ and git on `PATH`. The kit uses only the Python standard library.
 - Network access only to GHES and the LiteLLM endpoint (air-gapped is fine). No SSH needed.
 
-## Org secrets
+## Secrets
+Set at repository level, or as organization secrets the target repository can use.
+
 | Secret | Meaning |
 |---|---|
 | `AI_REVIEW_BOT_PAT` | PAT of the bot account; the identity shown on reviews comes from this PAT |
@@ -15,9 +17,32 @@
 | `AI_REVIEW_LLM_API_KEY` | LiteLLM key |
 | `AI_REVIEW_LLM_BASE_URL` | LiteLLM base URL |
 
-## Caller setup
-Copy `docs/caller-example.yml` to `.github/workflows/ai-review.yml` in the target repo and replace
-`your-org` with the org that hosts this kit. `secrets: inherit` passes the org secrets.
+## Installing into a target repository
+The kit runs from inside each target repository. From a clone of the kit:
+
+    ./install.sh /path/to/target-repo            # add --force-workflow to overwrite the workflow
+
+- Copies `review/`, `agent/`, `config/` (plus `README.md`, `VERSION`, `.gitignore`) into
+  `<target>/.github/ai-review/`, replacing what was there.
+- Writes `<target>/.github/workflows/ai-review.yml` from `templates/ai-review.yml` only if it does
+  not exist (or with `--force-workflow`). Nothing else in the target is touched.
+- Edit `runs-on` and the `env:` values (`AI_REVIEW_MODEL`, `MAX_CHUNKS`, `CONCURRENCY`) at the top
+  of the installed workflow, set the secrets above, commit both paths and open a PR.
+- `.github/ai-review/**` is in the default `exclude_globs`, so the kit itself is never reviewed.
+
+**Updating:** pull the kit repository, re-run `install.sh` on the target, commit the diff.
+`.github/ai-review/VERSION` shows which kit commit is installed (`-dirty` if the kit had local
+changes). Do not edit `.github/ai-review/` in the target by hand; the next install replaces it.
+
+## Trust model
+The workflow uses a plain `on: pull_request` trigger and runs the PR's own copy of the workflow
+and of the kit. A PR author can therefore change the review rules, the prompt or the guard in
+their PR, or change the workflow to read the bot PAT. This is an accepted trade-off for a trusted
+team. Still recommended:
+- branch protection with a required human approval (below);
+- human review of any diff under `.github/ai-review/` or `.github/workflows/` (CODEOWNERS on
+  those paths helps);
+- do not switch to `pull_request_target`.
 
 ## GHES notes
 - `actions/upload-artifact@v4` is not supported on GHES; the kit uses `@v3.2.2-node20`.
@@ -25,7 +50,8 @@ Copy `docs/caller-example.yml` to `.github/workflows/ai-review.yml` in the targe
 - The LiteLLM config example is in `docs/litellm-config.example.yaml`.
 
 ## Branch protection
-- Require a **human** approval. The bot's approval is advisory only.
+- Require a **human** approval. The bot's approval is advisory only: a PR can change its own
+  copy of the workflow and kit (see "Trust model").
 - The bot account needs write access to the repo.
 - The bot cannot approve its own PRs; in that case the review falls back to `COMMENT`.
 
@@ -79,7 +105,7 @@ Trade-offs:
 | `■` | chunk finished (`■ done`) |
 
 ## Local dry-run
-Run from the kit directory; nothing is posted, output goes to `<out-dir>/review.json`:
+Run from the kit directory (this repository, or `.github/ai-review/` in a target); nothing is posted, output goes to `<out-dir>/review.json`:
 
     export AI_REVIEW_LLM_BASE_URL=http://<litellm-host>:4000 AI_REVIEW_LLM_API_KEY=<key>
     python3 -E -s -m review --dry-run --repo <checkout> --base <sha> --head <sha> --out-dir /tmp/out
@@ -98,6 +124,8 @@ Fixture: `examples/buggy-pr/make_repo.sh /tmp/x` creates a repo with four plante
 | Review is always `COMMENT` | chunks incomplete (timeout/turn limit) or bot cannot approve its own PR |
 | Artifact upload fails | `upload-artifact@v3.2.2-node20` not synced to the air-gapped GHES (v4 is unsupported on GHES) |
 | 403/422 posting review | bot lacks write access, or PAT scope too small |
+| `No module named review` | the Review step did not `cd .github/ai-review`, or the kit was not committed |
+| Kit files show up as review targets | `exclude_globs` was overridden without `.github/ai-review/**` |
 
 ## Pending verification on the runner
 Not yet run (needs the air-gapped runner with LiteLLM/vLLM). Fill in "Result:" for each row.

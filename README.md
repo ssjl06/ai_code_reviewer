@@ -26,7 +26,8 @@ This README is the integration guide. Details live in:
 |---|---|
 | [`docs/runbook.md`](docs/runbook.md) | Operations: prerequisites, secrets, verdict rules, incremental behaviour, log symbols, troubleshooting, pending runner checks |
 | [`docs/superpowers/specs/2026-10-18-ai-code-review-design.md`](docs/superpowers/specs/2026-10-18-ai-code-review-design.md) | Design spec (authoritative): security model, state marker, scope rules, verdict |
-| [`docs/caller-example.yml`](docs/caller-example.yml) | Workflow to copy into each target repository |
+| [`install.sh`](install.sh) | Installs or updates the kit in a target repository |
+| [`templates/ai-review.yml`](templates/ai-review.yml) | Workflow that `install.sh` puts into each target repository |
 | [`docs/litellm-config.example.yaml`](docs/litellm-config.example.yaml) | LiteLLM in front of vLLM |
 | [`examples/buggy-pr/`](examples/buggy-pr/README.md) | Fixture PR with planted defects, used for the smoke test |
 
@@ -34,23 +35,28 @@ This README is the integration guide. Details live in:
 
 ## 1. How it works
 
+The kit is not run from a central repository. `install.sh` copies it into each target
+repository as `.github/ai-review/`, next to the workflow `.github/workflows/ai-review.yml`.
+Each PR runs the workflow and the kit from its own checkout.
+
 ```
 pull_request event (target repo)
-  └─ caller workflow ──uses──▶ <org>/<kit-repo>/.github/workflows/ai-review.yml@<tag>
+  └─ .github/workflows/ai-review.yml (from the PR head)
         self-hosted runner, bash (login shell may be tcsh)
         1. checkout PR head (fetch-depth 0, persist-credentials false, bot PAT)
-        2. checkout this kit into .ai-review-kit
-        3. python3 -E -s -m review --repo target --pr N
+        2. cd .github/ai-review
+           python3 -E -s -m review --repo "$GITHUB_WORKSPACE" --pr N
              ├─ github_api   read the previous bot review → state marker
              ├─ scope        base...head diff, keep hunks with not-yet-reviewed lines
-             ├─ diff_split   prioritized chunks (≤ chunk_max_tokens, ≤ max_chunks)
+             ├─ diff_split   prioritized chunks (≤ chunk_max_tokens, ≤ max_chunks);
+             │               files under .github/ai-review/ are never reviewed
              ├─ claude_runner  one `claude -p` per chunk (≤ concurrency in parallel)
              │     agent/pr-reviewer.md, config/settings.json, hooks/guard.py,
              │     --json-schema config/review-schema.json, stream-json → Actions log
              ├─ aggregate    merge, dedupe, relocate previous findings, verdict
              └─ github_api   post one review (+ state marker); dismiss the old
                              REQUEST_CHANGES only when the new verdict is APPROVE
-        4. upload stream.jsonl, guard-audit.jsonl, review.json as artifacts
+        3. upload stream.jsonl, guard-audit.jsonl, review.json as artifacts
 ```
 
 Only the Python parent process holds the bot PAT. The `claude` child gets the following
@@ -62,10 +68,17 @@ environment, built from scratch:
 
 It never receives a GitHub token.
 
+**Trust model (accepted trade-off).** The workflow runs the PR's own copy of the workflow
+and of the kit. A PR author can therefore change the review rules, the prompt or the guard
+in that PR, or change the workflow to read the bot PAT. This is accepted for a trusted team.
+Branch protection with a required human approval is still recommended, and the bot's verdict
+stays advisory.
+
 ## 2. Repository layout
 
 ```
-.github/workflows/ai-review.yml  reusable workflow (workflow_call)
+install.sh                       installs/updates the kit in a target repository
+templates/ai-review.yml          workflow installed as .github/workflows/ai-review.yml
 agent/pr-reviewer.md             reviewer instructions and rubric (Korean)
 config/defaults.json             thresholds, limits, timeouts, exclude globs
 config/review-schema.json        JSON schema of one chunk's output
@@ -81,8 +94,16 @@ review/                          Python stdlib-only orchestrator (entry: python3
                                  prompt, verdict, output validation, PR text
   github_api.py, gitutil.py      GHES REST client, git helpers
   hooks/guard.py                 path boundary, git-only Bash, exploration budget, audit log
-tests/                           unittest suite with fake `claude` and fake GitHub
+tests/                           unittest suite with fake `claude` and fake GitHub (not installed)
 examples/buggy-pr/               smoke-test fixture
+```
+
+In a target repository, after `install.sh`:
+
+```
+.github/workflows/ai-review.yml  the workflow (from templates/; yours to edit)
+.github/ai-review/               installed kit: review/, agent/, config/,
+                                 README.md, VERSION (kit git sha), .gitignore
 ```
 
 ## 3. Requirements
@@ -98,6 +119,10 @@ examples/buggy-pr/               smoke-test fixture
   air-gapped instance, sync them with actions-sync. `upload-artifact@v4` is not supported on GHES.
 - A **bot account** with write access to the target repositories, and a PAT for it with the
   `repo` scope (classic), or contents read and pull-requests write (fine-grained).
+- The four secrets of section 4, at repository or organization level.
+
+**Workstation** (where you run `install.sh`)
+- bash, git, and a clone of this kit repository plus a clone of the target repository.
 
 **LLM**
 - Any endpoint that speaks the Anthropic Messages API. Normally LiteLLM in front of vLLM; see
@@ -107,15 +132,19 @@ examples/buggy-pr/               smoke-test fixture
 
 ## 4. Installation
 
-1. **Host the kit.** Push this repository to a GHES organization, for example `<org>/ai-review`,
-   and create the release tag the callers will pin:
+1. **Install the kit into the target repository** from a clone of this repository:
    ```bash
-   git tag v1 && git push origin v1
+   ./install.sh /path/to/target-repo
    ```
-   The reusable workflow checks itself out again via the `kit_repository` / `kit_ref` inputs
-   (defaults `your-org/ai-review` and `v1`). Either change those defaults in
-   `.github/workflows/ai-review.yml` to your names, or pass them from every caller.
-2. **Create organization secrets.** Give the target repositories access to them.
+   - It replaces `<target>/.github/ai-review/` with `review/`, `agent/` and `config/` from this
+     kit, plus a short `README.md`, a `VERSION` file (the kit's git sha) and a `.gitignore`.
+   - It writes `<target>/.github/workflows/ai-review.yml` from `templates/ai-review.yml` only if
+     that file does not exist yet. Pass `--force-workflow` to overwrite it.
+   - It touches nothing else in the target.
+2. **Check the workflow.** At the top of `.github/workflows/ai-review.yml`, edit `runs-on`
+   (default `[self-hosted]`) and, if needed, the `env:` values `AI_REVIEW_MODEL`, `MAX_CHUNKS`
+   and `CONCURRENCY`.
+3. **Create the secrets**, at repository level or as organization secrets the repository can use:
 
    | Secret | Value |
    |---|---|
@@ -123,36 +152,31 @@ examples/buggy-pr/               smoke-test fixture
    | `AI_REVIEW_BOT_NAME` | login of the bot account (used to find its earlier reviews) |
    | `AI_REVIEW_LLM_API_KEY` | LiteLLM key |
    | `AI_REVIEW_LLM_BASE_URL` | LiteLLM base URL, e.g. `https://litellm.internal:4000` |
-3. **Add the caller workflow** to each target repository as `.github/workflows/ai-review.yml`:
-   ```yaml
-   name: ai-review
-   on:
-     pull_request:
-       types: [opened, synchronize, reopened]
-   jobs:
-     review:
-       permissions:
-         contents: read          # posting uses the bot PAT, not GITHUB_TOKEN
-       uses: <org>/ai-review/.github/workflows/ai-review.yml@v1
-       secrets: inherit
-       with:
-         kit_repository: <org>/ai-review   # if you did not change the default
-         runner_labels: '["self-hosted", "linux"]'
-         # model: deepseek-v4-flash
-         # max_chunks: 6
-         # concurrency: 3
+4. **Commit and open a PR:**
+   ```bash
+   cd /path/to/target-repo
+   git add .github/ai-review .github/workflows/ai-review.yml
+   git commit -m "ci: install AI review kit"
    ```
-   The caller must grant at least `contents: read`. A called workflow cannot raise the caller's
-   `GITHUB_TOKEN` permissions, and the kit never asks for more.
-4. **Branch protection.** Require a human approval. The bot's approval is advisory, because
-   prompt injection inside a PR can at worst make the model under-report.
-5. **Verify** (section 8) before turning it on for many repositories.
+   The PR that adds the kit is already reviewed by it. The files under `.github/ai-review/` are
+   excluded from review (`exclude_globs`); the workflow file is reviewed like any other file.
+5. **Branch protection.** Require a human approval. The bot's approval is advisory: prompt
+   injection inside a PR can make the model under-report, and a PR author can change the
+   workflow or the kit in their PR (section 1, trust model).
+6. **Verify** (section 8) before turning it on for many repositories.
+
+**Updating.** Pull this kit repository, re-run `./install.sh /path/to/target-repo`, review the
+diff under `.github/ai-review/` and commit it. Your workflow file is kept; compare it with
+`templates/ai-review.yml` and pass `--force-workflow` if you want the new template.
+
+**Local changes.** Do not edit `.github/ai-review/` by hand: the next `install.sh` run replaces
+it. Change the kit repository instead (or keep a fork of it per team) and re-install.
 
 ## 5. Replacing an existing AI review
 
 Steps for migrating a repository from another review bot or workflow:
 
-1. **Disable the old workflow** in the same PR that adds the caller workflow, so two bots never
+1. **Disable the old workflow** in the same PR that installs the kit, so two bots never
    review the same PR.
 2. **Use a separate bot account, or reuse the old one.** The kit only reads reviews whose author
    is `AI_REVIEW_BOT_NAME` and whose body has a valid `<!-- ai-review-state {"v": 2 ...} -->`
@@ -161,21 +185,26 @@ Steps for migrating a repository from another review bot or workflow:
 3. **Old blocking reviews.** The kit dismisses only its own `REQUEST_CHANGES` reviews. Dismiss the
    old bot's change requests by hand, or let authors re-request review.
 4. **Rules and language.**
-   - Reviewer behaviour lives in `agent/pr-reviewer.md` and `config/defaults.json`, not in the
-     target repository. PR authors cannot change it.
-   - Port house rules from the old system there: focus areas, severity rubric, exclude globs.
+   - Reviewer behaviour lives in `agent/pr-reviewer.md` and `config/defaults.json` of the kit
+     repository, and is copied into each target as `.github/ai-review/`.
+   - Port house rules from the old system there and re-run `install.sh`: focus areas, severity
+     rubric, exclude globs.
+   - Because each PR runs its own copy, a PR author can change these rules in their PR. Watch
+     for diffs under `.github/ai-review/` in human review (they are not AI-reviewed), or use
+     CODEOWNERS on that path.
    - The PR text is Korean. User-facing strings live in `review/render.py`,
      `review/aggregate.py` and `agent/pr-reviewer.md`.
 5. **Different LLM backend.** Point `AI_REVIEW_LLM_BASE_URL` at any Anthropic-compatible endpoint.
-   For OpenAI-compatible servers, put LiteLLM in between. Set `model` in the caller. Then re-check
-   section 8, items 5–7.
+   For OpenAI-compatible servers, put LiteLLM in between. Set `AI_REVIEW_MODEL` in the workflow's
+   `env:`. Then re-check section 8, items 5–7.
 
 ## 6. Configuration
 
 All keys are in `config/defaults.json`. Unknown keys are rejected. Override them in one of two
 ways:
 - with `--set key=<json>` on the CLI;
-- with the workflow inputs `model`, `max_chunks` and `concurrency`.
+- with the workflow `env:` values `AI_REVIEW_MODEL`, `MAX_CHUNKS` and `CONCURRENCY` (passed as
+  the model and `--set max_chunks=... --set concurrency=...`).
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -190,13 +219,13 @@ ways:
 | `deadline_s` | 1200 | whole run (20 min) |
 | `block_severities`, `block_confidence` | critical, major; 80 | what blocks |
 | `min_confidence` | 50 | findings below this are dropped |
-| `exclude_globs` | vendor, third_party, lock files, generated code | never reviewed |
+| `exclude_globs` | vendor, third_party, lock files, generated code, `.github/ai-review/**` | never reviewed |
 
 ## 7. Interfaces
 
 These are useful when wiring the kit into other automation.
 
-**CLI** (run from the kit directory):
+**CLI** (run from the kit directory: this repository, or `.github/ai-review/` in a target):
 ```
 python3 -E -s -m review --repo <checkout> --pr <n>                     # online: read state, post
 python3 -E -s -m review --dry-run --repo <checkout> --base <sha> --head <sha> \
@@ -266,12 +295,17 @@ Its size is capped at 40,000 characters. Do not edit or strip it. Spec section 6
 
 ## 9. Notes for AI agents doing the integration
 
-When an AI agent installs this kit or migrates a repository to it, follow sections 4–5 in order.
+When an AI agent installs this kit or migrates a repository to it, follow sections 4–5 in order:
+run `install.sh <target>`, adjust `runs-on` and the `env:` values in the installed workflow,
+make sure the four secrets exist, and commit `.github/ai-review/` plus the workflow in one PR.
+Do not hand-copy files instead of running `install.sh`, and do not edit `.github/ai-review/`
+in the target; change the kit repository and re-install.
+
 Do not change these invariants; each one is load-bearing for security or for correctness of the
 verdict:
 
-1. The `claude` child process gets **no GitHub token**. Keep `persist-credentials: false` on both
-   checkouts. Only `review/github_api.py` uses `AI_REVIEW_BOT_PAT`.
+1. The `claude` child process gets **no GitHub token**. Keep `persist-credentials: false` on the
+   checkout. Only `review/github_api.py` uses `AI_REVIEW_BOT_PAT`.
 2. Keep the tool limits in `config/settings.json` and `review/hooks/guard.py` as they are.
    - Tools: `Read`/`Grep`/`Glob` are allowed inside the repository only, and `Bash` only for
      read-only `git` subcommands.
@@ -282,8 +316,13 @@ verdict:
    skipped files, and an unconfirmed previous blocker.
 4. The state marker format (v2) is shared between runs. Changing it means the next run on every
    open PR does a full review again. Bump `"v"` if you change its meaning.
-5. Reusable workflow permissions stay `contents: read`. Posting uses the bot PAT.
-6. Run `python3 -m unittest discover -s tests` after every change. Kit modules are kept to about
+5. Workflow permissions stay `contents: read`. Posting uses the bot PAT. Keep the plain
+   `pull_request` trigger; do not switch to `pull_request_target`, which would run with
+   secrets on PRs from forks.
+6. Keep `.github/ai-review/**` in `exclude_globs`, so the installed kit is not reviewed.
+7. The trust model is deliberate: the PR's own workflow and kit run, so PR authors are trusted
+   (section 1). Do not present the bot as a gate that PR authors cannot bypass.
+8. Run `python3 -m unittest discover -s tests` after every change. Kit modules are kept to about
    150–180 lines each.
 
 Things that are **not** provided:
