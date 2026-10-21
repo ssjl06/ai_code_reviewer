@@ -21,6 +21,7 @@
     "**/package-lock.json",
     "**/*.min.js",
     "**/*.pb.go",
-    "**/*_pb2.py"
+    "**/*_pb2.py",
+    ".github/ai-review/**"
   ]
 }
