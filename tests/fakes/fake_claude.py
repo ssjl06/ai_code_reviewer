@@ -15,6 +15,19 @@ BLOCKING = {"file": "src/k.cu", "line": 2, "severity": "major", "confidence": 85
             "category": "memory", "title": "배열 범위를 벗어난 접근",
             "detail": "p[1]은 길이 1 버퍼에서 범위를 벗어난다."}
 
+EN_FINDING = {"file": "src/k.cu", "line": 2, "severity": "major", "confidence": 85,
+              "category": "memory", "title": "Out-of-bounds read",
+              "detail": "`p[1]` reads past the end of a one-element buffer.",
+              "suggestion": "Check the length before indexing."}
+ENGLISH = {"summary": "Found one out-of-bounds read in the kernel.", "findings": [EN_FINDING],
+           "previous_findings": [], "incomplete_reason": None}
+KO_FINDING = dict(EN_FINDING, title="범위를 벗어난 읽기",
+                  detail="`p[1]`은 길이 1 버퍼의 끝을 넘어 읽는다.",
+                  suggestion="인덱싱 전에 길이를 확인한다.")
+KOREAN = dict(ENGLISH, summary="커널에서 범위를 벗어난 읽기 1건을 찾았다.", findings=[KO_FINDING])
+KOREAN_MOVED = dict(KOREAN, findings=[dict(KO_FINDING, line=3)])
+KOREAN_ASK = "서술 필드만 한국어로"  # marker phrase of review.prompt.KOREAN_PROMPT
+
 
 def scenario_output(scn, stdin):
     if scn == "blocking":
@@ -64,6 +77,13 @@ def main():
                                        "previous_findings": [], "incomplete_reason": None})
     elif scn in ("blocking", "resolved"):
         result(sid, structured_output=scenario_output(scn, stdin))
+    elif scn == "english":
+        result(sid, structured_output=ENGLISH)
+    elif scn in ("korean", "korean_moved"):  # resume answers only the Korean re-ask prompt
+        if KOREAN_ASK in stdin:
+            result(sid, structured_output=KOREAN if scn == "korean" else KOREAN_MOVED)
+        else:
+            result(sid, "error_max_turns")
     elif scn == "max_turns":
         result(sid, "error_max_turns")
     elif scn == "broken":

@@ -257,6 +257,11 @@ python3 -E -s -m review --dry-run --repo <checkout> --base <sha> --head <sha> \
 - `previous_findings[]`, each `{id, status: resolved|open|unclear, note?}`
 - `incomplete_reason`
 
+**Korean prose.** The prose fields (`summary`, `title`, `detail`, `suggestion`, `note`) must be
+Korean; a chunk whose prose is mostly English is re-asked once on its session (log line
+`한국어로 다시 받음` or `한국어 재요청 실패 — 원문 유지`), and the PR shows severity and
+category as Korean labels (`치명`/`중대`/`경미`/`참고`, `버그`, `보안`, ...).
+
 **State marker.** The kit's state lives in an HTML comment inside the bot review body:
 ```
 <!-- ai-review-state {"v": 2, "sha", "complete", "seen", "seen_files", "seen_hunks", "findings"} -->

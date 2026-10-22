@@ -10,6 +10,19 @@ _HEADS = {"APPROVE": "✅ 승인", "REQUEST_CHANGES": "❌ 변경 요청", "COMM
 _PREV = {"resolved": "✅ 해결", "open": "⏳ 미해결", "unclear": "❔ 불명확"}
 _SEVS = ["critical", "major", "minor", "info"]
 _CUT = "\n\n(본문 길이 제한으로 일부 생략)"
+_SEV_KO = {"critical": "치명", "major": "중대", "minor": "경미", "info": "참고"}
+_CAT_KO = {"bug": "버그", "security": "보안", "concurrency": "동시성", "memory": "메모리",
+           "performance": "성능", "api-misuse": "API 오용", "maintainability": "유지보수",
+           "docs": "문서"}
+
+
+def severity_label(sev) -> str:
+    """Korean display label; internal values, schema and state stay English."""
+    return _SEV_KO.get(sev, str(sev))
+
+
+def category_label(cat) -> str:
+    return _CAT_KO.get(cat, str(cat))
 
 
 def state_marker(state: dict) -> str:
@@ -39,7 +52,8 @@ def _safe(text: str) -> str:
 
 
 def render_inline(f: dict) -> str:
-    head = "**[%s · 확신 %s · %s]** %s" % (f["severity"], f["confidence"], f["category"], f["title"])
+    head = "**[%s · 확신 %s · %s]** %s" % (severity_label(f["severity"]), f["confidence"],
+                                          category_label(f["category"]), f["title"])
     if f.get("needs_check"):
         head += " ⚠️ 확인 필요"
     out = head + "\n\n" + f["detail"]
@@ -54,7 +68,8 @@ def _reason(review: dict) -> str:
                 if p.get("blocking") and p.get("status") == "open"]
         blocking = [f for f in review["findings"] if f.get("blocking")] + prev
         cnt = {s: sum(1 for f in blocking if f["severity"] == s) for s in ("critical", "major")}
-        text = "머지 차단 %d건 (critical %d, major %d)" % (len(blocking), cnt["critical"], cnt["major"])
+        text = "머지 차단 %d건 (%s %d, %s %d)" % (len(blocking), severity_label("critical"),
+                                               cnt["critical"], severity_label("major"), cnt["major"])
         return text + (" · 이전 미해결 %d건 포함" % len(prev) if prev else "")
     if review.get("failed_all"):
         return "AI 리뷰 실패"
@@ -74,7 +89,8 @@ def _reason(review: dict) -> str:
 def _head(review: dict) -> str:
     rows = ["| 심각도 | 건수 |", "|---|---|"]
     for s in _SEVS:
-        rows.append("| %s | %d |" % (s, sum(1 for f in review["findings"] if f["severity"] == s)))
+        n = sum(1 for f in review["findings"] if f["severity"] == s)
+        rows.append("| %s | %d |" % (severity_label(s), n))
     return "## 🤖 AI Code Review — %s\n**판정 근거:** %s\n\n%s" % (
         _HEADS[review["event"]], _reason(review), "\n".join(rows))
 

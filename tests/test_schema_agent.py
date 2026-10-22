@@ -52,6 +52,15 @@ class SchemaAgentTest(unittest.TestCase):
         pos = [text.index(h) for h in order]
         self.assertEqual(pos, sorted(pos))
 
+    def test_agent_korean_rule_first_and_last(self):
+        with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        rule = ("모든 서술(summary, title, detail, suggestion, note)은 반드시 한국어로 쓴다. "
+                "코드와 식별자는 원문 그대로 둔다.")
+        body = text.split("\n---\n", 1)[1].lstrip("\n")
+        self.assertEqual(body.split("\n")[0], rule)
+        self.assertIn("한국어로 쓴다", text.split("## 출력 규칙")[1])
+
     def test_agent_tool_rules(self):
         with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
             text = fh.read()

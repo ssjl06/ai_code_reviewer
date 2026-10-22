@@ -8,7 +8,7 @@ import unittest
 
 from review.claude_runner import extract_output, run_all, run_chunk, run_process
 from review.stream_log import StreamLogger
-from review.prompt import FALLBACK_PROMPT
+from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT
 from tests.fakes import make_wrapper
 
 
@@ -33,9 +33,10 @@ class RunnerTest(unittest.TestCase):
                 "llm_timeout_ms": 1000, "bash_timeout_ms": 1000, "explore_budget": 6,
                 "model": "m", "concurrency": 1}
 
-    def run_scn(self, scn, resume="ok"):
-        with quiet():
-            return run_chunk(self.chunk, "PROMPT", 1, self.cfg(scn, resume), self.paths, self.env)
+    def run_scn(self, scn, resume="ok", deadline=None, out=None):
+        with contextlib.redirect_stdout(out or io.StringIO()):
+            return run_chunk(self.chunk, "PROMPT", 1, self.cfg(scn, resume), self.paths, self.env,
+                             deadline=deadline)
 
     def calls(self):
         with open(self.log, encoding="utf-8") as f:
@@ -61,6 +62,50 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(c[1]["stdin"], FALLBACK_PROMPT)
         with open(os.path.join(self.paths["work"], "chunk-1", "stream.jsonl")) as f:
             self.assertEqual(sum(1 for x in f if '"init"' in x), 2)
+
+    def test_english_output_reasked_in_korean(self):
+        log = io.StringIO()
+        r = self.run_scn("english", "korean", out=log)
+        self.assertEqual((r["status"], r["error"]), ("ok", None))
+        f = r["output"]["findings"][0]
+        self.assertEqual((f["title"], f["line"]), ("범위를 벗어난 읽기", 2))
+        self.assertTrue(r["output"]["summary"].startswith("커널에서"))
+        c = self.calls()
+        self.assertEqual(len(c), 2)
+        self.assertEqual(c[1]["stdin"], KOREAN_PROMPT)
+        self.assertEqual(c[1]["argv"][c[1]["argv"].index("--resume") + 1], "sess-fake")
+        self.assertIn("한국어로 다시 받음", log.getvalue())
+
+    def test_korean_reask_changing_findings_keeps_original(self):
+        log = io.StringIO()
+        r = self.run_scn("english", "korean_moved", out=log)
+        self.assertEqual((r["status"], r["error"]), ("ok", None))
+        f = r["output"]["findings"][0]
+        self.assertEqual((f["title"], f["line"]), ("Out-of-bounds read", 2))
+        self.assertEqual(len(self.calls()), 2)
+        self.assertIn("한국어 재요청 실패 — 원문 유지", log.getvalue())
+
+    def test_korean_reask_invalid_keeps_original(self):
+        for resume in ("broken", "english", "crash", "max_turns"):
+            with self.subTest(resume=resume):
+                log = io.StringIO()
+                r = self.run_scn("english", resume, out=log)
+                self.assertEqual((r["status"], r["error"]), ("ok", None))
+                self.assertEqual(r["output"]["findings"][0]["title"], "Out-of-bounds read")
+                self.assertIn("한국어 재요청 실패 — 원문 유지", log.getvalue())
+
+    def test_korean_output_not_reasked(self):
+        r = self.run_scn("blocking")
+        self.assertEqual(r["status"], "ok")
+        self.assertEqual(len(self.calls()), 1)
+
+    def test_no_korean_reask_without_time(self):
+        log = io.StringIO()
+        r = self.run_scn("english", "korean", deadline=time.monotonic() + 0.2, out=log)
+        self.assertEqual((r["status"], r["error"]), ("ok", None))
+        self.assertEqual(r["output"]["findings"][0]["title"], "Out-of-bounds read")
+        self.assertEqual(len(self.calls()), 1)
+        self.assertNotIn("한국어", log.getvalue())
 
     def test_hang_times_out_then_resumes(self):
         t = time.monotonic()

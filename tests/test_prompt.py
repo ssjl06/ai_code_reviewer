@@ -1,6 +1,6 @@
 import unittest
 
-from review.prompt import FALLBACK_PROMPT, build_prompt
+from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT, KOREAN_RULE, build_prompt
 
 CHUNK = {"index": 0, "files": ["src/k.cu", "src/a.py"], "diff": "--- a/src/k.cu\n+++ b/src/k.cu\n+int x;\n",
          "est_tokens": 12}
@@ -25,7 +25,19 @@ class PromptTest(unittest.TestCase):
     def test_fence_longer_than_backtick_runs_in_diff(self):
         diff = "+x = '````'\n+y = '``'\n"
         p = build_prompt(dict(CHUNK, diff=diff), CTX)
-        self.assertTrue(p.endswith("`````diff\n" + diff + "`````\n"))
+        self.assertTrue(p.endswith("`````diff\n" + diff + "`````\n" + KOREAN_RULE + "\n"))
+
+    def test_korean_rule_is_last_line(self):
+        self.assertEqual(KOREAN_RULE, "모든 서술(summary, title, detail, suggestion, note)은 반드시 "
+                         "한국어로 쓴다. 코드와 식별자는 원문 그대로 둔다.")
+        self.assertEqual(build_prompt(CHUNK, CTX).rstrip("\n").split("\n")[-1], KOREAN_RULE)
+        self.assertTrue(FALLBACK_PROMPT.endswith("\n" + KOREAN_RULE))
+
+    def test_korean_prompt(self):
+        self.assertIn("서술 필드만 한국어로", KOREAN_PROMPT)
+        self.assertIn("도구를 호출하지 마라", KOREAN_PROMPT)
+        for k in ("file", "line", "severity", "confidence", "category", "id", "status"):
+            self.assertIn(k, KOREAN_PROMPT)
 
     def test_incremental_lists_only_previous_for_chunk_files(self):
         prev = [_finding("f1", "src/k.cu"), _finding("f2", "other.py")]
