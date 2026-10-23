@@ -43,7 +43,7 @@ class CappedProgressTest(unittest.TestCase):
         self._loop("keep\n", SMALL, base_text="keep\n" + "  0, 0, 0, 0,\n" * 1000)
 
     def test_oversized_unique_lines(self):
-        self._loop("".join("int v%d = %d;\n" % (i, i) for i in range(30000)), CFG)
+        self._loop("".join("int v%d = %d;\n" % (i, i) for i in range(30000)), dict(CFG, max_chunks=6))
 
 
 if __name__ == "__main__":

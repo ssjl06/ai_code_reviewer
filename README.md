@@ -15,8 +15,9 @@ and are written in Korean.
   Squash, rebase, force-push and merging main cost no LLM call. Earlier findings follow their
   code and are re-checked.
 - **Bounded cost.** The diff is split into chunks, with up to 3 `claude` sessions in parallel.
-  Each session has a 10-turn limit and a tool budget, and the whole run must finish within
-  about 20 minutes.
+  Each session has a 30-turn limit and a tool budget, and the whole run must finish within
+  110 minutes (job limit 2 hours). Sized so a 2,000-line PR is reviewed with room to spare
+  and a 20,000-line PR still fits.
 - **Visible process.** The Actions log shows every LLM request, tool call and timing. The PR
   gets one review with inline comments.
 
@@ -210,13 +211,13 @@ ways:
 |---|---|---|
 | `model` | `deepseek-v4-flash` | model name sent to LiteLLM |
 | `chunk_max_tokens` | 20000 | chunk size (estimated as characters / 3.5) |
-| `max_chunks` | 6 | chunks per run; the rest are skipped, and the next run resumes them |
+| `max_chunks` | 30 | ceiling on chunks per run, so a large PR is not cut off; in practice `deadline_s` limits how many run, and chunks past it stay unreviewed for the next run |
 | `concurrency` | 3 | parallel `claude` sessions |
-| `max_turns` | 10 | turns per session; the last turns must produce the result |
-| `explore_budget` | 6 | Read/Grep/Glob/Bash calls per session before the guard forces the answer |
-| `llm_timeout_ms` / `bash_timeout_ms` | 180000 / 60000 | per request / per git command |
-| `chunk_timeout_s` / `fallback_timeout_s` | 480 / 120 | per chunk / resume fallback |
-| `deadline_s` | 1200 | whole run (20 min) |
+| `max_turns` | 30 | turns per session; kept at least 10 above `explore_budget` so the answer still fits |
+| `explore_budget` | 20 | Read/Grep/Glob/Bash calls per session before the guard forces the answer |
+| `llm_timeout_ms` / `bash_timeout_ms` | 300000 / 60000 | per request / per git command |
+| `chunk_timeout_s` / `fallback_timeout_s` | 1200 / 300 | per chunk / resume fallback |
+| `deadline_s` | 6600 | whole run (110 min; the job's `timeout-minutes` is 120, leaving 10 min for checkout and posting). Raise both together |
 | `block_severities`, `block_confidence` | critical, major; 80 | what blocks |
 | `min_confidence` | 50 | findings below this are dropped |
 | `exclude_globs` | vendor, third_party, lock files, generated code, `.github/ai-review/**` | never reviewed |

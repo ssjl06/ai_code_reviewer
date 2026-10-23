@@ -16,7 +16,7 @@ W = _read("templates/ai-review.yml")
 class WorkflowTest(unittest.TestCase):
     def test_required_settings(self):
         for s in ["shell: bash", "cancel-in-progress: true",
-                  "timeout-minutes: 25", "persist-credentials: false",
+                  "timeout-minutes: 120", "persist-credentials: false",
                   "fetch-depth: 0", "ref: ${{ github.event.pull_request.head.sha }}",
                   "token: ${{ secrets.AI_REVIEW_BOT_PAT }}",
                   "uses: actions/upload-artifact@v3.2.2-node20",
@@ -52,7 +52,7 @@ class WorkflowTest(unittest.TestCase):
                   "AI_REVIEW_LLM_API_KEY", "AI_REVIEW_LLM_BASE_URL"]:
             self.assertIn("%s: ${{ secrets.%s }}" % (s, s), W)
         env = re.search(r"^env:\n((?:  .*\n)+)", W, re.M).group(1)
-        for s in ["AI_REVIEW_MODEL: deepseek-v4-flash", "MAX_CHUNKS: 6", "CONCURRENCY: 3"]:
+        for s in ["AI_REVIEW_MODEL: deepseek-v4-flash", "MAX_CHUNKS: 30", "CONCURRENCY: 3"]:
             self.assertIn(s, env)
         self.assertIn('--set max_chunks="$MAX_CHUNKS" --set concurrency="$CONCURRENCY"', W)
 

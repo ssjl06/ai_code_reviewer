@@ -145,7 +145,7 @@ Smoke run:
     examples/buggy-pr/make_repo.sh /tmp/x
     python3 -E -s -m review --dry-run --repo /tmp/x --base main --head feature
 
-Pass: at least 3 of 4 planted defects reported; `■ done` for every chunk within 20 min; zero
+Pass: at least 3 of 4 planted defects reported; `■ done` for every chunk within 20 min (`chunk_timeout_s`); zero
 `✖ ... denied` caused by an actual escape attempt; `review.json` event is `REQUEST_CHANGES`.
 Result:
 

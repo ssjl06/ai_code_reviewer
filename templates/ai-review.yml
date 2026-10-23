@@ -22,7 +22,7 @@ concurrency:
 # Review settings: edit here.
 env:
   AI_REVIEW_MODEL: deepseek-v4-flash
-  MAX_CHUNKS: 6
+  MAX_CHUNKS: 30
   CONCURRENCY: 3
 
 defaults:
@@ -33,7 +33,7 @@ jobs:
   review:
     # Runner labels: edit here, e.g. [self-hosted, linux].
     runs-on: [self-hosted]
-    timeout-minutes: 25
+    timeout-minutes: 120
     steps:
       # Note: upload-artifact v4 is not supported on GHES; the kit pins
       # v3.2.2-node20 (Node 20, like checkout@v4). Sync both actions to GHES

@@ -11,7 +11,7 @@ self-hosted GitHub Actions runners in an air-gapped network.
 
 Success criteria:
 
-- Every PR open/push gets one review posted by the bot account within 20 minutes.
+- Every PR open/push gets one review posted by the bot account; a 2,000-line PR well within the limit, a 20,000-line PR within 2 hours.
 - The verdict is deterministic given the findings: REQUEST_CHANGES when a
   serious finding is confident enough, otherwise APPROVE with comments.
 - The reviewer (the model) can only read the checked-out repository; it cannot
@@ -211,13 +211,13 @@ approval is advisory.
 | Limit | Value |
 |---|---|
 | Diff tokens per chunk | ~20k (estimated as chars/3.5), configurable |
-| Max chunks per run | 6; the rest are listed as "skipped" and reviewed on the next run (6.5) |
+| Max chunks per run | 30, a ceiling (the deadline decides how many run); the rest are listed as "skipped" and reviewed on the next run (6.5) |
 | Concurrency | 3 |
-| LLM request | 180 s, retries limited to 1 |
+| LLM request | 300 s, retries limited to 1 |
 | Tool call (Bash) | 60 s |
-| One chunk (claude process) | 8 min, then kill -> incomplete |
-| Conclusion fallback call | 2 min |
-| Whole review | 20 min orchestrator deadline; workflow `timeout-minutes: 25` |
+| One chunk (claude process) | 20 min (30 turns, explore budget 20), then kill -> incomplete |
+| Conclusion fallback call | 5 min |
+| Whole review | 110 min orchestrator deadline; workflow `timeout-minutes: 120`. Target: a 2,000-line PR (about 2 chunks, one round) with room to spare; limit: a 20,000-line PR (about 12 chunks, 4 rounds) tried within 2 hours; when chunks run slow the deadline cuts the rest and a re-run resumes it |
 
 Splitting rules:
 
