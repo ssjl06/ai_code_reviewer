@@ -212,8 +212,8 @@ ways:
 | `chunk_max_tokens` | 20000 | chunk size (estimated as characters / 3.5) |
 | `max_chunks` | 6 | chunks per run; the rest are skipped, and the next run resumes them |
 | `concurrency` | 3 | parallel `claude` sessions |
-| `max_turns` | 10 | turns per session; the last turns must produce the result |
-| `explore_budget` | 6 | Read/Grep/Glob/Bash calls per session before the guard forces the answer |
+| `max_turns` | 10 | turns per session; raised (with a warning) to at least `explore_budget + 4` |
+| `explore_budget` | 6 | Read/Grep/Glob/Bash calls per session; the first call over it is denied, the next one stops the session and the runner asks for the conclusion |
 | `llm_timeout_ms` / `bash_timeout_ms` | 180000 / 60000 | per request / per git command |
 | `chunk_timeout_s` / `fallback_timeout_s` | 480 / 120 | per chunk / resume fallback |
 | `deadline_s` | 1200 | whole run (20 min) |

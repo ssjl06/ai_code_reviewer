@@ -10,6 +10,10 @@ _HEADS = {"APPROVE": "✅ 승인", "REQUEST_CHANGES": "❌ 변경 요청", "COMM
 _PREV = {"resolved": "✅ 해결", "open": "⏳ 미해결", "unclear": "❔ 불명확"}
 _SEVS = ["critical", "major", "minor", "info"]
 _CUT = "\n\n(본문 길이 제한으로 일부 생략)"
+# chunk termination codes (claude_runner: "<main cause>" or "<main cause> → <fallback outcome>")
+_CAUSES = {"timeout": "시간 초과", "deadline": "전체 시간 한도 도달", "max_turns": "턴 한도 도달",
+           "budget": "탐색 예산 소진(가드 중단)", "no structured output": "구조화 출력 없음",
+           "invalid output": "출력 형식 오류"}
 
 
 def state_marker(state: dict) -> str:
@@ -79,6 +83,15 @@ def _head(review: dict) -> str:
         _HEADS[review["event"]], _reason(review), "\n".join(rows))
 
 
+def _cause_label(error: str) -> str:
+    """Korean label for a runner error code; unknown text passes through."""
+    main, sep, fb = error.partition(" → ")
+    if not sep:
+        return _CAUSES.get(main, main)
+    step = "결론 단계 생략" if fb == "deadline" else "결론 단계 실패"
+    return "%s → %s (%s)" % (_CAUSES.get(main, main), step, _CAUSES.get(fb, fb))
+
+
 def _sections(review: dict, body_only: list, meta: dict) -> list:
     secs = []
     prev = review.get("previous") or []
@@ -99,7 +112,7 @@ def _sections(review: dict, body_only: list, meta: dict) -> list:
             "- " + s for s in review["summaries"]))
     if review.get("errors"):
         secs.append("### 미완료/실패 원인\n" + "\n".join(
-            "- c%d: %s" % (i + 1, e) for i, e in review["errors"]))
+            "- c%d: %s" % (i + 1, _cause_label(e)) for i, e in review["errors"]))
     scope = "리뷰 %d files · 생략 %d files" % (len(meta.get("reviewed", [])), len(meta.get("skipped", [])))
     if meta.get("skipped"):
         scope += " (%s)" % ", ".join("`%s`" % p for p in meta["skipped"])

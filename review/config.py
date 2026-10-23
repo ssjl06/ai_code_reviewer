@@ -2,11 +2,14 @@
 
 import json
 import os
+import sys
 from typing import Any, Dict, Optional
 
 # Absolute path of the kit root (the parent of the `review/` package).
 KIT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULTS_PATH = os.path.join(KIT_DIR, "config", "defaults.json")
+# Turns past the explore budget: the denied overrun calls plus the answer itself.
+TURN_MARGIN = 4
 
 
 def _read_json_object(path: str) -> Dict[str, Any]:
@@ -38,4 +41,14 @@ def load_config(
     if overrides:
         _check_known(config, overrides)
         config.update(overrides)
+    return _fit_turns(config)
+
+
+def _fit_turns(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Raise max_turns to explore_budget + TURN_MARGIN (with a warning) so the answer fits."""
+    need = config["explore_budget"] + TURN_MARGIN
+    if config["max_turns"] < need:
+        print("ai-review: warning: max_turns %s < explore_budget + %d; using %d"
+              % (config["max_turns"], TURN_MARGIN, need), file=sys.stderr, flush=True)
+        config["max_turns"] = need
     return config

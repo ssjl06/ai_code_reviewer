@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from review.claude_cmd import build_command, build_env
+from review.hooks.guard import STOP_FILE
 from review.prompt import FALLBACK_PROMPT
 from review.stream_log import StreamLogger
 from review.validate import extract_output
@@ -90,6 +91,28 @@ def _finish(idx, out, stats, sid, error):
     return _result(idx, "ok", out, stats, sid, error)
 
 
+def _cause(st, stats, state=None):
+    """Why an attempt ended without output (pass `state` to detect a guard stop)."""
+    res = stats.get("result") or {}
+    if st == "timeout":
+        return "timeout"
+    if state and os.path.exists(os.path.join(state, STOP_FILE)):
+        return "budget"
+    if res.get("subtype") == "error_max_turns":
+        return "max_turns"
+    text = res.get("result")
+    bad = res.get("structured_output") is not None or "{" in (text if isinstance(text, str) else "")
+    return "invalid output" if bad else "no structured output"
+
+
+def _report(r):
+    """One Actions log line per chunk that did not end ok."""
+    if r["status"] != "ok":
+        StreamLogger("c%d" % (r["index"] + 1), out=sys.stdout).note(
+            "✖ %s  %s" % (r["status"], r["error"]))
+    return r
+
+
 def run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadline=None):
     idx, t0 = chunk["index"], time.monotonic()
     cdir = os.path.join(paths["work"], "chunk-%d" % (idx + 1))
@@ -118,29 +141,31 @@ def run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadli
     if not sid:
         msg = error or info["stderr"] or "no output (exit %s)" % info["rc"]
         return _result(idx, "failed", None, stats, None, msg)
+    error = _cause(st, stats, state)  # the guard-stopped session is resumed like any other
     limit = cfg["fallback_timeout_s"]
     if deadline is not None:
         limit = min(limit, deadline - time.monotonic())
     if limit <= 0.5:
-        return _result(idx, "incomplete", None, stats, sid, error or "deadline")
+        return _result(idx, "incomplete", None, stats, sid, error + " → deadline")
     st2, out, _, stats2, _ = attempt(build_command(cfg, paths["agents_file"], sid),
                                      FALLBACK_PROMPT, limit)
     if out:
         return _finish(idx, out, stats2, sid, error)
-    return _result(idx, "incomplete", None, stats2, sid, error or "no structured output")
+    return _result(idx, "incomplete", None, stats2, sid, "%s → %s" % (error, _cause(st2, stats2)))
 
 
 def run_all(chunks, prompts, cfg, paths, base_env, deadline) -> List[dict]:
     def one(chunk, prompt):
         left = deadline - time.monotonic()
         if left <= 0:
-            return _result(chunk["index"], "incomplete", None, _empty_stats(), None, "deadline")
+            return _report(_result(chunk["index"], "incomplete", None, _empty_stats(), None,
+                                   "deadline"))
         try:
-            return run_chunk(chunk, prompt, len(chunks), cfg, paths, base_env,
-                             min(cfg["chunk_timeout_s"], left), deadline)
+            return _report(run_chunk(chunk, prompt, len(chunks), cfg, paths, base_env,
+                                     min(cfg["chunk_timeout_s"], left), deadline))
         except Exception as e:  # one broken chunk must not discard the others
-            return _result(chunk["index"], "failed", None, _empty_stats(), None,
-                           "%s: %s" % (type(e).__name__, e))
+            return _report(_result(chunk["index"], "failed", None, _empty_stats(), None,
+                                   "%s: %s" % (type(e).__name__, e)))
 
     with ThreadPoolExecutor(cfg["concurrency"]) as ex:
         futs = [ex.submit(one, c, p) for c, p in zip(chunks, prompts)]

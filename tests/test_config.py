@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -30,6 +32,16 @@ class ConfigTest(unittest.TestCase):
             c = load_config(path, {"max_chunks": 4})
         self.assertEqual((c["concurrency"], c["max_chunks"]), (2, 4))
         self.assertEqual(c["max_turns"], 10)
+
+    def test_max_turns_raised_to_fit_budget(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            c = load_config(None, {"explore_budget": 15, "max_turns": 16})
+        self.assertEqual(c["max_turns"], 19)
+        self.assertIn("warning: max_turns 16", err.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()) as quiet:
+            self.assertEqual(load_config(None, {"max_turns": 30})["max_turns"], 30)
+        self.assertEqual(quiet.getvalue(), "")
 
     def test_unknown_key_rejected(self):
         with self.assertRaises(KeyError):

@@ -13,7 +13,7 @@ guard = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(guard)
 check_path, check_glob_pattern = guard.check_path, guard.check_glob_pattern
 check_bash, check_budget, decide = guard.check_bash, guard.check_budget, guard.decide
-BUDGET_REASON = guard.BUDGET_REASON
+BUDGET_REASON, STOP_REASON, STOP_FILE = guard.BUDGET_REASON, guard.STOP_REASON, guard.STOP_FILE
 
 
 class TmpCase(unittest.TestCase):
@@ -82,6 +82,15 @@ class BudgetTest(TmpCase):
         self.assertEqual(reasons[2], BUDGET_REASON)
         self.assertIsNone(check_budget("s2", self.state, 2))
 
+    def test_second_overrun_stops(self):
+        stop = os.path.join(self.state, STOP_FILE)
+        reasons = [check_budget("s1", self.state, 1) for _ in range(2)]
+        self.assertEqual(reasons, [None, BUDGET_REASON])
+        self.assertFalse(os.path.exists(stop))
+        self.assertEqual([check_budget("s1", self.state, 1) for _ in range(2)],
+                         [STOP_REASON, STOP_REASON])
+        self.assertTrue(os.path.exists(stop))
+
 
 class DecideTest(TmpCase):
     def test_structured_output_not_counted(self):
@@ -124,6 +133,21 @@ class MainTest(TmpCase):
             rec = json.loads(f.readline())
         self.assertEqual(rec["decision"], "deny")
         self.assertEqual(rec["tool"], "Bash")
+
+    def test_main_first_overrun_denies_second_stops(self):
+        ev = {"session_id": "s", "tool_name": "Read",
+              "tool_input": {"file_path": os.path.join(self.root, "src/a.cu")}}
+        outs = [run_guard_subprocess(ev, self.env(budget=1)) for _ in range(3)]
+        self.assertEqual(outs[0], "")
+        first, second = json.loads(outs[1]), json.loads(outs[2])
+        self.assertNotIn("continue", first)
+        self.assertEqual(first["hookSpecificOutput"]["permissionDecisionReason"], BUDGET_REASON)
+        self.assertEqual((second["continue"], second["stopReason"]), (False, STOP_REASON))
+        d = second["hookSpecificOutput"]
+        self.assertEqual((d["permissionDecision"], d["permissionDecisionReason"]),
+                         ("deny", BUDGET_REASON))
+        with open(os.path.join(self.state, "guard-audit.jsonl")) as f:
+            self.assertEqual([json.loads(x)["decision"] for x in f], ["allow", "deny", "stop"])
 
     def test_main_allow_prints_nothing(self):
         out = run_guard_subprocess({"session_id": "s", "tool_name": "Read", "tool_input": {

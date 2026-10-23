@@ -50,7 +50,7 @@ class ClaudeCmdTest(unittest.TestCase):
         c = build_command(CFG, "/t/agents.json", resume_session="abc")
         self.assertEqual(c[c.index("--resume") + 1], "abc")
         self.assertEqual(c[c.index("--tools") + 1], "")
-        self.assertEqual(c[c.index("--max-turns") + 1], "2")
+        self.assertEqual(c[c.index("--max-turns") + 1], "4")
 
     def test_env_has_no_github_tokens(self):
         base = dict(LLM, PATH="/bin", HOME="/h", AI_REVIEW_BOT_PAT="x", GITHUB_TOKEN="y", GH_TOKEN="z")

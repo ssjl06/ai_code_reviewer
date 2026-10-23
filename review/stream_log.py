@@ -142,6 +142,9 @@ class StreamLogger:
         self._p("■ done   %s  turns=%s  findings=%d  wall=%.1fs  api=%.1fs"
                 % (ev.get("subtype", "?"), self._s["turns"], findings, self._wall, api))
 
+    def note(self, msg):
+        self._p(msg)
+
     def finish(self, status, error=None):
         if self._s["result"] is not None:
             return
