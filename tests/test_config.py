@@ -10,11 +10,11 @@ class ConfigTest(unittest.TestCase):
     def test_defaults_have_spec_values(self):
         c = load_config()
         self.assertEqual(c["chunk_max_tokens"], 20000)
-        self.assertEqual(c["max_chunks"], 30)
+        self.assertEqual(c["max_chunks"], 40)
         self.assertEqual(c["concurrency"], 3)
         self.assertEqual(c["max_turns"], 30)
         self.assertEqual(c["explore_budget"], 20)
-        self.assertEqual(c["deadline_s"], 6600)
+        self.assertEqual(c["deadline_s"], 14400)
         self.assertEqual(c["block_severities"], ["critical", "major"])
         self.assertEqual(c["block_confidence"], 80)
         self.assertEqual(c["min_confidence"], 50)

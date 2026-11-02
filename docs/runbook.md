@@ -26,8 +26,10 @@ The kit runs from inside each target repository. From a clone of the kit:
   `<target>/.github/ai-review/`, replacing what was there.
 - Writes `<target>/.github/workflows/ai-review.yml` from `templates/ai-review.yml` only if it does
   not exist (or with `--force-workflow`). Nothing else in the target is touched.
+  An existing workflow is kept, except that a lower `timeout-minutes` is raised to the template's;
+  if it still differs from the template, install.sh warns (compare with `diff` or use `--force-workflow`).
 - Edit `runs-on` and the `env:` values (`AI_REVIEW_MODEL`, `MAX_CHUNKS`, `CONCURRENCY`) at the top
-  of the installed workflow, set the secrets above, commit both paths and open a PR.
+  of the installed workflow (draft PRs are skipped; marking ready for review triggers a run), set the secrets above, commit both paths and open a PR.
 - `.github/ai-review/**` is in the default `exclude_globs`, so the kit itself is never reviewed.
 
 **Updating:** pull the kit repository, re-run `install.sh` on the target, commit the diff.

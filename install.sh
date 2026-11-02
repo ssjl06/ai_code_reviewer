@@ -3,7 +3,9 @@
 #   ./install.sh [--force-workflow] <target-repo-dir>
 # Copies review/, agent/, config/ into <target>/.github/ai-review/ (replacing it) and
 # templates/ai-review.yml to <target>/.github/workflows/ai-review.yml if that file does
-# not exist yet (or always with --force-workflow). Nothing else in the target is touched.
+# not exist yet (or always with --force-workflow). An existing workflow is kept, except
+# that a lower job timeout-minutes is raised to the template's value; if the kept file
+# still differs from the template, a warning is printed. Nothing else in the target is touched.
 set -euo pipefail
 
 usage() {
@@ -64,6 +66,20 @@ echo "installed kit $version -> $kit_dst"
 
 if [[ -e "$workflow_dst" && "$force_workflow" -eq 0 ]]; then
   echo "kept existing $workflow_dst (use --force-workflow to overwrite)"
+  tpl_timeout="$(sed -n 's/^ *timeout-minutes: *\([0-9][0-9]*\) *$/\1/p' "$kit_src/templates/ai-review.yml" | head -n 1)"
+  cur_timeout="$(sed -n 's/^ *timeout-minutes: *\([0-9][0-9]*\) *$/\1/p' "$workflow_dst" | head -n 1)"
+  if [[ -n "$tpl_timeout" && -n "$cur_timeout" ]] && (( cur_timeout < tpl_timeout )); then
+    wf_tmp="$(mktemp "$workflow_dst.tmp.XXXXXX")"
+    sed "s/^\( *timeout-minutes: *\)$cur_timeout\( *\)\$/\1$tpl_timeout\2/" "$workflow_dst" > "$wf_tmp"
+    chmod --reference="$workflow_dst" "$wf_tmp" 2>/dev/null || true   # keep the file's mode (GNU)
+    mv "$wf_tmp" "$workflow_dst"
+    echo "raised timeout-minutes $cur_timeout -> $tpl_timeout in $workflow_dst"
+  fi
+  if ! cmp -s "$workflow_dst" "$kit_src/templates/ai-review.yml"; then
+    echo "warning: $workflow_dst differs from the current template (e.g. draft PRs are now skipped);" >&2
+    echo "  compare with: diff $kit_src/templates/ai-review.yml $workflow_dst" >&2
+    echo "  or re-run with --force-workflow" >&2
+  fi
 else
   mkdir -p "$(dirname "$workflow_dst")"
   cp "$kit_src/templates/ai-review.yml" "$workflow_dst"

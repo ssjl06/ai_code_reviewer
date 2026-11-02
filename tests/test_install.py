@@ -108,6 +108,37 @@ class InstallTest(InstallBase):
         with open(os.path.join(self.T, ".github/CODEOWNERS"), encoding="utf-8") as f:
             self.assertEqual(f.read(), "* @o\n")
 
+    def install_run(self, *args):
+        return subprocess.run(["bash", INSTALL, *args, self.T], capture_output=True, text=True)
+
+    def test_kept_workflow_timeout_raised(self):
+        with open(TEMPLATE, encoding="utf-8") as t:
+            tpl = t.read()
+        old = tpl.replace("timeout-minutes: 260", "timeout-minutes: 25") + "# local edit\n"
+        self.assertNotEqual(old, tpl)
+        self.write(".github/workflows/ai-review.yml", old)
+        p = self.install_run()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("raised timeout-minutes 25 -> 260 in " + self.wf, p.stdout)
+        with open(self.wf, encoding="utf-8") as f:
+            self.assertEqual(f.read(), old.replace("timeout-minutes: 25", "timeout-minutes: 260"))
+        self.assertIn("differs from the current template", p.stderr)  # still has the local edit
+
+    def test_kept_workflow_higher_timeout_untouched(self):
+        with open(TEMPLATE, encoding="utf-8") as t:
+            old = t.read().replace("timeout-minutes: 260", "timeout-minutes: 300")
+        self.write(".github/workflows/ai-review.yml", old)
+        p = self.install_run()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn("raised timeout-minutes", p.stdout)
+        with open(self.wf, encoding="utf-8") as f:
+            self.assertEqual(f.read(), old)
+
+    def test_kept_workflow_identical_no_warning(self):
+        self.install()
+        p = self.install_run()
+        self.assertNotIn("differs", p.stderr)
+
     def test_bad_usage(self):
         for args in ([], ["--nope", self.T], [os.path.join(self.tmp, "missing")], [KIT]):
             p = subprocess.run(["bash", INSTALL, *args], capture_output=True, text=True)

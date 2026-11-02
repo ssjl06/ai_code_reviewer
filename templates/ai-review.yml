@@ -9,7 +9,7 @@ name: ai-review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 # GITHUB_TOKEN only reads; the checkout and all API posts use the bot PAT.
 permissions:
@@ -22,7 +22,7 @@ concurrency:
 # Review settings: edit here.
 env:
   AI_REVIEW_MODEL: deepseek-v4-flash
-  MAX_CHUNKS: 30
+  MAX_CHUNKS: 40
   CONCURRENCY: 3
 
 defaults:
@@ -31,9 +31,11 @@ defaults:
 
 jobs:
   review:
+    # Drafts are skipped; marking a PR ready for review triggers a run.
+    if: github.event.pull_request.draft == false
     # Runner labels: edit here, e.g. [self-hosted, linux].
     runs-on: [self-hosted]
-    timeout-minutes: 120
+    timeout-minutes: 260
     steps:
       # Note: upload-artifact v4 is not supported on GHES; the kit pins
       # v3.2.2-node20 (Node 20, like checkout@v4). Sync both actions to GHES

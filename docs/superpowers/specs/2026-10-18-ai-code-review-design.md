@@ -11,7 +11,7 @@ self-hosted GitHub Actions runners in an air-gapped network.
 
 Success criteria:
 
-- Every PR open/push gets one review posted by the bot account; a 2,000-line PR well within the limit, a 20,000-line PR within 2 hours.
+- Every PR open/push gets one review posted by the bot account; a 2,000-line PR well within the limit, a 20,000-line PR in one run (within 4 hours).
 - The verdict is deterministic given the findings: REQUEST_CHANGES when a
   serious finding is confident enough, otherwise APPROVE with comments.
 - The reviewer (the model) can only read the checked-out repository; it cannot
@@ -217,7 +217,7 @@ approval is advisory.
 | Tool call (Bash) | 60 s |
 | One chunk (claude process) | 20 min (30 turns, explore budget 20), then kill -> incomplete |
 | Conclusion fallback call | 5 min |
-| Whole review | 110 min orchestrator deadline; workflow `timeout-minutes: 120`. Target: a 2,000-line PR (about 2 chunks, one round) with room to spare; limit: a 20,000-line PR (about 12 chunks, 4 rounds) tried within 2 hours; when chunks run slow the deadline cuts the rest and a re-run resumes it |
+| Whole review | 240 min orchestrator deadline; workflow `timeout-minutes: 260` (20 min for checkout and posting). Target: a 2,000-line PR (about 2 chunks, one round) with room to spare; limit: a 20,000-line PR (about 11–23 chunks, up to 40 when files pack badly) completes in one run even at the worst-case chunk time (`chunk_timeout_s` 1200 + `fallback_timeout_s` 300, concurrency 3); when chunks run slow the deadline cuts the rest and a re-run resumes it |
 
 Splitting rules:
 
