@@ -1,6 +1,6 @@
 # Review Convergence: Issue Ledger
 
-Status: draft for review, rev 2 (after a Codex adversarial review). Extends
+Status: draft for review, rev 3 (after two Codex adversarial reviews). Extends
 `2026-10-18-ai-code-review-design.md` (state marker, sections 6 and 8).
 
 ## Problem
@@ -43,13 +43,22 @@ line shift lost the issue. Rev 2 tracks position through git instead.
     block does not swallow the whole block);
   - a hunk with no new lines maps to the single line where it was.
   The mapped region is stored, so it is followed across any number of pushes.
+- Moves (rev 3): `-M` follows file renames only; code moved inside or across files shows up
+  as a deletion hunk plus an insertion hunk elsewhere. When an issue's whole region falls in
+  deleted lines, before mapping it to the deletion point, compare the deleted lines with every
+  insertion hunk of the same diff (any file), after normalizing whitespace and identifiers. The
+  best insertion hunk with a similarity of at least 0.6 receives the issue (id kept, region
+  mapped to the corresponding lines). Without such a hunk the issue is an orphan: its code is
+  gone, so a `same_as` naming it is honored anywhere in the PR (see below).
 - A new finding matches an issue when it is in the same file and its line is within 3 lines
   of the issue's region. A finding farther away is a separate issue, however similar its
   text or code (Codex finding 1).
 - The model may also link a finding to a ledger issue by giving its id in a new optional
   `same_as` field. The link is honored only in the same file and within 15 lines of the
   region, so a wrong link cannot hide a defect elsewhere. This covers rewrites that move the
-  code more than 3 lines (Codex finding 2).
+  code more than 3 lines (Codex finding 2). For an orphan issue (above) the distance limit
+  does not apply: the code it pointed at no longer exists, so the link cannot hide a defect
+  in code the issue still covers.
 - Fallback when the previous sha is not available (force-push to a commit never fetched):
   locate by the stored anchor print as today (`previous.relocate`); if that fails, keep the
   old region. Only this case weakens the guarantee; the run log says so.
@@ -63,6 +72,14 @@ line shift lost the issue. Rev 2 tracks position through git instead.
   closed, and a closed issue never reopens, whatever the new severity (decided).
 - Issue ids are assigned once and never recomputed.
 - Severity, confidence and blocking are frozen at the first judgment.
+- Principle (rev 3): an issue is never closed on lines the model was not shown. Closure is
+  permanent, so a wrong closure cannot be undone; when in doubt the issue stays open.
+  `resolved` is accepted only when all of the following hold, otherwise the issue stays
+  `open` (or `unclear`, as today):
+  - the file is in neither the skipped nor the truncated list of this run;
+  - every chunk that holds the file is `ok` (as today in `aggregate._previous`);
+  - the issue's region lies inside the lines shown to the model in one of those chunks.
+  An issue whose file left the PR or was deleted is still resolved automatically, as today.
 - A new finding that matches an open issue is merged into it (no new comment). One that
   matches a closed issue is dropped. The body shows "기존 이슈와 중복되어 생략 n건"; the
   log lists each one.
@@ -76,6 +93,12 @@ line shift lost the issue. Rev 2 tracks position through git instead.
 - Ids are stable, so a dismissal of any earlier review applies to the current ledger,
   including one made while a run was in progress: the next run picks it up. Applying it
   again is a no-op.
+- A run that waives at least one issue never stops early as `unchanged` (rev 3). Today
+  `scope.determine` returns `unchanged` when the state's sha is the head and the review was
+  complete, and `cli._review` then posts nothing, so a `REQUEST_CHANGES` posted during the
+  race would stay. Instead, such a run posts a review with the updated ledger and a verdict
+  from the remaining issues (no model call when there are no new targets): `APPROVE` when no
+  blocking issue is left, which replaces the bot's earlier change request on GitHub.
 
 ### Reviewer context
 
@@ -123,6 +146,20 @@ Regression tests for the Codex scenarios:
 - a dismissal made between the state read and the post is applied on the next run;
 - 200 closed issues in one file all survive `fit_state`, with seen data present;
 - region mapping: shift, rewrite inside a hunk, deletion, large-block clipping, rename.
+
+Regression tests for the second Codex review (rev 3):
+
+- a file split over chunks where the chunk holding the issue is skipped, or the file is
+  truncated: a `resolved` report is rejected and the issue stays open; the retry can still
+  report it;
+- a `resolved` report from an ok chunk that did not show the issue's region is rejected;
+- a dismissal during a run, then a re-run on the same sha: the run is not `unchanged`, posts
+  `APPROVE` when nothing blocking is left, and makes no model call;
+- a function with a waived issue moved 40+ lines in the same file and a local variable
+  renamed: the issue follows the insertion hunk and stays waived; the same move into another
+  file also works;
+- an orphan issue (code deleted, no similar insertion): `same_as` far from the old region is
+  honored; a `same_as` beyond 15 lines for a non-orphan issue is not.
 
 ## Order
 
