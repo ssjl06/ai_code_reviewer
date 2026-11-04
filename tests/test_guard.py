@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 
 KIT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -14,6 +15,7 @@ _spec.loader.exec_module(guard)
 check_path, check_glob_pattern = guard.check_path, guard.check_glob_pattern
 check_bash, check_budget, decide = guard.check_bash, guard.check_budget, guard.decide
 BUDGET_REASON, STOP_REASON, STOP_FILE = guard.BUDGET_REASON, guard.STOP_REASON, guard.STOP_FILE
+TIME_STOP_REASON, TIME_STOP_FILE = guard.TIME_STOP_REASON, guard.TIME_STOP_FILE
 
 
 class TmpCase(unittest.TestCase):
@@ -112,6 +114,49 @@ class DecideTest(TmpCase):
         self.assertIsNotNone(decide(glob, env))
         bash = {"session_id": "b", "tool_name": "Bash", "tool_input": {"command": "git log -1"}}
         self.assertIsNone(decide(bash, env))
+
+
+class TimeStopTest(TmpCase):
+    READ = {"session_id": "s", "tool_name": "Read", "tool_input": {"file_path": "src/a.cu"}}
+
+    def at(self, stop_at):
+        return dict(self.env(), AI_REVIEW_STOP_AT=stop_at)
+
+    def marker(self):
+        return os.path.exists(os.path.join(self.state, TIME_STOP_FILE))
+
+    def test_no_stop_before_the_time(self):
+        self.assertIsNone(decide(self.READ, self.at(str(time.time() + 60))))
+        self.assertFalse(self.marker())
+
+    def test_stops_at_or_after_the_time(self):
+        self.assertEqual(decide(self.READ, self.at(str(time.time() - 1))), TIME_STOP_REASON)
+        self.assertTrue(self.marker())
+        self.assertFalse(os.path.exists(os.path.join(self.state, STOP_FILE)))
+
+    def test_missing_or_empty_means_no_time_stop(self):
+        self.assertIsNone(decide(self.READ, self.env()))
+        self.assertIsNone(decide(self.READ, self.at("")))
+        self.assertFalse(self.marker())
+
+    def test_applies_before_rule_denials(self):
+        bad = {"session_id": "s", "tool_name": "Read", "tool_input": {"file_path": "/etc/hosts"}}
+        self.assertEqual(decide(bad, self.at("1")), TIME_STOP_REASON)
+        other = {"session_id": "s", "tool_name": "Task", "tool_input": {}}
+        self.assertEqual(decide(other, self.at("1")), TIME_STOP_REASON)
+
+    def test_final_answer_is_never_stopped(self):
+        ans = {"session_id": "s", "tool_name": "StructuredOutput", "tool_input": {}}
+        self.assertIsNone(decide(ans, self.at("1")))
+        self.assertFalse(self.marker())
+
+    def test_main_stops_session_and_audits(self):
+        d = json.loads(run_guard_subprocess(self.READ, self.at("1")))
+        self.assertEqual((d["continue"], d["stopReason"]), (False, TIME_STOP_REASON))
+        self.assertEqual(d["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("탐색 시간 소진", d["hookSpecificOutput"]["permissionDecisionReason"])
+        with open(os.path.join(self.state, "guard-audit.jsonl")) as f:
+            self.assertEqual(json.loads(f.readline())["decision"], "stop")
 
 
 def run_guard_subprocess(event, env, raw=None):

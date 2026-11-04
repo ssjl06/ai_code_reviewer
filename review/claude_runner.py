@@ -1,6 +1,7 @@
 """Run one `claude -p` process per diff chunk, with timeouts and a conclusion-only resume."""
 from __future__ import annotations
 
+import math
 import os
 import signal
 import subprocess
@@ -11,11 +12,14 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from review.claude_cmd import build_command, build_env
-from review.hooks.guard import STOP_FILE
+from review.hooks.guard import STOP_FILE, TIME_STOP_FILE
 from review.korean import is_korean, merge_korean
 from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT
 from review.stream_log import StreamLogger
 from review.validate import extract_output
+
+TIME_RESERVE_S = 300  # exploring stops this long before the chunk limit: one LLM call in flight
+MIN_CHUNK_S = 300
 
 
 def run_process(cmd, env, cwd, stdin_text, timeout_s, logger, tee_path=None, info=None) -> str:
@@ -90,11 +94,20 @@ def _finish(idx, out, stats, sid, error):
     return _result(idx, "ok", out, stats, sid, error)
 
 
+def chunk_limit(cfg: dict, n_chunks: int) -> int:
+    """Seconds one chunk may take so `n_chunks` fit the deadline, a resume fallback included."""
+    rounds = max(1, math.ceil(n_chunks / cfg["concurrency"]))
+    share = cfg["deadline_s"] // rounds - cfg["fallback_timeout_s"]
+    return max(MIN_CHUNK_S, min(cfg["chunk_timeout_s"], share))
+
+
 def _cause(st, stats, state=None):
     """Why an attempt ended without output (pass `state` to detect a guard stop)."""
     res = stats.get("result") or {}
     if st == "timeout":
         return "timeout"
+    if state and os.path.exists(os.path.join(state, TIME_STOP_FILE)):
+        return "time"
     if state and os.path.exists(os.path.join(state, STOP_FILE)):
         return "budget"
     if res.get("subtype") == "error_max_turns":
@@ -121,11 +134,11 @@ def run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadli
     env = build_env(cfg, paths["repo"], state, conf, base_env)
     tee = os.path.join(cdir, "stream.jsonl")
 
-    def attempt(cmd, text, limit):
+    def attempt(cmd, text, limit, run_env=env):
         log, info = StreamLogger("c%d" % (idx + 1), out=sys.stdout), {}
         log.start("chunk %d/%d  files=%d  diff=%.1fk tok"
                   % (idx + 1, total, len(chunk["files"]), chunk["est_tokens"] / 1000.0))
-        st = run_process(cmd, env, paths["repo"], text, limit, log, tee, info)
+        st = run_process(cmd, run_env, paths["repo"], text, limit, log, tee, info)
         out = extract_output(log.stats()["result"])
         log.finish("ok" if out else st, info["stderr"] or None)
         stats = log.stats()
@@ -149,7 +162,10 @@ def run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadli
         return merged or out, dict(stats, wall_s=time.monotonic() - t0)
 
     limit = cfg["chunk_timeout_s"] if timeout_s is None else timeout_s
-    st, out, sid, stats, info = attempt(build_command(cfg, paths["agents_file"]), prompt, limit)
+    # Only the exploring session gets the time stop: resumes must be able to answer.
+    timed = dict(env, AI_REVIEW_STOP_AT=str(time.time() + limit - TIME_RESERVE_S))
+    st, out, sid, stats, info = attempt(build_command(cfg, paths["agents_file"]), prompt, limit,
+                                        timed)
     error = "timeout" if st == "timeout" else None
     if out:
         return _finish(idx, *korean(out, stats, sid), sid, error)
@@ -168,6 +184,8 @@ def run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadli
 
 
 def run_all(chunks, prompts, cfg, paths, base_env, deadline) -> List[dict]:
+    limit = chunk_limit(cfg, len(chunks))
+
     def one(chunk, prompt):
         left = deadline - time.monotonic()
         if left <= 0:
@@ -175,7 +193,7 @@ def run_all(chunks, prompts, cfg, paths, base_env, deadline) -> List[dict]:
                                    "deadline"))
         try:
             return _report(run_chunk(chunk, prompt, len(chunks), cfg, paths, base_env,
-                                     min(cfg["chunk_timeout_s"], left), deadline))
+                                     min(limit, left), deadline))
         except Exception as e:  # one broken chunk must not discard the others
             return _report(_result(chunk["index"], "failed", None, _empty_stats(), None,
                                    "%s: %s" % (type(e).__name__, e)))

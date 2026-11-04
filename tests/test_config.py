@@ -17,6 +17,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(c["max_turns"], 60)
         self.assertEqual(c["explore_budget"], 50)
         self.assertEqual(c["deadline_s"], 18000)
+        self.assertEqual((c["llm_timeout_ms"], c["fallback_timeout_s"], c["chunk_timeout_s"]),
+                         (600000, 600, 3600))
         self.assertEqual(c["block_severities"], ["critical", "major"])
         self.assertEqual(c["block_confidence"], 80)
         self.assertEqual(c["min_confidence"], 50)

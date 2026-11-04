@@ -81,7 +81,8 @@ def main():
     stdin = sys.stdin.read()
     if opts["--log"]:
         with open(opts["--log"], "a", encoding="utf-8") as f:
-            f.write(json.dumps({"argv": argv, "stdin": stdin}) + "\n")
+            f.write(json.dumps({"argv": argv, "stdin": stdin,
+                                "stop_at": os.environ.get("AI_REVIEW_STOP_AT")}) + "\n")
     scn = opts["--resume-scenario"] if "--resume" in argv else opts["--scenario"]
     sid = argv[argv.index("--resume") + 1] if "--resume" in argv else "sess-fake"
     if scn == "crash":
@@ -108,7 +109,7 @@ def main():
             result(sid, structured_output=KOREAN if scn == "korean" else KOREAN_MOVED)
         else:
             result(sid, "error_max_turns")
-    elif scn == "budget_stop":
+    elif scn in ("budget_stop", "time_stop"):  # which one depends on the guard env
         budget_stop(sid)
     elif scn == "max_turns":
         result(sid, "error_max_turns")

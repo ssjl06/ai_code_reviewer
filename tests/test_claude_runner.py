@@ -6,11 +6,18 @@ import tempfile
 import time
 import unittest
 
-from review.claude_runner import _cause, extract_output, run_all, run_chunk, run_process
-from review.hooks.guard import STOP_FILE
+from unittest import mock
+
+from review.claude_runner import (TIME_RESERVE_S, _cause, chunk_limit, extract_output, run_all,
+                                  run_chunk, run_process)
+from review.config import load_config
+from review.hooks.guard import STOP_FILE, TIME_STOP_FILE
 from review.stream_log import StreamLogger
 from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT
 from tests.fakes import make_wrapper
+
+
+LONG = TIME_RESERVE_S + 60  # the time stop stays out of the way
 
 
 def quiet():
@@ -32,12 +39,12 @@ class RunnerTest(unittest.TestCase):
         binp, self.log = make_wrapper(d, scn, resume)
         return {"claude_bin": binp, "chunk_timeout_s": 2, "fallback_timeout_s": 2, "max_turns": 10,
                 "llm_timeout_ms": 1000, "bash_timeout_ms": 1000, "explore_budget": 6,
-                "model": "m", "concurrency": 1}
+                "model": "m", "concurrency": 1, "deadline_s": 1000}
 
-    def run_scn(self, scn, resume="ok", deadline=None, out=None):
+    def run_scn(self, scn, resume="ok", deadline=None, out=None, timeout_s=None):
         with contextlib.redirect_stdout(out or io.StringIO()):
             return run_chunk(self.chunk, "PROMPT", 1, self.cfg(scn, resume), self.paths, self.env,
-                             deadline=deadline)
+                             timeout_s, deadline)
 
     def calls(self):
         with open(self.log, encoding="utf-8") as f:
@@ -114,7 +121,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual((r["status"], r["error"]), ("incomplete", "max_turns → no structured output"))
 
     def test_budget_stop_resumes_to_conclusion(self):
-        r = self.run_scn("budget_stop")
+        r = self.run_scn("budget_stop", timeout_s=LONG)
         self.assertEqual((r["status"], r["error"]), ("ok", "budget"))
         self.assertTrue(os.path.exists(os.path.join(self.paths["work"], "chunk-1", "state",
                                                     STOP_FILE)))
@@ -127,21 +134,70 @@ class RunnerTest(unittest.TestCase):
     def test_fallback_output_reasked_in_korean(self):
         for first, cause in (("max_turns", "max_turns"), ("budget_stop", "budget")):
             with self.subTest(first=first):
-                r = self.run_scn(first, "english_then_korean")
+                r = self.run_scn(first, "english_then_korean", timeout_s=LONG)
                 self.assertEqual((r["status"], r["error"]), ("ok", cause))
                 self.assertEqual(r["output"]["findings"][0]["title"], "범위를 벗어난 읽기")
                 self.assertEqual([c["stdin"] for c in self.calls()[1:]],
                                  [FALLBACK_PROMPT, KOREAN_PROMPT])
 
     def test_budget_stop_fallback_fails(self):
-        r = self.run_scn("budget_stop", "broken")
+        r = self.run_scn("budget_stop", "broken", timeout_s=LONG)
         self.assertEqual((r["status"], r["error"]), ("incomplete", "budget → no structured output"))
+
+    def test_time_stop_resumes_to_conclusion(self):
+        t = time.time()
+        r = self.run_scn("time_stop", timeout_s=TIME_RESERVE_S)
+        self.assertEqual((r["status"], r["error"]), ("ok", "time"))
+        state = os.path.join(self.paths["work"], "chunk-1", "state")
+        self.assertTrue(os.path.exists(os.path.join(state, TIME_STOP_FILE)))
+        self.assertFalse(os.path.exists(os.path.join(state, STOP_FILE)))
+        c = self.calls()
+        self.assertEqual([x["stdin"] for x in c], ["PROMPT", FALLBACK_PROMPT])
+        self.assertAlmostEqual(float(c[0]["stop_at"]), t, delta=5)
+
+    def test_resume_runs_without_time_stop(self):
+        self.run_scn("time_stop", "english_then_korean", timeout_s=TIME_RESERVE_S)
+        c = self.calls()
+        self.assertEqual(len(c), 3)
+        self.assertEqual([x["stop_at"] for x in c[1:]], [None, None])
+
+    def test_stop_at_leaves_the_reserve(self):
+        t = time.time()
+        self.run_scn("ok", timeout_s=1000)
+        self.assertAlmostEqual(float(self.calls()[0]["stop_at"]), t + 700, delta=5)
+
+    def test_time_stop_fallback_fails(self):
+        r = self.run_scn("time_stop", "broken", timeout_s=TIME_RESERVE_S)
+        self.assertEqual((r["status"], r["error"]), ("incomplete", "time → no structured output"))
+
+    def test_chunk_limit_examples(self):
+        cfg = load_config()
+        self.assertEqual([chunk_limit(cfg, n) for n in (1, 3, 23, 40)], [3600, 3600, 1650, 685])
+
+    def test_chunk_limit_floor_and_no_chunks(self):
+        cfg = {"chunk_timeout_s": 3600, "fallback_timeout_s": 600, "deadline_s": 1000,
+               "concurrency": 1}
+        self.assertEqual(chunk_limit(cfg, 40), 300)
+        self.assertEqual(chunk_limit(cfg, 0), 400)
+
+    def test_run_all_uses_chunk_limit_capped_by_time_left(self):
+        cfg = load_config()
+        for left, want in ((100000, 1650), (100, 100)):
+            with self.subTest(left=left), mock.patch("review.claude_runner.run_chunk") as rc:
+                rc.return_value = {"index": 0, "status": "ok"}
+                run_all([self.chunk] * 23, ["p"] * 23, cfg, self.paths, self.env,
+                        time.monotonic() + left)
+                self.assertAlmostEqual(rc.call_args_list[0].args[6], want, delta=2)
 
     def test_cause_codes(self):
         self.assertEqual(_cause("timeout", {}), "timeout")
         self.assertEqual(_cause("exited", {"result": {"subtype": "error_max_turns"}}), "max_turns")
         self.assertEqual(_cause("exited", {"result": {"result": '{"x": 1}'}}), "invalid output")
         self.assertEqual(_cause("exited", {"result": None}), "no structured output")
+        state = tempfile.mkdtemp(dir=self.tmp.name)
+        open(os.path.join(state, TIME_STOP_FILE), "w").close()
+        self.assertEqual(_cause("exited", {"result": None}, state), "time")
+        self.assertEqual(_cause("timeout", {}, state), "timeout")
 
     def test_run_all_logs_non_ok_chunk(self):
         out = io.StringIO()

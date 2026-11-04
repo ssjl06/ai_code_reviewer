@@ -15,6 +15,11 @@ GIT_SUBCOMMANDS = {"diff", "log", "show", "blame", "grep", "ls-files"}
 BUDGET_REASON = "탐색 예산 소진. 추가 도구 호출 없이 지금 최종 JSON 결과를 출력하라."
 STOP_REASON = "탐색 예산 소진 — 결론 단계로 전환"
 STOP_FILE = "budget-stop"  # created in the state dir once the guard stops a session
+TIME_REASON = "탐색 시간 소진. 추가 도구 호출 없이 지금 최종 JSON 결과를 출력하라."
+TIME_STOP_REASON = "탐색 시간 소진 — 결론 단계로 전환"
+TIME_STOP_FILE = "time-stop"  # like STOP_FILE, for a stop at AI_REVIEW_STOP_AT
+ANSWER_TOOL = "StructuredOutput"  # how --json-schema delivers the final answer: never stopped
+_STOPS = {STOP_REASON: BUDGET_REASON, TIME_STOP_REASON: TIME_REASON}  # stop -> shown to the model
 _SHELL_META = set(";|&><$`(){}*?[]~\\\n\r")
 _DIFFISH = ("--stat --shortstat --numstat --name-only --name-status --no-color --oneline -p --patch "
             "--no-patch --follow -M -w --word-diff --abbrev-commit --diff-filter= --format= --pretty=")
@@ -113,8 +118,25 @@ def check_budget(session_id, state_dir, budget):
     return STOP_REASON
 
 
+def check_time(env):
+    """TIME_STOP_REASON (and TIME_STOP_FILE) once the epoch time in AI_REVIEW_STOP_AT has
+    passed; a missing or empty value means no time stop."""
+    stop_at = env.get("AI_REVIEW_STOP_AT")
+    if not stop_at or time.time() < float(stop_at):
+        return None
+    state_dir = env["AI_REVIEW_STATE_DIR"]
+    os.makedirs(state_dir, exist_ok=True)
+    open(os.path.join(state_dir, TIME_STOP_FILE), "a").close()
+    return TIME_STOP_REASON
+
+
 def decide(event, env):
     tool = event.get("tool_name")
+    if tool == ANSWER_TOOL:
+        return None
+    stop = check_time(env)
+    if stop:
+        return stop
     if tool not in EXPLORE_TOOLS:
         return None
     inp = event.get("tool_input") or {}
@@ -150,13 +172,13 @@ def _audit(state_dir, event, decision, reason):
 
 
 def output(reason):
-    """Hook JSON denying the call; on STOP_REASON also end the session (`continue` wins)."""
-    stop = reason == STOP_REASON
+    """Hook JSON denying the call; on a stop reason also end the session (`continue` wins)."""
+    stop = reason in _STOPS
     out = {"hookSpecificOutput": {
         "hookEventName": "PreToolUse", "permissionDecision": "deny",
-        "permissionDecisionReason": BUDGET_REASON if stop else reason}}
+        "permissionDecisionReason": _STOPS.get(reason, reason)}}
     if stop:
-        out.update({"continue": False, "stopReason": STOP_REASON})
+        out.update({"continue": False, "stopReason": reason})
     return out
 
 
@@ -172,7 +194,7 @@ def main():
     state_dir = os.environ.get("AI_REVIEW_STATE_DIR")
     if state_dir:
         _audit(state_dir, event if isinstance(event, dict) else {},
-               "stop" if reason == STOP_REASON else "deny" if reason else "allow", reason)
+               "stop" if reason in _STOPS else "deny" if reason else "allow", reason)
     if reason:
         print(json.dumps(output(reason), ensure_ascii=False))
     return 0

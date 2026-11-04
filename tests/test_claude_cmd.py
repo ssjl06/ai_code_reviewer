@@ -62,7 +62,7 @@ class ClaudeCmdTest(unittest.TestCase):
         self.assertEqual(e["ANTHROPIC_BASE_URL"], "http://llm:4000")
         self.assertEqual(e["ANTHROPIC_AUTH_TOKEN"], "k")
         self.assertEqual(e["ANTHROPIC_MODEL"], "deepseek-v4-flash")
-        self.assertEqual(e["API_TIMEOUT_MS"], "300000")
+        self.assertEqual(e["API_TIMEOUT_MS"], "600000")
         self.assertEqual(e["BASH_MAX_TIMEOUT_MS"], "60000")
         self.assertEqual(e["AI_REVIEW_EXPLORE_BUDGET"], "50")
         self.assertEqual(e["AI_REVIEW_KIT"], KIT_DIR)

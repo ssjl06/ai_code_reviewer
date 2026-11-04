@@ -175,8 +175,10 @@ class RenderTest(unittest.TestCase):
 
     def test_error_cause_labels(self):
         b = render_body(REVIEW("COMMENT", incomplete=[0, 1, 2], errors=[
-            [0, "budget → no structured output"], [1, "deadline"], [2, "timeout → deadline"]]),
+            [0, "budget → no structured output"], [1, "deadline"], [2, "timeout → deadline"],
+            [3, "time → no structured output"]]),
             [], META, ST)
         self.assertIn("- c1: 탐색 예산 소진(가드 중단) → 결론 단계 실패 (구조화 출력 없음)", b)
+        self.assertIn("- c4: 탐색 시간 소진(가드 중단) → 결론 단계 실패 (구조화 출력 없음)", b)
         self.assertIn("- c2: 전체 시간 한도 도달", b)
         self.assertIn("- c3: 시간 초과 → 결론 단계 생략 (전체 시간 한도 도달)", b)
