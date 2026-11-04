@@ -16,6 +16,7 @@ FALLBACK_PROMPT = (
 KOREAN_PROMPT = (
     "직전 최종 결과를 내용과 필드(file, line, severity, confidence, category, id, status)는 "
     "그대로 두고, 서술 필드만 한국어로 옮겨 스키마에 맞는 최종 JSON으로 다시 출력하라. "
+    "서술 필드는 summary, title, detail, suggestion, note, incomplete_reason이다. "
     "도구를 호출하지 마라."
 )
 

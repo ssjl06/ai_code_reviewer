@@ -10,9 +10,9 @@ def F(line=3, title="범위를 벗어난 읽기", detail="`p[1]`은 버퍼 밖�
     return f
 
 
-def OUT(*findings, summary="커널에서 경계 오류 1건을 찾았다.", prev=()):
+def OUT(*findings, summary="커널에서 경계 오류 1건을 찾았다.", prev=(), reason=None):
     return {"summary": summary, "findings": list(findings), "previous_findings": list(prev),
-            "incomplete_reason": None}
+            "incomplete_reason": reason}
 
 
 EN = OUT(F(title="Out-of-bounds read", detail="`p[1]` reads past the end of the buffer.",
@@ -42,10 +42,24 @@ class IsKoreanTest(unittest.TestCase):
 
     def test_mixed_ratio(self):
         # 6 Hangul vs 14 ASCII letters -> exactly 30% counts as Korean
-        self.assertTrue(is_korean(OUT(F(title="한국어입니다", detail="abcdefg hijklmn"),
-                                      summary="")))
-        self.assertFalse(is_korean(OUT(F(title="한국어입니", detail="abcdefg hijklmn"),
-                                       summary="")))
+        self.assertTrue(is_korean(OUT(F(detail="한국어입니다 abcdefg hijklmn"), summary="")))
+        self.assertFalse(is_korean(OUT(F(detail="한국어입니 abcdefg hijklmn"), summary="")))
+
+    def test_each_item_is_judged_alone(self):
+        ko = [F(detail="`p[1]`은 길이 1 버퍼의 끝을 넘어서 읽기 때문에 범위 오류가 된다.")] * 5
+        for bad in (dict(title="Out-of-bounds read"),
+                    dict(detail="`p[1]` reads past the end of the buffer.")):
+            with self.subTest(bad=bad):
+                self.assertFalse(is_korean(OUT(*ko, F(**bad))))
+        self.assertTrue(is_korean(OUT(*ko, F(title="Fix bounds"))))  # too short to judge
+
+    def test_english_incomplete_reason_fails(self):
+        self.assertFalse(is_korean(OUT(F(), reason="Tool budget was exhausted before callers.")))
+        self.assertTrue(is_korean(OUT(F(), reason="호출부를 확인하지 못했다.")))
+
+    def test_code_suggestion_is_not_judged(self):
+        code = "if (index < buffer_length) { value = buffer[index]; }"
+        self.assertTrue(is_korean(OUT(F(suggestion=code))))
 
     def test_previous_note_checked(self):
         prev = [{"id": "f1", "status": "unclear", "note": "Cannot tell whether the lock is held."}]
@@ -62,6 +76,14 @@ class MergeKoreanTest(unittest.TestCase):
     def test_keeps_original_non_prose_fields(self):
         ko = OUT(F(confidence=50, suggestion="길이를 확인한다."))
         self.assertEqual(merge_korean(EN, ko)["findings"][0]["confidence"], 90)
+
+    def test_carries_incomplete_reason(self):
+        en = OUT(F(), reason="Could not inspect the callers.")
+        ko = OUT(F(), reason="호출부를 확인하지 못했다.")
+        self.assertEqual(merge_korean(en, ko)["incomplete_reason"], "호출부를 확인하지 못했다.")
+
+    def test_incomplete_reason_only_when_original_had_one(self):
+        self.assertIsNone(merge_korean(EN, OUT(F(), reason="새 사유"))["incomplete_reason"])
 
     def test_rejects_changed_findings(self):
         self.assertIsNone(merge_korean(EN, OUT(F(line=4, suggestion="확인"))))

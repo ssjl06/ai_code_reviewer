@@ -78,6 +78,9 @@ class PromptTest(unittest.TestCase):
         p = build_prompt(dict(CHUNK, index=1), CTX)
         self.assertIn("2/2", p)
 
+    def test_korean_prompt_names_incomplete_reason(self):
+        self.assertIn("incomplete_reason", KOREAN_PROMPT)
+
     def test_fallback_prompt(self):
         self.assertIn("도구", FALLBACK_PROMPT)
         self.assertIn("incomplete_reason", FALLBACK_PROMPT)

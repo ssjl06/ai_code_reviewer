@@ -12,20 +12,26 @@ _ASCII = re.compile(r"[A-Za-z]")
 
 
 def _prose(output: dict) -> Iterator[str]:
+    """Each prose item to judge; `suggestion` is left out because it is often code."""
     yield output.get("summary") or ""
+    yield output.get("incomplete_reason") or ""
     for f in output.get("findings") or []:
-        for k in ("title", "detail", "suggestion"):
-            yield f.get(k) or ""
+        yield f.get("title") or ""
+        yield f.get("detail") or ""
     for p in output.get("previous_findings") or []:
         yield p.get("note") or ""
 
 
-def is_korean(output: dict) -> bool:
-    """True when Hangul is at least KOREAN_MIN_RATIO of the prose letters outside inline code."""
-    text = _CODE.sub(" ", "\n".join(_prose(output)))
+def _item_korean(text: str) -> bool:
+    text = _CODE.sub(" ", text)
     hangul, ascii_ = len(_HANGUL.findall(text)), len(_ASCII.findall(text))
     letters = hangul + ascii_
     return letters < KOREAN_MIN_LETTERS or hangul >= KOREAN_MIN_RATIO * letters
+
+
+def is_korean(output: dict) -> bool:
+    """True when every prose item, outside inline code, is Korean or too short to judge."""
+    return all(_item_korean(t) for t in _prose(output))
 
 
 def _key(f: dict) -> tuple:
@@ -40,6 +46,8 @@ def merge_korean(orig: dict, new: Optional[dict]) -> Optional[dict]:
             != [(p["id"], p["status"]) for p in orig["previous_findings"]]):
         return None
     out = dict(orig, summary=new["summary"] or orig["summary"])
+    if orig.get("incomplete_reason") and new.get("incomplete_reason"):
+        out["incomplete_reason"] = new["incomplete_reason"]
     out["findings"] = []
     for f, g in zip(orig["findings"], new["findings"]):
         m = dict(f, title=g["title"] or f["title"], detail=g["detail"] or f["detail"])
