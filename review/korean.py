@@ -7,17 +7,26 @@ from typing import Iterator, Optional
 KOREAN_MIN_RATIO = 0.3   # Hangul share of the letters required to count as Korean
 KOREAN_MIN_LETTERS = 12  # fewer letters than this (e.g. "LGTM") is too short to judge
 _CODE = re.compile(r"`+[^`]*`+")
+_FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,}).*?(?:^[ \t]*\1[`~]*[ \t]*$|\Z)", re.M | re.S)
+_CODE_CHARS = set(";{}=(")  # a line with one of these is taken for code
 _HANGUL = re.compile(r"[ᄀ-ᇿ㄰-㆏가-힣]")
 _ASCII = re.compile(r"[A-Za-z]")
 
 
+def _suggestion_prose(text: str) -> str:
+    """`suggestion` without fenced blocks, inline code and lines that look like code."""
+    text = _CODE.sub(" ", _FENCE.sub("", text))
+    return "\n".join(line for line in text.split("\n") if not _CODE_CHARS & set(line))
+
+
 def _prose(output: dict) -> Iterator[str]:
-    """Each prose item to judge; `suggestion` is left out because it is often code."""
+    """Each prose item to judge."""
     yield output.get("summary") or ""
     yield output.get("incomplete_reason") or ""
     for f in output.get("findings") or []:
         yield f.get("title") or ""
         yield f.get("detail") or ""
+        yield _suggestion_prose(f.get("suggestion") or "")
     for p in output.get("previous_findings") or []:
         yield p.get("note") or ""
 
@@ -30,7 +39,7 @@ def _item_korean(text: str) -> bool:
 
 
 def is_korean(output: dict) -> bool:
-    """True when every prose item, outside inline code, is Korean or too short to judge."""
+    """True when every prose item, outside code, is Korean or too short to judge."""
     return all(_item_korean(t) for t in _prose(output))
 
 

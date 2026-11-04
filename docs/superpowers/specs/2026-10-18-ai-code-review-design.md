@@ -481,10 +481,10 @@ Hidden in the bot review body; the latest bot review with a parsable marker
    the fallback prompt. `incomplete_reason` must be Korean too; the rules for
    that field say so.
 7. Korean re-ask: when a chunk's valid output is not Korean (`review/korean.py`:
-   per item, namely summary, each title, detail, note and incomplete_reason; an
+   per item, namely summary, each title, detail, suggestion, note and incomplete_reason; an
    item fails when, outside backtick code, Hangul is under 30% of its letters;
-   an item with fewer than 12 letters passes; `suggestion` is often code and is
-   not judged), the runner resumes the session once, also after a conclusion
+   an item with fewer than 12 letters passes; `suggestion` is judged after removing fenced
+   blocks, inline code and lines containing any of `;`, `{`, `}`, `=`, `(`), the runner resumes the session once, also after a conclusion
    fallback, with a prompt to translate only the prose fields. This is a second pass
    in `run_all` after every chunk has finished, on a pool of `concurrency`, so a
    translation never delays a later chunk. Each re-ask is limited by `fallback_timeout_s`

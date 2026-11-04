@@ -238,6 +238,18 @@ class KoreanPassTest(SimBase):
         self.assertEqual(rs[0]["output"]["summary"], KO["summary"])
         self.assertIs(rs[0]["output"]["diff_reviewed"], False)
 
+    def test_english_suggestion_alone_triggers_the_reask(self):
+        finding = {"file": "a.c", "line": 1, "severity": "major", "confidence": 90,
+                   "category": "bug", "title": "범위를 벗어난 읽기",
+                   "detail": "버퍼 끝을 넘어 읽는다."}
+        en = dict(KO, findings=[dict(finding, suggestion="Check the length before indexing.")])
+        ko = dict(KO, findings=[dict(finding, suggestion="인덱싱 전에 길이를 확인한다.")])
+        self.answers({"P0": (100, en)})
+        self.resume = lambda text, sid: (50, ko, sid)
+        rs = self.review(1)
+        self.assertEqual(self.texts(), ["P0", KOREAN_PROMPT])
+        self.assertEqual(rs[0]["output"]["findings"][0]["suggestion"], "인덱싱 전에 길이를 확인한다.")
+
     def test_wall_time_includes_the_reask(self):
         self.answers({"P0": (100, EN)})
         self.assertEqual(self.review(1)[0]["stats"]["wall_s"], 150)

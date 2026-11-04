@@ -272,8 +272,9 @@ python3 -E -s -m review --dry-run --repo <checkout> --base <sha> --head <sha> \
   value counts as `true`.
 
 **Korean prose.** The prose fields (`summary`, `title`, `detail`, `suggestion`, `note`,
-`incomplete_reason`) must be Korean. Each item except `suggestion`, which is often code, is judged
-on its own. After every chunk has finished, a chunk with an English item is re-asked once on
+`incomplete_reason`) must be Korean. Each item is judged on its own, `suggestion` after removing
+fenced blocks, inline code and lines that look like code (containing `;`, `{`, `}`, `=` or `(`).
+After every chunk has finished, a chunk with an English item is re-asked once on
 its session (log line `한국어로 다시 받음` or `한국어 재요청 실패 — 원문 유지`). A chunk that gets no
 re-ask (`한국어 재요청 생략` in the log) or fails it keeps its output and status. The PR shows
 severity and category as Korean labels (`치명`/`중대`/`경미`/`참고`, `버그`, `보안`, ...).

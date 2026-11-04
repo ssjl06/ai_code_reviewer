@@ -61,6 +61,37 @@ class IsKoreanTest(unittest.TestCase):
         code = "if (index < buffer_length) { value = buffer[index]; }"
         self.assertTrue(is_korean(OUT(F(suggestion=code))))
 
+    def test_english_prose_suggestion_fails(self):
+        self.assertFalse(is_korean(OUT(F(suggestion="Check the length before indexing the buffer."))))
+
+    def test_code_only_suggestion_passes(self):
+        for code in ("```cpp\nif (index < length) {\n  value = buffer[index];\n}\n```",
+                     "```\nreturn checked_lookup_of_the_buffer_value\n```",
+                     "~~~\nreturn checked_lookup_of_the_buffer_value\n~~~",
+                     "```python\nwith_open_file_and_a_long_identifier\n",  # never closed
+                     "if (index < buffer_length) {\n  value = buffer[index];\n}\n",
+                     "`checked_lookup_of_the_buffer_value`"):
+            with self.subTest(code=code):
+                self.assertTrue(is_korean(OUT(F(suggestion=code))))
+
+    def test_korean_sentence_with_code_block_passes(self):
+        code = "```cpp\nreturn checked_lookup_of_the_buffer_value\n```"
+        self.assertTrue(is_korean(OUT(F(suggestion="인덱싱 전에 길이를 확인한다.\n" + code))))
+
+    def test_english_sentence_with_code_block_fails(self):
+        code = "```cpp\nvalue = buffer[index];\n```"
+        self.assertFalse(is_korean(OUT(F(suggestion="Check the length first, then index it.\n" + code))))
+
+    def test_inline_code_goes_before_the_code_line_check(self):
+        s = "Replace `lookup(index)` with the checked variant of this helper."
+        self.assertFalse(is_korean(OUT(F(suggestion=s))))
+        self.assertTrue(is_korean(OUT(F(suggestion="`lookup(index) = checked_value`로 바꾼다."))))
+
+    def test_suggestion_uses_the_same_thresholds(self):
+        self.assertTrue(is_korean(OUT(F(suggestion="Fix bounds"))))  # too short to judge
+        self.assertTrue(is_korean(OUT(F(suggestion="한국어입니다 abcdefg hijklmn"))))
+        self.assertFalse(is_korean(OUT(F(suggestion="한국어입니 abcdefg hijklmn"))))
+
     def test_previous_note_checked(self):
         prev = [{"id": "f1", "status": "unclear", "note": "Cannot tell whether the lock is held."}]
         self.assertFalse(is_korean(OUT(summary="", prev=prev)))
@@ -83,12 +114,16 @@ class MergeKoreanTest(unittest.TestCase):
         self.assertEqual(merge_korean(en, ko)["incomplete_reason"], "호출부를 확인하지 못했다.")
 
     def test_incomplete_reason_only_when_original_had_one(self):
-        self.assertIsNone(merge_korean(EN, OUT(F(), reason="새 사유"))["incomplete_reason"])
+        ko = OUT(F(suggestion="길이를 확인한다."), reason="새 사유")
+        self.assertIsNone(merge_korean(EN, ko)["incomplete_reason"])
 
     def test_diff_reviewed_stays_the_original(self):
         en = dict(EN, diff_reviewed=False)
         ko = dict(OUT(F(suggestion="길이를 확인한다.")), diff_reviewed=True)
         self.assertIs(merge_korean(en, ko)["diff_reviewed"], False)
+
+    def test_rejects_an_answer_that_leaves_the_suggestion_in_english(self):
+        self.assertIsNone(merge_korean(EN, OUT(F())))  # no suggestion: the English one would stay
 
     def test_rejects_changed_findings(self):
         self.assertIsNone(merge_korean(EN, OUT(F(line=4, suggestion="확인"))))
