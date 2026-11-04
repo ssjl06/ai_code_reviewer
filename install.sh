@@ -4,7 +4,7 @@
 # Copies review/, agent/, config/ into <target>/.github/ai-review/ (replacing it) and
 # templates/ai-review.yml to <target>/.github/workflows/ai-review.yml if that file does
 # not exist yet (or always with --force-workflow). An existing workflow is kept, except
-# that a lower job timeout-minutes is raised to the template's value; if the kept file
+# that a lower timeout-minutes of the `review` job is raised to the template's value; if the kept file
 # still differs from the template, a warning is printed. Nothing else in the target is touched.
 set -euo pipefail
 
@@ -25,6 +25,39 @@ for arg in "$@"; do
 done
 [[ -n "$target" ]] || usage
 [[ -d "$target" ]] || { echo "error: not a directory: $target" >&2; exit 1; }
+
+# review_timeout <workflow> [new]: the integer timeout-minutes of the job `review:` (2-space
+# indent under `jobs:`); inside that job's block only. Without `new` prints the value (nothing if
+# not found); with `new` prints the whole file with that number replacing it (indentation and
+# any trailing comment kept). No YAML library: a line-based scan.
+review_timeout() {
+  awk -v new="${2:-}" '
+    { line = $0 }
+    line ~ /^jobs:[ \t]*(#.*)?$/ { in_jobs = 1; in_review = 0; out(line); next }
+    line !~ /^[ \t]*(#.*)?$/ && line !~ /^[ \t]/ { in_jobs = 0; in_review = 0 }
+    in_jobs && line ~ /^  review:[ \t]*(#.*)?$/ { in_review = 1; key_indent = -1; out(line); next }
+    in_review && line !~ /^[ \t]*(#.*)?$/ {
+      match(line, /^ */)
+      if (RLENGTH <= 2) { in_review = 0 }
+      else if (key_indent < 0) { key_indent = RLENGTH }
+    }
+    in_review && !done && line ~ /^ +timeout-minutes:[ \t]*[0-9]+[ \t]*(#.*)?$/ {
+      match(line, /^ */)
+      if (RLENGTH == key_indent || key_indent < 0) {
+        match(line, /timeout-minutes:[ \t]*/)
+        head = substr(line, 1, RSTART + RLENGTH - 1)
+        rest = substr(line, RSTART + RLENGTH)
+        match(rest, /^[0-9]+/)
+        cur = substr(rest, 1, RLENGTH)
+        done = 1
+        if (new == "") { print cur; exit }
+        line = head new substr(rest, RLENGTH + 1)
+      }
+    }
+    { out(line) }
+    function out(l) { if (new != "") print l }
+  ' "$1"
+}
 
 kit_src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 target="$(cd "$target" && pwd)"
@@ -66,11 +99,14 @@ echo "installed kit $version -> $kit_dst"
 
 if [[ -e "$workflow_dst" && "$force_workflow" -eq 0 ]]; then
   echo "kept existing $workflow_dst (use --force-workflow to overwrite)"
-  tpl_timeout="$(sed -n 's/^ *timeout-minutes: *\([0-9][0-9]*\) *$/\1/p' "$kit_src/templates/ai-review.yml" | head -n 1)"
-  cur_timeout="$(sed -n 's/^ *timeout-minutes: *\([0-9][0-9]*\) *$/\1/p' "$workflow_dst" | head -n 1)"
-  if [[ -n "$tpl_timeout" && -n "$cur_timeout" ]] && (( cur_timeout < tpl_timeout )); then
+  tpl_timeout="$(review_timeout "$kit_src/templates/ai-review.yml")"
+  cur_timeout="$(review_timeout "$workflow_dst")"
+  if [[ -z "$cur_timeout" ]]; then
+    echo "warning: could not find timeout-minutes in the review job of $workflow_dst;" >&2
+    echo "  set timeout-minutes: ${tpl_timeout:-320} on that job by hand (the review can run longer than a lower value)" >&2
+  elif [[ -n "$tpl_timeout" ]] && (( cur_timeout < tpl_timeout )); then
     wf_tmp="$(mktemp "$workflow_dst.tmp.XXXXXX")"
-    sed "s/^\( *timeout-minutes: *\)$cur_timeout\( *\)\$/\1$tpl_timeout\2/" "$workflow_dst" > "$wf_tmp"
+    review_timeout "$workflow_dst" "$tpl_timeout" > "$wf_tmp"
     chmod --reference="$workflow_dst" "$wf_tmp" 2>/dev/null || true   # keep the file's mode (GNU)
     mv "$wf_tmp" "$workflow_dst"
     echo "raised timeout-minutes $cur_timeout -> $tpl_timeout in $workflow_dst"

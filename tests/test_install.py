@@ -134,6 +134,51 @@ class InstallTest(InstallBase):
         with open(self.wf, encoding="utf-8") as f:
             self.assertEqual(f.read(), old)
 
+    def kept(self, text):
+        self.write(".github/workflows/ai-review.yml", text)
+        p = self.install_run()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        with open(self.wf, encoding="utf-8") as f:
+            return p, f.read()
+
+    def test_timeout_with_trailing_comment_raised(self):
+        old = ("on: pull_request\njobs:\n  review:\n    runs-on: x\n"
+               "    timeout-minutes: 25 # keep me\n    steps: []\n")
+        p, got = self.kept(old)
+        self.assertEqual(got, old.replace("25 # keep me", "320 # keep me"))
+        self.assertIn("raised timeout-minutes 25 -> 320", p.stdout)
+
+    def test_only_the_review_job_is_raised(self):
+        old = ("on: pull_request\njobs:\n  setup:\n    timeout-minutes: 10\n    steps: []\n"
+               "  review:\n    # note\n    runs-on: x\n    timeout-minutes: 25\n"
+               "    steps:\n      - timeout-minutes: 3\n        run: a\n"
+               "  after:\n    timeout-minutes: 5\n")
+        p, got = self.kept(old)
+        want = old.replace("    timeout-minutes: 25", "    timeout-minutes: 320")
+        self.assertEqual(got, want)
+        self.assertIn("raised timeout-minutes 25 -> 320", p.stdout)
+
+    def test_no_review_job_warns_and_keeps_the_file(self):
+        old = "on: pull_request\njobs:\n  build:\n    timeout-minutes: 25\n    steps: []\n"
+        p, got = self.kept(old)
+        self.assertEqual(got, old)
+        self.assertIn("warning: could not find timeout-minutes in the review job", p.stderr)
+        self.assertIn("timeout-minutes: 320", p.stderr)
+        self.assertTrue(os.path.isdir(self.kit_dst))  # the kit is still installed
+
+    def test_review_job_without_the_key_warns(self):
+        old = "on: pull_request\njobs:\n  review:\n    runs-on: x\n  other:\n    timeout-minutes: 5\n"
+        p, got = self.kept(old)
+        self.assertEqual(got, old)
+        self.assertIn("could not find timeout-minutes in the review job", p.stderr)
+
+    def test_mode_is_kept_when_raised(self):
+        old = "jobs:\n  review:\n    timeout-minutes: 25\n"
+        self.write(".github/workflows/ai-review.yml", old)
+        os.chmod(self.wf, 0o751)
+        self.install_run()
+        self.assertEqual(os.stat(self.wf).st_mode & 0o777, 0o751)
+
     def test_kept_workflow_identical_no_warning(self):
         self.install()
         p = self.install_run()
