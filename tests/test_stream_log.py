@@ -100,6 +100,30 @@ class StreamLogTest(unittest.TestCase):
         s = lg.stats()
         self.assertEqual((s["turns"], s["in_tokens"], s["out_tokens"]), (1, 10, 5))
 
+    def test_tokens_fall_back_to_result_usage(self):
+        lg, out = logger([0, 1, 2])
+        lg.start("x")
+        lg.feed('{"type":"assistant","message":{"id":"m1","content":[],"usage":{"input_tokens":0,"output_tokens":0}}}')
+        lg.feed('{"type":"result","subtype":"success","usage":{"input_tokens":1200,"output_tokens":34}}')
+        s = lg.stats()
+        self.assertEqual((s["in_tokens"], s["out_tokens"]), (1200, 34))
+        self.assertIn("◆ LLM    1.0s  in=0 out=0", out.getvalue())
+
+    def test_result_usage_does_not_replace_summed_tokens(self):
+        lg, _ = logger([0, 1, 2])
+        lg.start("x")
+        lg.feed('{"type":"assistant","message":{"id":"m1","content":[],"usage":{"input_tokens":10,"output_tokens":5}}}')
+        lg.feed('{"type":"result","subtype":"success","usage":{"input_tokens":1200,"output_tokens":34}}')
+        s = lg.stats()
+        self.assertEqual((s["in_tokens"], s["out_tokens"]), (10, 5))
+
+    def test_result_without_usage_keeps_zero(self):
+        lg, _ = logger([0, 1])
+        lg.start("x")
+        lg.feed('{"type":"result","subtype":"success"}')
+        s = lg.stats()
+        self.assertEqual((s["in_tokens"], s["out_tokens"]), (0, 0))
+
     def test_non_json_line_passthrough(self):
         lg, out = logger([0])
         lg.start("x")

@@ -137,6 +137,9 @@ class StreamLogger:
     def _result(self, ev, t):
         self._s["result"] = ev
         self._wall = t - self._t0
+        u = ev.get("usage") or {}  # per-message usage is 0 through LiteLLM
+        self._s["in_tokens"] = self._s["in_tokens"] or u.get("input_tokens", 0) or 0
+        self._s["out_tokens"] = self._s["out_tokens"] or u.get("output_tokens", 0) or 0
         if isinstance(ev.get("num_turns"), int):
             self._s["turns"] = ev["num_turns"]
         so = ev.get("structured_output")
