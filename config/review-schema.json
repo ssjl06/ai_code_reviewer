@@ -3,7 +3,7 @@
   "title": "ai-review chunk output",
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary", "findings", "previous_findings", "incomplete_reason"],
+  "required": ["summary", "findings", "previous_findings", "incomplete_reason", "diff_reviewed"],
   "properties": {
     "summary": {"type": "string", "maxLength": 600},
     "findings": {
@@ -39,6 +39,7 @@
         }
       }
     },
-    "incomplete_reason": {"type": ["string", "null"]}
+    "incomplete_reason": {"type": ["string", "null"]},
+    "diff_reviewed": {"type": "boolean"}
   }
 }

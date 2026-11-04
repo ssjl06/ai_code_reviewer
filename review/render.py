@@ -10,6 +10,27 @@ _HEADS = {"APPROVE": "✅ 승인", "REQUEST_CHANGES": "❌ 변경 요청", "COMM
 _PREV = {"resolved": "✅ 해결", "open": "⏳ 미해결", "unclear": "❔ 불명확"}
 _SEVS = ["critical", "major", "minor", "info"]
 _CUT = "\n\n(본문 길이 제한으로 일부 생략)"
+_SEV_KO = {"critical": "치명", "major": "중대", "minor": "경미", "info": "참고"}
+_CAT_KO = {"bug": "버그", "security": "보안", "concurrency": "동시성", "memory": "메모리",
+           "performance": "성능", "api-misuse": "API 오용", "maintainability": "유지보수",
+           "docs": "문서"}
+# chunk termination codes (claude_runner: "<main cause>" or "<main cause> → <fallback outcome>")
+_CAUSES = {"timeout": "시간 초과", "deadline": "전체 시간 한도 도달", "max_turns": "턴 한도 도달",
+           "budget": "탐색 예산 소진(가드 중단)", "time": "탐색 시간 소진(가드 중단)",
+           "denied": "거부된 호출 반복(가드 중단)",
+           "diff not reviewed": "변경 줄을 읽고 판단하지 못함",
+           "diff_reviewed missing": "diff_reviewed 필드 누락 또는 불리언 아님",
+           "no structured output": "구조화 출력 없음",
+           "invalid output": "출력 형식 오류"}
+
+
+def severity_label(sev) -> str:
+    """Korean display label; internal values, schema and state stay English."""
+    return _SEV_KO.get(sev, str(sev))
+
+
+def category_label(cat) -> str:
+    return _CAT_KO.get(cat, str(cat))
 
 
 def state_marker(state: dict) -> str:
@@ -39,7 +60,8 @@ def _safe(text: str) -> str:
 
 
 def render_inline(f: dict) -> str:
-    head = "**[%s · 확신 %s · %s]** %s" % (f["severity"], f["confidence"], f["category"], f["title"])
+    head = "**[%s · 확신 %s · %s]** %s" % (severity_label(f["severity"]), f["confidence"],
+                                          category_label(f["category"]), f["title"])
     if f.get("needs_check"):
         head += " ⚠️ 확인 필요"
     out = head + "\n\n" + f["detail"]
@@ -54,7 +76,8 @@ def _reason(review: dict) -> str:
                 if p.get("blocking") and p.get("status") == "open"]
         blocking = [f for f in review["findings"] if f.get("blocking")] + prev
         cnt = {s: sum(1 for f in blocking if f["severity"] == s) for s in ("critical", "major")}
-        text = "머지 차단 %d건 (critical %d, major %d)" % (len(blocking), cnt["critical"], cnt["major"])
+        text = "머지 차단 %d건 (%s %d, %s %d)" % (len(blocking), severity_label("critical"),
+                                               cnt["critical"], severity_label("major"), cnt["major"])
         return text + (" · 이전 미해결 %d건 포함" % len(prev) if prev else "")
     if review.get("failed_all"):
         return "AI 리뷰 실패"
@@ -74,9 +97,19 @@ def _reason(review: dict) -> str:
 def _head(review: dict) -> str:
     rows = ["| 심각도 | 건수 |", "|---|---|"]
     for s in _SEVS:
-        rows.append("| %s | %d |" % (s, sum(1 for f in review["findings"] if f["severity"] == s)))
+        n = sum(1 for f in review["findings"] if f["severity"] == s)
+        rows.append("| %s | %d |" % (severity_label(s), n))
     return "## 🤖 AI Code Review — %s\n**판정 근거:** %s\n\n%s" % (
         _HEADS[review["event"]], _reason(review), "\n".join(rows))
+
+
+def _cause_label(error: str) -> str:
+    """Korean label for a runner error code; unknown text passes through."""
+    main, sep, fb = error.partition(" → ")
+    if not sep:
+        return _CAUSES.get(main, main)
+    step = "결론 단계 생략" if fb == "deadline" else "결론 단계 실패"
+    return "%s → %s (%s)" % (_CAUSES.get(main, main), step, _CAUSES.get(fb, fb))
 
 
 def _sections(review: dict, body_only: list, meta: dict) -> list:
@@ -99,7 +132,7 @@ def _sections(review: dict, body_only: list, meta: dict) -> list:
             "- " + s for s in review["summaries"]))
     if review.get("errors"):
         secs.append("### 미완료/실패 원인\n" + "\n".join(
-            "- c%d: %s" % (i + 1, e) for i, e in review["errors"]))
+            "- c%d: %s" % (i + 1, _cause_label(e)) for i, e in review["errors"]))
     scope = "리뷰 %d files · 생략 %d files" % (len(meta.get("reviewed", [])), len(meta.get("skipped", [])))
     if meta.get("skipped"):
         scope += " (%s)" % ", ".join("`%s`" % p for p in meta["skipped"])

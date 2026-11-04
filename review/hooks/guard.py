@@ -13,6 +13,16 @@ import time
 EXPLORE_TOOLS = {"Read", "Grep", "Glob", "Bash"}
 GIT_SUBCOMMANDS = {"diff", "log", "show", "blame", "grep", "ls-files"}
 BUDGET_REASON = "탐색 예산 소진. 추가 도구 호출 없이 지금 최종 JSON 결과를 출력하라."
+STOP_REASON = "탐색 예산 소진 — 결론 단계로 전환"
+STOP_FILE = "budget-stop"  # created in the state dir once the guard stops a session
+DENY_REASON = "거부된 호출이 반복됨. 추가 도구 호출 없이 지금 최종 JSON 결과를 출력하라."
+DENY_STOP_REASON = "거부된 호출 반복 — 결론 단계로 전환"
+DENY_STOP_FILE = "deny-stop"  # like STOP_FILE, for a stop after too many rule denials
+TIME_REASON = "탐색 시간 소진. 추가 도구 호출 없이 지금 최종 JSON 결과를 출력하라."
+TIME_STOP_REASON = "탐색 시간 소진 — 결론 단계로 전환"
+TIME_STOP_FILE = "time-stop"  # like STOP_FILE, for a stop at AI_REVIEW_STOP_AT
+ANSWER_TOOL = "StructuredOutput"  # how --json-schema delivers the final answer: never stopped
+_STOPS = {STOP_REASON: BUDGET_REASON, TIME_STOP_REASON: TIME_REASON, DENY_STOP_REASON: DENY_REASON}  # stop -> shown to the model
 _SHELL_META = set(";|&><$`(){}*?[]~\\\n\r")
 _DIFFISH = ("--stat --shortstat --numstat --name-only --name-status --no-color --oneline -p --patch "
             "--no-patch --follow -M -w --word-diff --abbrev-commit --diff-filter= --format= --pretty=")
@@ -74,7 +84,9 @@ def check_bash(command):
     except ValueError:
         return "unparseable command"
     if len(tokens) < 2 or tokens[0] != "git" or tokens[1] not in GIT_SUBCOMMANDS:
-        return "only read-only git %s allowed" % "/".join(sorted(GIT_SUBCOMMANDS))
+        return ("아무것도 실행할 수 없다. 이 리뷰는 코드를 읽기만 한다. 허용 도구는 Read, Grep, Glob과 "
+                "git %s뿐이다. 더 시도하지 말고 지금까지 읽은 내용으로 결론을 내라."
+                % "/".join(sorted(GIT_SUBCOMMANDS)))
     for t in tokens[2:]:
         if t == "--":
             continue
@@ -86,11 +98,11 @@ def check_bash(command):
     return None
 
 
-def check_budget(session_id, state_dir, budget):
-    """Count one explore call for the session; return BUDGET_REASON once over budget."""
+def _bump(prefix, session_id, state_dir):
+    """Add one to the session's counter file `<prefix>-<session>.json` and return the new count."""
     os.makedirs(state_dir, exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id or "unknown")
-    with open(os.path.join(state_dir, "budget-%s.json" % safe), "a+") as f:
+    with open(os.path.join(state_dir, "%s-%s.json" % (prefix, safe)), "a+") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         f.seek(0)
         raw = f.read()
@@ -102,11 +114,49 @@ def check_budget(session_id, state_dir, budget):
         f.seek(0)
         f.truncate()
         f.write(json.dumps({"count": count}))
-    return BUDGET_REASON if count > budget else None
+    return count
+
+
+def check_denials(reason, session_id, state_dir, limit):
+    """Count one rule denial for the session: `reason` up to `limit` denials, then
+    DENY_STOP_REASON (and DENY_STOP_FILE)."""
+    if _bump("denied", session_id, state_dir) <= limit:
+        return reason
+    open(os.path.join(state_dir, DENY_STOP_FILE), "a").close()
+    return DENY_STOP_REASON
+
+
+def check_budget(session_id, state_dir, budget):
+    """Count one explore call for the session: None within budget, BUDGET_REASON on the
+    first overrun, STOP_REASON (and STOP_FILE) on later ones."""
+    count = _bump("budget", session_id, state_dir)
+    if count <= budget:
+        return None
+    if count == budget + 1:
+        return BUDGET_REASON
+    open(os.path.join(state_dir, STOP_FILE), "a").close()
+    return STOP_REASON
+
+
+def check_time(env):
+    """TIME_STOP_REASON (and TIME_STOP_FILE) once the epoch time in AI_REVIEW_STOP_AT has
+    passed; a missing or empty value means no time stop."""
+    stop_at = env.get("AI_REVIEW_STOP_AT")
+    if not stop_at or time.time() < float(stop_at):
+        return None
+    state_dir = env["AI_REVIEW_STATE_DIR"]
+    os.makedirs(state_dir, exist_ok=True)
+    open(os.path.join(state_dir, TIME_STOP_FILE), "a").close()
+    return TIME_STOP_REASON
 
 
 def decide(event, env):
     tool = event.get("tool_name")
+    if tool == ANSWER_TOOL:
+        return None
+    stop = check_time(env)
+    if stop:
+        return stop
     if tool not in EXPLORE_TOOLS:
         return None
     inp = event.get("tool_input") or {}
@@ -123,7 +173,8 @@ def decide(event, env):
     else:
         reason = check_bash(inp.get("command") or "")
     if reason:
-        return reason
+        limit = int(env.get("AI_REVIEW_DENY_LIMIT", "5"))
+        return check_denials(reason, event.get("session_id", ""), env["AI_REVIEW_STATE_DIR"], limit)
     budget = int(env.get("AI_REVIEW_EXPLORE_BUDGET", "6"))
     return check_budget(event.get("session_id", ""), env["AI_REVIEW_STATE_DIR"], budget)
 
@@ -141,6 +192,17 @@ def _audit(state_dir, event, decision, reason):
         pass
 
 
+def output(reason):
+    """Hook JSON denying the call; on a stop reason also end the session (`continue` wins)."""
+    stop = reason in _STOPS
+    out = {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": _STOPS.get(reason, reason)}}
+    if stop:
+        out.update({"continue": False, "stopReason": reason})
+    return out
+
+
 def main():
     event = {}
     try:
@@ -153,11 +215,9 @@ def main():
     state_dir = os.environ.get("AI_REVIEW_STATE_DIR")
     if state_dir:
         _audit(state_dir, event if isinstance(event, dict) else {},
-               "deny" if reason else "allow", reason)
+               "stop" if reason in _STOPS else "deny" if reason else "allow", reason)
     if reason:
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse", "permissionDecision": "deny",
-            "permissionDecisionReason": reason}}, ensure_ascii=False))
+        print(json.dumps(output(reason), ensure_ascii=False))
     return 0
 
 

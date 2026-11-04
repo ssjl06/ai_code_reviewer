@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -10,11 +12,14 @@ class ConfigTest(unittest.TestCase):
     def test_defaults_have_spec_values(self):
         c = load_config()
         self.assertEqual(c["chunk_max_tokens"], 20000)
-        self.assertEqual(c["max_chunks"], 6)
+        self.assertEqual(c["max_chunks"], 40)
         self.assertEqual(c["concurrency"], 3)
-        self.assertEqual(c["max_turns"], 10)
-        self.assertEqual(c["explore_budget"], 6)
-        self.assertEqual(c["deadline_s"], 1200)
+        self.assertEqual(c["max_turns"], 60)
+        self.assertEqual(c["explore_budget"], 50)
+        self.assertEqual(c["deny_limit"], 5)
+        self.assertEqual(c["deadline_s"], 18000)
+        self.assertEqual((c["llm_timeout_ms"], c["fallback_timeout_s"], c["chunk_timeout_s"]),
+                         (600000, 600, 3600))
         self.assertEqual(c["block_severities"], ["critical", "major"])
         self.assertEqual(c["block_confidence"], 80)
         self.assertEqual(c["min_confidence"], 50)
@@ -29,7 +34,17 @@ class ConfigTest(unittest.TestCase):
                 json.dump({"concurrency": 2}, f)
             c = load_config(path, {"max_chunks": 4})
         self.assertEqual((c["concurrency"], c["max_chunks"]), (2, 4))
-        self.assertEqual(c["max_turns"], 10)
+        self.assertEqual(c["max_turns"], 60)
+
+    def test_max_turns_raised_to_fit_budget(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            c = load_config(None, {"explore_budget": 15, "max_turns": 16})
+        self.assertEqual(c["max_turns"], 19)
+        self.assertIn("warning: max_turns 16", err.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()) as quiet:
+            self.assertEqual(load_config(None, {"max_turns": 54})["max_turns"], 54)
+        self.assertEqual(quiet.getvalue(), "")
 
     def test_unknown_key_rejected(self):
         with self.assertRaises(KeyError):

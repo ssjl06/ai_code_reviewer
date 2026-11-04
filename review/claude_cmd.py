@@ -46,7 +46,7 @@ def build_command(
     if resume_session:
         cmd += ["--resume", resume_session]
     cmd += ["--agent", AGENT_NAME, "--agents", agents_file, "--json-schema", schema]
-    cmd += ["--max-turns", "2" if resume_session else str(cfg["max_turns"])]
+    cmd += ["--max-turns", "4" if resume_session else str(cfg["max_turns"])]
     cmd += ["--tools", "" if resume_session else "Read,Grep,Glob,Bash"]
     cmd += ["--permission-mode", "dontAsk", "--setting-sources", "user"]
     cmd += ["--settings", _SETTINGS_PATH, "--strict-mcp-config"]
@@ -82,6 +82,7 @@ def build_env(
         "AI_REVIEW_REPO_ROOT": os.path.realpath(repo_root),
         "AI_REVIEW_STATE_DIR": state_dir,
         "AI_REVIEW_EXPLORE_BUDGET": str(cfg["explore_budget"]),
+        "AI_REVIEW_DENY_LIMIT": str(cfg["deny_limit"]),
         "AI_REVIEW_KIT": KIT_DIR,
     })
     # The API retry-limit env var is unconfirmed: see docs/runbook.md pending check #2.

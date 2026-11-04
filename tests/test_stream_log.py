@@ -80,7 +80,21 @@ class StreamLogTest(unittest.TestCase):
         lg, out = logger([0, 1, 2])
         lg.start("x")
         lg.feed('{"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"git push"}}]}}')
-        lg.feed('{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"only read-only git diff/log allowed","is_error":true}]}}')
+        lg.feed('{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"Bash로는 아무것도 실행할 수 없다. 읽기만 한다.","is_error":true}]}}')
+        self.assertEqual(lg.stats()["denied"], 1)
+
+    def test_deny_stop_message_is_denied(self):
+        lg, out = logger([0, 1, 2])
+        lg.start("x")
+        lg.feed('{"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"make"}}]}}')
+        lg.feed('{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"거부된 호출이 반복됨","is_error":true}]}}')
+        self.assertEqual(lg.stats()["denied"], 1)
+
+    def test_time_stop_message_is_denied(self):
+        lg, out = logger([0, 1, 2])
+        lg.start("x")
+        lg.feed('{"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","id":"t","name":"Read","input":{"file_path":"a"}}]}}')
+        lg.feed('{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"탐색 시간 소진","is_error":true}]}}')
         self.assertEqual(lg.stats()["denied"], 1)
 
     def test_same_message_id_counted_once(self):
@@ -92,6 +106,30 @@ class StreamLogTest(unittest.TestCase):
         self.assertEqual(out.getvalue().count("◆ LLM"), 1)
         s = lg.stats()
         self.assertEqual((s["turns"], s["in_tokens"], s["out_tokens"]), (1, 10, 5))
+
+    def test_tokens_fall_back_to_result_usage(self):
+        lg, out = logger([0, 1, 2])
+        lg.start("x")
+        lg.feed('{"type":"assistant","message":{"id":"m1","content":[],"usage":{"input_tokens":0,"output_tokens":0}}}')
+        lg.feed('{"type":"result","subtype":"success","usage":{"input_tokens":1200,"output_tokens":34}}')
+        s = lg.stats()
+        self.assertEqual((s["in_tokens"], s["out_tokens"]), (1200, 34))
+        self.assertIn("◆ LLM    1.0s  in=0 out=0", out.getvalue())
+
+    def test_result_usage_does_not_replace_summed_tokens(self):
+        lg, _ = logger([0, 1, 2])
+        lg.start("x")
+        lg.feed('{"type":"assistant","message":{"id":"m1","content":[],"usage":{"input_tokens":10,"output_tokens":5}}}')
+        lg.feed('{"type":"result","subtype":"success","usage":{"input_tokens":1200,"output_tokens":34}}')
+        s = lg.stats()
+        self.assertEqual((s["in_tokens"], s["out_tokens"]), (10, 5))
+
+    def test_result_without_usage_keeps_zero(self):
+        lg, _ = logger([0, 1])
+        lg.start("x")
+        lg.feed('{"type":"result","subtype":"success"}')
+        s = lg.stats()
+        self.assertEqual((s["in_tokens"], s["out_tokens"]), (0, 0))
 
     def test_non_json_line_passthrough(self):
         lg, out = logger([0])

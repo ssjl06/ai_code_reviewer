@@ -6,7 +6,7 @@ import re
 from typing import Dict, List, Optional, Set, Tuple
 
 SEV_RANK = {"critical": 0, "major": 1, "minor": 2, "info": 3}
-OK_STATUSES = ("ok", "partial")
+OK_STATUSES = ("ok", "partial")  # chunks whose output is used; only "ok" counts as reviewed
 STATUS_RANK = {"open": 0, "unclear": 1, "resolved": 2}
 _ROOT = re.compile(r"^(?:\./|/)+")
 _DIFF_PREFIX = re.compile(r"^[ab]/")
@@ -131,7 +131,7 @@ def _summaries(results: List[dict]) -> List[str]:
         o = r["output"]
         line = "[c%d] %s" % (r["index"] + 1, o.get("summary", ""))
         if o.get("incomplete_reason"):
-            line += " (미완료: %s)" % o["incomplete_reason"]
+            line += " (참고: %s)" % o["incomplete_reason"]
         out.append(line)
     return out
 

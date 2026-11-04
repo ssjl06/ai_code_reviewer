@@ -33,6 +33,37 @@ class IntegrationStateTest(IntegrationBase):
         st = parse_state(posted["body"])
         self.assertEqual((st["sha"], st["complete"], st["seen"]), (self.C1, False, {}))
 
+    def test_note_alone_is_approved_and_seen(self):
+        self.assertEqual(self.run_main("noted", "--repo", self.R, "--pr", "1"), 0)
+        posted = self.gh.posted[-1]
+        self.assertEqual(posted["event"], "APPROVE")
+        self.assertIn("(참고: 탐색 예산 부족)", posted["body"])
+        st = parse_state(posted["body"])
+        self.assertTrue(st["complete"])
+        self.assertTrue(st["seen"] or st["seen_files"])
+
+    def test_diff_not_reviewed_stays_new_for_the_next_run(self):
+        self.assertEqual(self.run_main("unreviewed", "--repo", self.R, "--pr", "1"), 0)
+        posted = self.gh.posted[-1]
+        self.assertEqual(posted["event"], "COMMENT")
+        self.assertIn("리뷰 미완료 조각 있음", posted["body"])
+        self.assertIn("- c1: 변경 줄을 읽고 판단하지 못함", posted["body"])
+        st = parse_state(posted["body"])
+        self.assertEqual((st["complete"], st["seen"], st["seen_files"]), (False, {}, {}))
+        self.assertEqual(self.run_main("noted", "--repo", self.R, "--pr", "1"), 0)
+        self.assertEqual(self.gh.posted[-1]["event"], "APPROVE")  # same head reviewed again
+
+    def test_plain_text_json_without_diff_reviewed_is_not_seen(self):
+        for scn in ("text_missing", "text_null", "text_false_str"):
+            self.assertEqual(self.run_main(scn, "--repo", self.R, "--pr", "1"), 0, scn)
+            posted = self.gh.posted[-1]
+            self.assertEqual(posted["event"], "COMMENT", scn)
+            self.assertIn("- c1: diff_reviewed 필드 누락 또는 불리언 아님", posted["body"])
+            st = parse_state(posted["body"])
+            self.assertEqual((st["complete"], st["seen"], st["seen_files"]), (False, {}, {}), scn)
+        self.assertEqual(self.run_main("noted", "--repo", self.R, "--pr", "1"), 0)
+        self.assertEqual(self.gh.posted[-1]["event"], "APPROVE")  # same head reviewed again
+
     def test_failed_followup_keeps_change_request(self):
         self.assertEqual(self.run_main("blocking", "--repo", self.R, "--pr", "1"), 0)
         self.gh.head = self.add_commit({"src/k.cu": FIXED})

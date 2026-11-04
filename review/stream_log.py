@@ -9,7 +9,7 @@ import time
 _LOCK = threading.Lock()
 _MAX = 120
 _GUARD_MARKERS = ("outside repo", "not allowed", "unparseable command", "guard error", "탐색 예산",
-                  "only read-only git")
+                  "탐색 시간", "실행할 수 없", "거부된 호출")
 
 
 def _trunc(s, n=_MAX):
@@ -63,6 +63,9 @@ class StreamLogger:
     def _p(self, msg):
         with _LOCK:
             print("%s [%s] %s" % (self.now(), self.label, msg), file=self.out, flush=True)
+
+    def note(self, msg):
+        self._p(msg)
 
     def start(self, info):
         self._t0 = self._mark = self._last = self.clock()
@@ -134,6 +137,9 @@ class StreamLogger:
     def _result(self, ev, t):
         self._s["result"] = ev
         self._wall = t - self._t0
+        u = ev.get("usage") or {}  # per-message usage is 0 through LiteLLM
+        self._s["in_tokens"] = self._s["in_tokens"] or u.get("input_tokens", 0) or 0
+        self._s["out_tokens"] = self._s["out_tokens"] or u.get("output_tokens", 0) or 0
         if isinstance(ev.get("num_turns"), int):
             self._s["turns"] = ev["num_turns"]
         so = ev.get("structured_output")

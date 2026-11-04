@@ -13,10 +13,12 @@ class SchemaAgentTest(unittest.TestCase):
     def test_schema_shape(self):
         with open(_path("config", "review-schema.json"), encoding="utf-8") as fh:
             s = json.load(fh)
-        self.assertEqual(set(s["required"]), {"summary", "findings", "previous_findings", "incomplete_reason"})
+        self.assertEqual(set(s["required"]), {"summary", "findings", "previous_findings", "incomplete_reason",
+                                             "diff_reviewed"})
         self.assertFalse(s["additionalProperties"])
         self.assertEqual(s["properties"]["summary"]["maxLength"], 600)
         self.assertEqual(s["properties"]["incomplete_reason"]["type"], ["string", "null"])
+        self.assertEqual(s["properties"]["diff_reviewed"]["type"], "boolean")
         f = s["properties"]["findings"]["items"]
         self.assertEqual(set(f["required"]), {"file", "line", "severity", "confidence", "category", "title", "detail"})
         self.assertEqual(f["properties"]["severity"]["enum"], ["critical", "major", "minor", "info"])
@@ -44,6 +46,24 @@ class SchemaAgentTest(unittest.TestCase):
             self.assertIn(must, text)
         self.assertIn("파일 길이", text.split("## 제외 대상")[1].split("\n## ")[0])
 
+    def test_agent_read_only_review_rule(self):
+        with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        for must in ["코드를 읽어서만", "빌드, 컴파일, 실행, 테스트", "한국어 한 문장"]:
+            self.assertIn(must, text.split("## 규칙")[1].split("\n## ")[0])
+        self.assertNotIn("확인하지 못한 부분이 있으면 `incomplete_reason`에 이유를", text)
+        self.assertNotIn("결론을 내리지 못한 부분이 있으면", text)
+
+    def test_agent_diff_reviewed_rule(self):
+        with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        rules = text.split("## 규칙")[1].split("\n## ")[0]
+        for must in ["변경 줄을 끝까지 읽고 판단했으면", "빌드나 실행을 못 한 것",
+                     "호출부 등 주변 코드를 확인하지 못한 것", "탐색 예산이나 시간이 끝난 것",
+                     "변경 줄 자체를 읽고 판단하지 못한 경우에만"]:
+            self.assertIn(must, rules)
+        self.assertIn("`diff_reviewed`", text.split("## 출력 규칙")[1])
+
     def test_agent_sections_in_order(self):
         with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
             text = fh.read()
@@ -52,10 +72,20 @@ class SchemaAgentTest(unittest.TestCase):
         pos = [text.index(h) for h in order]
         self.assertEqual(pos, sorted(pos))
 
+    def test_agent_korean_rule_first_and_last(self):
+        with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        rule = ("모든 서술(summary, title, detail, suggestion, note)은 반드시 한국어로 쓴다. "
+                "코드와 식별자는 원문 그대로 둔다.")
+        body = text.split("\n---\n", 1)[1].lstrip("\n")
+        self.assertEqual(body.split("\n")[0], rule)
+        self.assertIn("한국어로 쓴다", text.split("## 출력 규칙")[1])
+
     def test_agent_tool_rules(self):
         with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
             text = fh.read()
-        for must in ["탐색 예산 소진", "HEAD^", "git blame", "Grep 도구", "토큰마다 따로", "절대 경로"]:
+        for must in ["탐색 예산 소진", "HEAD^", "git blame", "Grep 도구", "토큰마다 따로", "절대 경로",
+                     "`cat`", "`python`", "`pytest`", "다시 시도하지 않는다"]:
             self.assertIn(must, text)
 
 

@@ -10,15 +10,25 @@ def run(results, prev=(), chunk_files=None, truncated=None, anchor=None):
 
 
 class ResolvedTrustTest(unittest.TestCase):
+    def test_resolved_from_chunk_with_note_accepted(self):
+        r = run([res(0, [], reason="x", prev=[("f1", "resolved")])],
+                [P(blocking=True)], {0: ["a.cu"]})
+        self.assertEqual(r["previous"][0]["status"], "resolved")
+
     def test_resolved_from_partial_chunk_ignored(self):
-        r = run([res(0, [], status="partial", reason="x", prev=[("f1", "resolved")])],
+        r = run([res(0, [], status="partial", prev=[("f1", "resolved")])],
                 [P(blocking=True)], {0: ["a.cu"]})
         self.assertEqual((r["previous"][0]["status"], r["event"]), ("open", "REQUEST_CHANGES"))
 
     def test_open_from_partial_chunk_accepted(self):
-        r = run([res(0, [], status="partial", reason="x", prev=[("f1", "unclear")])],
+        r = run([res(0, [], status="partial", prev=[("f1", "unclear")])],
                 [P(blocking=True)], {0: ["a.cu"]})
         self.assertEqual(r["previous"][0]["status"], "unclear")
+
+    def test_resolved_from_incomplete_chunk_ignored(self):
+        r = run([res(0, [], status="incomplete", prev=[("f1", "resolved")])],
+                [P(blocking=True)], {0: ["a.cu"]})
+        self.assertEqual((r["previous"][0]["status"], r["event"]), ("open", "REQUEST_CHANGES"))
 
     def test_resolved_ignored_when_other_chunk_of_file_failed(self):
         results = [res(0, [], prev=[("f1", "resolved")]), res(1, [], status="failed")]

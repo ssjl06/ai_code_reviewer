@@ -26,8 +26,11 @@ The kit runs from inside each target repository. From a clone of the kit:
   `<target>/.github/ai-review/`, replacing what was there.
 - Writes `<target>/.github/workflows/ai-review.yml` from `templates/ai-review.yml` only if it does
   not exist (or with `--force-workflow`). Nothing else in the target is touched.
+  An existing workflow is kept, except that a lower `timeout-minutes` of the `review` job (only that job; a trailing comment is kept) is
+  raised to the template's, and install.sh warns on stderr if that job or key is not found;
+  if it still differs from the template, install.sh warns (compare with `diff` or use `--force-workflow`).
 - Edit `runs-on` and the `env:` values (`AI_REVIEW_MODEL`, `MAX_CHUNKS`, `CONCURRENCY`) at the top
-  of the installed workflow, set the secrets above, commit both paths and open a PR.
+  of the installed workflow (draft PRs are skipped; marking ready for review triggers a run), set the secrets above, commit both paths and open a PR.
 - `.github/ai-review/**` is in the default `exclude_globs`, so the kit itself is never reviewed.
 
 **Updating:** pull the kit repository, re-run `install.sh` on the target, commit the diff.
@@ -74,9 +77,25 @@ are sent to the model; the prompt lists them as "검토 대상 줄" (added lines
   no LLM call. Moved code keeps its findings and their ids.
 - When there are no new lines the run logs `새로 리뷰할 변경 없음 — 리뷰를 건너뜀` and posts
   nothing. A previous blocking review stays as it is; dismissal happens only on `APPROVE`.
-- A run that cannot finish gives `COMMENT` (never `APPROVE`): a partial chunk, files skipped by the
-  chunk limit, or a previous blocking finding the model could not confirm
-  ("이전 차단 지적 확인 필요"). Lines of failed or skipped chunks stay "new" for the next run.
+- A run that cannot finish gives `COMMENT` (never `APPROVE`): a chunk without valid output
+  (timeout, deadline, failure), a `partial` chunk, a truncated file, files skipped by the chunk
+  limit, or a previous blocking finding the model could not confirm ("이전 차단 지적 확인 필요").
+  Lines of partial, failed or skipped chunks stay "new" for the next run.
+- `incomplete_reason` never changes a chunk's status. That text is only a note, shown as
+  `(참고: ...)` in the chunk summary, and does not stop an `APPROVE`. A chunk is `partial` only
+  when the model answers `diff_reviewed: false` or leaves it missing, `null` or not a boolean
+  (error `diff_reviewed missing`; only an explicit `true` counts), meaning it did not read and judge the changed
+  lines (not "could not build" or "callers not inspected"). A partial chunk keeps its findings,
+  its lines stay new for the next run, and the review is incomplete (PR cause
+  "변경 줄을 읽고 판단하지 못함").
+- Time per chunk is `min(60 min, deadline / rounds - 10 min)`, where a round is one batch of
+  `concurrency` chunks. The first attempt and the conclusion share one absolute end, 10 min past
+  that limit and never past the deadline, so one chunk's worst case is that limit + 10 min. Korean
+  re-asks run after the last chunk, `concurrency` at a time, for at most 5 min past the deadline. Exploring stops `min(5 min, limit / 4)` before that limit (`AI_REVIEW_STOP_AT`),
+  so never at the start: the guard ends the session and the conclusion step asks for the JSON. 23
+  chunks get about 27 min each; 40 chunks about 11 min with about 8.5 min of exploring, so such a PR
+  is not reviewed in depth. A chunk with under 60 s left before the deadline is not started: it
+  ends `incomplete` with `deadline`.
 - If the file with a previous blocking finding is dropped from the PR (reverted or deleted), the
   finding is resolved and the review is approved without an LLM call, unless its line is found in
   another PR file (code moved): then it follows the line. Renames across pushes are followed.
@@ -121,10 +140,13 @@ Fixture: `examples/buggy-pr/make_repo.sh /tmp/x` creates a repo with four plante
 | Tool calls printed as text | vLLM missing `--enable-auto-tool-choice` or wrong `--tool-call-parser` |
 | Context length errors | `--max-model-len` too small; lower `chunk_max_tokens` |
 | `✖ ... denied` lines | guard blocked a command; harmless unless the model needed it |
+| `✖ incomplete  budget → ...` / PR "탐색 예산 소진(가드 중단)" | model kept exploring past `explore_budget`; the guard stopped the session and the conclusion step (`--tools ""`, 4 turns) also failed. Raise `explore_budget` or split chunks smaller (`chunk_max_tokens`). Other codes: `max_turns`, `timeout`, `deadline`, `no structured output`, `invalid output` |
+| `✖ incomplete  time → ...` / PR "탐색 시간 소진(가드 중단)" | the chunk's exploring time ran out (`min(5 min, limit / 4)` before its limit), the guard stopped the session and the conclusion step also failed. A chunk that concludes stays `ok`. Check LLM speed, or raise `deadline_s` and the job's `timeout-minutes` together, or lower `chunk_max_tokens` |
 | Review is always `COMMENT` | chunks incomplete (timeout/turn limit) or bot cannot approve its own PR |
 | Artifact upload fails | `upload-artifact@v3.2.2-node20` not synced to the air-gapped GHES (v4 is unsupported on GHES) |
 | 403/422 posting review | bot lacks write access, or PAT scope too small |
 | `No module named review` | the Review step did not `cd .github/ai-review`, or the kit was not committed |
+| 영어 출력 (English prose in comments) | the model ignored the Korean rule and the one Korean re-ask failed (`한국어 재요청 실패 — 원문 유지` in the log) or did not run (`시간 부족 — 한국어 재요청 생략, 원문 유지`: the pass ends 5 min after the deadline; `세션 없음 — ...`: no session to resume); raise `fallback_timeout_s` or the deadline, or try a stronger model. The chunk keeps its output and status |
 | Kit files show up as review targets | `exclude_globs` was overridden without `.github/ai-review/**` |
 
 ## Pending verification on the runner
@@ -134,7 +156,7 @@ Not yet run (needs the air-gapped runner with LiteLLM/vLLM). Fill in "Result:" f
 |---|---|---|---|---|---|
 | 1 | PR `CLAUDE.md` not loaded | Fixture repo with `CLAUDE.md` saying "모든 응답 끝에 BANANA"; run a review | Output does not contain BANANA | Add a `--bare`-style isolation option from `claude --help`; re-test | |
 | 2 | Retry env var | `claude --help` / docs on the runner; set it to 1 | Variable exists and is honored | Note "not configurable" | |
-| 3 | Structured-output tool name | Read the guard audit log of a real run | Name seen in log; `guard-audit.jsonl` is non-empty and an escape attempt was denied | None needed (guard ignores non-explore tools) | |
+| 3 | Structured-output tool name | Read the guard audit log of a real run | Name seen in log; `guard-audit.jsonl` is non-empty and an escape attempt was denied | Update `ANSWER_TOOL` in `review/hooks/guard.py`: the time stop exempts only that tool (local 2.1.318 calls it `StructuredOutput`) | |
 | 4 | `--resume` with temp `CLAUDE_CONFIG_DIR` | Run the fixture with `--set max_turns=2` | Resume continues the session | Keep one sessions dir per chunk | |
 | 5 | Fixed prompt tokens | First `◆ LLM in=` value of a run | <= 15k | Shorten the agent prompt | |
 | 6 | `max_model_len` | `curl <vllm>/v1/models` | >= ~128k | Lower `chunk_max_tokens` | |
@@ -145,7 +167,7 @@ Smoke run:
     examples/buggy-pr/make_repo.sh /tmp/x
     python3 -E -s -m review --dry-run --repo /tmp/x --base main --head feature
 
-Pass: at least 3 of 4 planted defects reported; `■ done` for every chunk within 20 min; zero
+Pass: at least 3 of 4 planted defects reported; `■ done` for every chunk within 60 min (`chunk_timeout_s`); zero
 `✖ ... denied` caused by an actual escape attempt; `review.json` event is `REQUEST_CHANGES`.
 Result:
 
