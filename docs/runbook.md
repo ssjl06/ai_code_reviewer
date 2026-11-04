@@ -87,7 +87,9 @@ are sent to the model; the prompt lists them as "검토 대상 줄" (added lines
   its lines stay new for the next run, and the review is incomplete (PR cause
   "변경 줄을 읽고 판단하지 못함").
 - Time per chunk is `min(60 min, deadline / rounds - 10 min)`, where a round is one batch of
-  `concurrency` chunks. Exploring stops 5 minutes before that limit (`AI_REVIEW_STOP_AT`): the
+  `concurrency` chunks. The first attempt and the conclusion share one absolute end, 10 min past
+  that limit and never past the deadline, so one chunk's worst case is that limit + 10 min. Korean
+  re-asks run after the last chunk, `concurrency` at a time, for at most 5 min past the deadline. Exploring stops 5 minutes before that limit (`AI_REVIEW_STOP_AT`): the
   guard ends the session and the conclusion step asks for the JSON. 23 chunks get about 27 min each;
   40 chunks about 11 min with very little exploration, so such a PR is not reviewed in depth.
 - If the file with a previous blocking finding is dropped from the PR (reverted or deleted), the
@@ -140,7 +142,7 @@ Fixture: `examples/buggy-pr/make_repo.sh /tmp/x` creates a repo with four plante
 | Artifact upload fails | `upload-artifact@v3.2.2-node20` not synced to the air-gapped GHES (v4 is unsupported on GHES) |
 | 403/422 posting review | bot lacks write access, or PAT scope too small |
 | `No module named review` | the Review step did not `cd .github/ai-review`, or the kit was not committed |
-| 영어 출력 (English prose in comments) | the model ignored the Korean rule and the one Korean re-ask failed or ran out of time (`한국어 재요청 실패 — 원문 유지` in the log); raise `fallback_timeout_s` or the deadline, or try a stronger model |
+| 영어 출력 (English prose in comments) | the model ignored the Korean rule and the one Korean re-ask failed (`한국어 재요청 실패 — 원문 유지` in the log) or did not run (`시간 부족 — 한국어 재요청 생략, 원문 유지`: the pass ends 5 min after the deadline; `세션 없음 — ...`: no session to resume); raise `fallback_timeout_s` or the deadline, or try a stronger model. The chunk keeps its output and status |
 | Kit files show up as review targets | `exclude_globs` was overridden without `.github/ai-review/**` |
 
 ## Pending verification on the runner

@@ -46,6 +46,13 @@ class RunnerTest(unittest.TestCase):
             return run_chunk(self.chunk, "PROMPT", 1, self.cfg(scn, resume), self.paths, self.env,
                              timeout_s, deadline)
 
+    def run_review(self, scn, resume="ok", out=None, limit=LONG):
+        """One chunk through `run_all`, which holds the Korean pass."""
+        with contextlib.redirect_stdout(out or io.StringIO()), \
+                mock.patch("review.claude_runner.chunk_limit", return_value=limit):
+            return run_all([self.chunk], ["PROMPT"], self.cfg(scn, resume), self.paths, self.env,
+                           time.monotonic() + 1000)[0]
+
     def calls(self):
         with open(self.log, encoding="utf-8") as f:
             return [json.loads(x) for x in f]
@@ -95,7 +102,7 @@ class RunnerTest(unittest.TestCase):
 
     def test_english_output_reasked_in_korean(self):
         log = io.StringIO()
-        r = self.run_scn("english", "korean", out=log)
+        r = self.run_review("english", "korean", out=log)
         self.assertEqual((r["status"], r["error"]), ("ok", None))
         f = r["output"]["findings"][0]
         self.assertEqual((f["title"], f["line"]), ("범위를 벗어난 읽기", 2))
@@ -108,7 +115,7 @@ class RunnerTest(unittest.TestCase):
 
     def test_korean_reask_changing_findings_keeps_original(self):
         log = io.StringIO()
-        r = self.run_scn("english", "korean_moved", out=log)
+        r = self.run_review("english", "korean_moved", out=log)
         self.assertEqual((r["status"], r["error"]), ("ok", None))
         f = r["output"]["findings"][0]
         self.assertEqual((f["title"], f["line"]), ("Out-of-bounds read", 2))
@@ -119,23 +126,27 @@ class RunnerTest(unittest.TestCase):
         for resume in ("broken", "english", "crash", "max_turns"):
             with self.subTest(resume=resume):
                 log = io.StringIO()
-                r = self.run_scn("english", resume, out=log)
+                r = self.run_review("english", resume, out=log)
                 self.assertEqual((r["status"], r["error"]), ("ok", None))
                 self.assertEqual(r["output"]["findings"][0]["title"], "Out-of-bounds read")
                 self.assertIn("한국어 재요청 실패 — 원문 유지", log.getvalue())
 
     def test_korean_output_not_reasked(self):
-        r = self.run_scn("blocking")
+        r = self.run_review("blocking")
         self.assertEqual(r["status"], "ok")
         self.assertEqual(len(self.calls()), 1)
 
-    def test_no_korean_reask_without_time(self):
-        log = io.StringIO()
-        r = self.run_scn("english", "korean", deadline=time.monotonic() + 0.2, out=log)
-        self.assertEqual((r["status"], r["error"]), ("ok", None))
+    def test_run_chunk_leaves_translation_to_the_pass(self):
+        r = self.run_scn("english", "korean")
         self.assertEqual(r["output"]["findings"][0]["title"], "Out-of-bounds read")
         self.assertEqual(len(self.calls()), 1)
-        self.assertNotIn("한국어", log.getvalue())
+
+    def test_korean_reask_shares_the_chunk_session_dirs(self):
+        self.run_review("english", "korean")
+        first, again = self.calls()
+        self.assertEqual(first["config_dir"], again["config_dir"])
+        self.assertTrue(first["config_dir"].endswith(os.path.join("chunk-1", "config")))
+        self.assertIsNone(again["stop_at"])
 
     def test_max_turns_cause_after_failed_fallback(self):
         r = self.run_scn("max_turns", "broken")
@@ -155,7 +166,7 @@ class RunnerTest(unittest.TestCase):
     def test_fallback_output_reasked_in_korean(self):
         for first, cause in (("max_turns", "max_turns"), ("budget_stop", "budget")):
             with self.subTest(first=first):
-                r = self.run_scn(first, "english_then_korean", timeout_s=LONG)
+                r = self.run_review(first, "english_then_korean")
                 self.assertEqual((r["status"], r["error"]), ("ok", cause))
                 self.assertEqual(r["output"]["findings"][0]["title"], "범위를 벗어난 읽기")
                 self.assertEqual([c["stdin"] for c in self.calls()[1:]],
@@ -177,7 +188,7 @@ class RunnerTest(unittest.TestCase):
         self.assertAlmostEqual(float(c[0]["stop_at"]), t, delta=5)
 
     def test_resume_runs_without_time_stop(self):
-        self.run_scn("time_stop", "english_then_korean", timeout_s=TIME_RESERVE_S)
+        self.run_review("time_stop", "english_then_korean", limit=TIME_RESERVE_S)
         c = self.calls()
         self.assertEqual(len(c), 3)
         self.assertEqual([x["stop_at"] for x in c[1:]], [None, None])

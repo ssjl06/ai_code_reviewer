@@ -82,7 +82,8 @@ def main():
     if opts["--log"]:
         with open(opts["--log"], "a", encoding="utf-8") as f:
             f.write(json.dumps({"argv": argv, "stdin": stdin,
-                                "stop_at": os.environ.get("AI_REVIEW_STOP_AT")}) + "\n")
+                                "stop_at": os.environ.get("AI_REVIEW_STOP_AT"),
+                                "config_dir": os.environ.get("CLAUDE_CONFIG_DIR")}) + "\n")
     scn = opts["--resume-scenario"] if "--resume" in argv else opts["--scenario"]
     sid = argv[argv.index("--resume") + 1] if "--resume" in argv else "sess-fake"
     if scn == "crash":

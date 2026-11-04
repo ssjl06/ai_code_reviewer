@@ -16,9 +16,9 @@ and are written in Korean.
   code and are re-checked.
 - **Bounded cost.** The diff is split into chunks, with up to 3 `claude` sessions in parallel.
   Each session has a 60-turn limit and a tool budget, and the whole run must finish within
-  300 minutes (job limit 320 minutes). A chunk gets `min(60 min, deadline / rounds - 10 min)`,
-  where a round is one batch of 3 chunks, and exploring stops 5 minutes before that limit. A
-  2,000-line PR gets the full 60 minutes per chunk. A 20,000-line PR gets less: 23 chunks get
+  300 minutes (job limit 320 minutes). A chunk gets `min(60 min, deadline / rounds - 10 min)`
+  plus up to 10 minutes for a conclusion, where a round is one batch of 3 chunks, and exploring
+  stops 5 minutes before that limit. A 2,000-line PR gets the full 60 minutes per chunk. A 20,000-line PR gets less: 23 chunks get
   about 27 minutes each, and 40 chunks about 11 minutes with very little exploration, so such a
   PR is covered but not reviewed in depth.
 - **Visible process.** The Actions log shows every LLM request, tool call and timing. The PR
@@ -222,8 +222,8 @@ ways:
 | `explore_budget` | 50 | Read/Grep/Glob/Bash calls per session; the first call over it is denied, the next one stops the session and the runner asks for the conclusion |
 | `deny_limit` | 5 | calls the guard may deny by its rules per session; the next denied call stops the session like the second budget overrun, and the runner asks for the conclusion (each denied call still costs a turn). Each chunk's Actions log line lists what was denied, e.g. `[c2] 거부된 호출 7건: make×3 cat×2 Read(저장소 밖)×2` |
 | `llm_timeout_ms` / `bash_timeout_ms` | 600000 / 60000 | per request / per git command |
-| `chunk_timeout_s` / `fallback_timeout_s` | 3600 / 600 | ceiling per chunk / each resume (conclusion fallback, Korean re-ask). A chunk's limit is `min(chunk_timeout_s, deadline_s / rounds - fallback_timeout_s)`, at least 300 s, where rounds is chunks / `concurrency` rounded up. Exploring stops 5 minutes before that limit: the guard ends the session and the runner asks for the conclusion |
-| `deadline_s` | 18000 | whole run (300 min; the job's `timeout-minutes` is 320, leaving 20 min for checkout and posting). The per-chunk limit comes from it: up to 3 chunks get 60 min, 23 chunks (8 rounds) about 27 min, and 40 chunks (14 rounds), when files pack badly, about 11 min with very little exploration. A Korean re-ask is not part of that share; if time runs out the deadline cuts the rest and the next run resumes it. Raise both together |
+| `chunk_timeout_s` / `fallback_timeout_s` | 3600 / 600 | ceiling per chunk / Korean re-ask, and the conclusion's share. A chunk's limit is `min(chunk_timeout_s, deadline_s / rounds - fallback_timeout_s)`, at least 300 s, where rounds is chunks / `concurrency` rounded up. The first attempt and the conclusion share one absolute end, limit + `fallback_timeout_s` after the chunk starts and never past the deadline: the conclusion gets what remains of it. Exploring stops 5 minutes before that limit: the guard ends the session and the runner asks for the conclusion |
+| `deadline_s` | 18000 | whole run (300 min; the job's `timeout-minutes` is 320, leaving 20 min for checkout and posting). The per-chunk limit comes from it: up to 3 chunks get 60 min, 23 chunks (8 rounds) about 27 min, and 40 chunks (14 rounds), when files pack badly, about 11 min with very little exploration. Korean re-asks run after every chunk has finished, `concurrency` at a time, each limited by `fallback_timeout_s` and by 5 min past the deadline, which leaves 15 min of the job for checkout and posting. Raise both together |
 | `block_severities`, `block_confidence` | critical, major; 80 | what blocks |
 | `min_confidence` | 50 | findings below this are dropped |
 | `exclude_globs` | vendor, third_party, lock files, generated code, `.github/ai-review/**` | never reviewed |
@@ -272,9 +272,10 @@ python3 -E -s -m review --dry-run --repo <checkout> --base <sha> --head <sha> \
 
 **Korean prose.** The prose fields (`summary`, `title`, `detail`, `suggestion`, `note`,
 `incomplete_reason`) must be Korean. Each item except `suggestion`, which is often code, is judged
-on its own; a chunk with an English item is re-asked once on its session (log line
-`한국어로 다시 받음` or `한국어 재요청 실패 — 원문 유지`), and the PR shows severity and
-category as Korean labels (`치명`/`중대`/`경미`/`참고`, `버그`, `보안`, ...).
+on its own. After every chunk has finished, a chunk with an English item is re-asked once on
+its session (log line `한국어로 다시 받음` or `한국어 재요청 실패 — 원문 유지`). A chunk that gets no
+re-ask (`한국어 재요청 생략` in the log) or fails it keeps its output and status. The PR shows
+severity and category as Korean labels (`치명`/`중대`/`경미`/`참고`, `버그`, `보안`, ...).
 
 **State marker.** The kit's state lives in an HTML comment inside the bot review body:
 ```

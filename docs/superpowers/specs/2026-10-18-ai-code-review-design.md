@@ -237,8 +237,9 @@ approval is advisory.
 | LLM request | 600 s, retries limited to 1 |
 | Tool call (Bash) | 60 s |
 | One chunk (claude process) | `min(chunk_timeout_s, deadline_s // rounds - fallback_timeout_s)`, at least 300 s, where rounds is chunks / concurrency rounded up: 60 min at most (60 turns, explore budget 50), then kill -> resume, or incomplete without output. Exploring stops 5 min before this limit (4.3) |
-| Conclusion fallback call | 10 min, 4 turns |
-| Whole review | 300 min orchestrator deadline; workflow `timeout-minutes: 320` (20 min for checkout and posting). Per-chunk limit: `min(60 min, deadline / rounds - 10 min)`. Target: a 2,000-line PR (about 2 chunks, one round) gets 60 min per chunk. A 20,000-line PR (about 11–23 chunks, up to 40 when files pack badly) gets less: 23 chunks (8 rounds) about 27 min each, 40 chunks (14 rounds) about 11 min with very little exploration, so it is covered but not reviewed in depth. A Korean re-ask is outside this share; if time runs out the deadline cuts the rest and a re-run resumes it |
+| Conclusion fallback call | What remains of the absolute end shared with the first attempt: chunk start + the limit above + `fallback_timeout_s` (10 min), never past the deadline; 4 turns. Worst case for one chunk: limit + 10 min |
+| Korean re-ask | After every chunk, `concurrency` at a time, each `min(fallback_timeout_s, korean_end - now)`, where `korean_end` is the deadline + 300 s (`KOREAN_GRACE_S`); 4 turns |
+| Whole review | 300 min orchestrator deadline; workflow `timeout-minutes: 320` (20 min for checkout and posting). Per-chunk limit: `min(60 min, deadline / rounds - 10 min)`. Target: a 2,000-line PR (about 2 chunks, one round) gets 60 min per chunk. A 20,000-line PR (about 11–23 chunks, up to 40 when files pack badly) gets less: 23 chunks (8 rounds) about 27 min each, 40 chunks (14 rounds) about 11 min with very little exploration, so it is covered but not reviewed in depth. Korean re-asks run after the last chunk and end at most 5 min after the deadline, which leaves 15 min of the job for checkout and posting |
 
 Splitting rules:
 
@@ -258,7 +259,8 @@ Splitting rules:
    `explore_budget + 4` at config load.
 3. If the result is `error_max_turns`, lacks `structured_output`, or the guard
    stopped the session, the runner resumes the session once with tools disabled
-   and asks only for the final JSON (10 min, `--max-turns 4`). If that also fails,
+   and asks only for the final JSON (`--max-turns 4`), limited by what remains of the
+   chunk's absolute end (table above). If that also fails,
    the chunk is marked incomplete. As a last resort, JSON embedded in the result
    text is parsed.
 4. A non-ok chunk's `error` names the cause: `timeout`, `deadline`, `max_turns`,
@@ -482,11 +484,13 @@ Hidden in the bot review body; the latest bot review with a parsable marker
    item fails when, outside backtick code, Hangul is under 30% of its letters;
    an item with fewer than 12 letters passes; `suggestion` is often code and is
    not judged), the runner resumes the session once, also after a conclusion
-   fallback, with a prompt to translate only the prose fields, limited by `fallback_timeout_s`
-   and the global deadline. The answer is used only if it is valid, Korean and
-   keeps the same findings (file, line, severity, category, in order) and
-   previous statuses; only its prose is taken. Otherwise the original output
-   and chunk status are kept.
+   fallback, with a prompt to translate only the prose fields. This is a second pass
+   in `run_all` after every chunk has finished, on a pool of `concurrency`, so a
+   translation never delays a later chunk. Each re-ask is limited by `fallback_timeout_s`
+   and the time left until 300 s past the deadline; past that it is skipped. The answer
+   is used only if it is valid, Korean and keeps the same findings (file, line, severity,
+   category, in order) and previous statuses; only its prose is taken. Otherwise the
+   original output is kept, and the log says so. A re-ask never changes a chunk's status.
 
 ### 7.2 Severity and Confidence
 
