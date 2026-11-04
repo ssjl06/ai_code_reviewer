@@ -127,6 +127,7 @@ Fixture: `examples/buggy-pr/make_repo.sh /tmp/x` creates a repo with four plante
 | Artifact upload fails | `upload-artifact@v3.2.2-node20` not synced to the air-gapped GHES (v4 is unsupported on GHES) |
 | 403/422 posting review | bot lacks write access, or PAT scope too small |
 | `No module named review` | the Review step did not `cd .github/ai-review`, or the kit was not committed |
+| 영어 출력 (English prose in comments) | the model ignored the Korean rule and the one Korean re-ask failed or ran out of time (`한국어 재요청 실패 — 원문 유지` in the log); raise `fallback_timeout_s` or the deadline, or try a stronger model |
 | Kit files show up as review targets | `exclude_globs` was overridden without `.github/ai-review/**` |
 
 ## Pending verification on the runner

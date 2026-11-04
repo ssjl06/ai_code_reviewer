@@ -431,6 +431,19 @@ Hidden in the bot review body; the latest bot review with a parsable marker
      inside `run:`, unpinned actions, excessive `permissions`.
    - Markdown: text contradicting code, broken commands/links.
 
+6. Language: every prose field (summary, title, detail, suggestion, note) is
+   Korean; code and identifiers stay as written. The rule opens the agent
+   body, closes its output rules, and is the last line of the chunk prompt and
+   the fallback prompt.
+7. Korean re-ask: when a chunk's valid output is not Korean (`review/korean.py`:
+   outside backtick code, Hangul is under 30% of the letters; fewer than 12
+   letters counts as Korean), the runner resumes the session once with a
+   prompt to translate only the prose fields, limited by `fallback_timeout_s`
+   and the global deadline. The answer is used only if it is valid, Korean and
+   keeps the same findings (file, line, severity, category, in order) and
+   previous statuses; only its prose is taken. Otherwise the original output
+   and chunk status are kept.
+
 ### 7.2 Severity and Confidence
 
 | Severity | Meaning |
@@ -517,9 +530,13 @@ status (whenever a previous state exists, with updated line numbers), "확인 �
 scope (reviewed/skipped files, incomplete chunks), footer (model, chunks,
 duration, commit range), hidden state marker.
 
-Inline comment format: `**[major · 확신 85 · concurrency]** <title>` followed by
+Inline comment format: `**[중대 · 확신 85 · 동시성]** <title>` followed by
 detail and suggestion. A finding is posted inline only if its line is on the
-RIGHT side of the reviewed diff; otherwise it goes to the body.
+RIGHT side of the reviewed diff; otherwise it goes to the body. Severity and
+category are shown as Korean labels (critical 치명, major 중대, minor 경미,
+info 참고; bug 버그, security 보안, concurrency 동시성, memory 메모리,
+performance 성능, api-misuse API 오용, maintainability 유지보수, docs 문서);
+internal values, the schema and the state marker stay English.
 
 ### 9.3 Local CLI
 

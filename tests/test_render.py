@@ -47,9 +47,29 @@ class RenderTest(unittest.TestCase):
 
     def test_inline_format(self):
         s = render_inline(FIND(suggestion="S"))
-        self.assertTrue(s.startswith("**[major · 확신 85 · bug]** T"))
+        self.assertTrue(s.startswith("**[중대 · 확신 85 · 버그]** T"))
         self.assertIn("**제안**\nS", s)
         self.assertIn("⚠️ 확인 필요", render_inline(FIND(nc=True)).split("\n")[0])
+
+    def test_korean_labels(self):
+        from review.render import category_label, severity_label
+        self.assertEqual([severity_label(x) for x in ("critical", "major", "minor", "info", "zzz")],
+                         ["치명", "중대", "경미", "참고", "zzz"])
+        cats = ("bug", "security", "concurrency", "memory", "performance", "api-misuse",
+                "maintainability", "docs", "other")
+        self.assertEqual([category_label(x) for x in cats],
+                         ["버그", "보안", "동시성", "메모리", "성능", "API 오용", "유지보수", "문서",
+                          "other"])
+        s = render_inline(FIND(sev="critical", cat="security"))
+        self.assertTrue(s.startswith("**[치명 · 확신 85 · 보안]** T"))
+
+    def test_severity_table_uses_korean_labels(self):
+        b = render_body(REVIEW(findings=[FIND(sev="critical"), FIND(sev="info")]), [], META, ST)
+        for row in ("| 치명 | 1 |", "| 중대 | 0 |", "| 경미 | 0 |", "| 참고 | 1 |"):
+            self.assertIn(row, b)
+        head = b.split("<!--")[0]
+        for raw in ("| critical", "| major", "| minor", "| info"):
+            self.assertNotIn(raw, head)
 
     def test_body_headers_per_event(self):
         for ev, head in [("APPROVE", "✅ 승인"), ("REQUEST_CHANGES", "❌ 변경 요청"),
@@ -61,7 +81,7 @@ class RenderTest(unittest.TestCase):
         prev = [{"id": "p", "file": "x", "line": 1, "title": "t", "severity": "major",
                  "blocking": True, "status": "open"}]
         b = render_body(REVIEW("REQUEST_CHANGES", findings=f, previous=prev), [], META, ST)
-        self.assertIn("머지 차단 3건 (critical 1, major 2)", b)
+        self.assertIn("머지 차단 3건 (치명 1, 중대 2)", b)
         self.assertIn("이전 미해결 1건 포함", b)
         self.assertIn("AI 리뷰 실패", render_body(REVIEW(failed_all=True), [], META, ST))
         self.assertIn("리뷰 미완료 조각 있음", render_body(REVIEW(incomplete=[1]), [], META, ST))
@@ -79,7 +99,7 @@ class RenderTest(unittest.TestCase):
         prev = [{"id": "p", "file": "x", "line": 1, "title": "t", "severity": "major",
                  "blocking": True, "status": "open"}]
         b = render_body(REVIEW("REQUEST_CHANGES", failed_all=True, previous=prev), [], META, ST)
-        self.assertIn("머지 차단 1건 (critical 0, major 1)", b)
+        self.assertIn("머지 차단 1건 (치명 0, 중대 1)", b)
         self.assertNotIn("AI 리뷰 실패", b)
 
     def test_reason_and_scope_truncated(self):

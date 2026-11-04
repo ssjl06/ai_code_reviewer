@@ -11,7 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from review.claude_cmd import build_command, build_env
-from review.prompt import FALLBACK_PROMPT
+from review.korean import is_korean, merge_korean
+from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT
 from review.stream_log import StreamLogger
 from review.validate import extract_output
 
@@ -110,23 +111,37 @@ def run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadli
         stats["wall_s"] = time.monotonic() - t0
         return st, out, log.session_id, stats, info
 
+    def resume_limit():
+        limit = cfg["fallback_timeout_s"]
+        return limit if deadline is None else min(limit, deadline - time.monotonic())
+
+    def korean(out, stats, sid):
+        """Re-ask a non-Korean answer once; any failure keeps the original output."""
+        limit = resume_limit()
+        if is_korean(out) or not sid or limit <= 0.5:
+            return out, stats
+        _, new, _, _, _ = attempt(build_command(cfg, paths["agents_file"], sid),
+                                  KOREAN_PROMPT, limit)
+        merged = merge_korean(out, new)
+        StreamLogger("c%d" % (idx + 1), out=sys.stdout).note(
+            "한국어로 다시 받음" if merged else "한국어 재요청 실패 — 원문 유지")
+        return merged or out, dict(stats, wall_s=time.monotonic() - t0)
+
     limit = cfg["chunk_timeout_s"] if timeout_s is None else timeout_s
     st, out, sid, stats, info = attempt(build_command(cfg, paths["agents_file"]), prompt, limit)
     error = "timeout" if st == "timeout" else None
     if out:
-        return _finish(idx, out, stats, sid, error)
+        return _finish(idx, *korean(out, stats, sid), sid, error)
     if not sid:
         msg = error or info["stderr"] or "no output (exit %s)" % info["rc"]
         return _result(idx, "failed", None, stats, None, msg)
-    limit = cfg["fallback_timeout_s"]
-    if deadline is not None:
-        limit = min(limit, deadline - time.monotonic())
+    limit = resume_limit()
     if limit <= 0.5:
         return _result(idx, "incomplete", None, stats, sid, error or "deadline")
-    st2, out, _, stats2, _ = attempt(build_command(cfg, paths["agents_file"], sid),
-                                     FALLBACK_PROMPT, limit)
+    st2, out, sid2, stats2, _ = attempt(build_command(cfg, paths["agents_file"], sid),
+                                        FALLBACK_PROMPT, limit)
     if out:
-        return _finish(idx, out, stats2, sid, error)
+        return _finish(idx, *korean(out, stats2, sid2 or sid), sid, error)
     return _result(idx, "incomplete", None, stats2, sid, error or "no structured output")
 
 

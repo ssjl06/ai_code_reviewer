@@ -64,6 +64,9 @@ class StreamLogger:
         with _LOCK:
             print("%s [%s] %s" % (self.now(), self.label, msg), file=self.out, flush=True)
 
+    def note(self, msg):
+        self._p(msg)
+
     def start(self, info):
         self._t0 = self._mark = self._last = self.clock()
         self._p("● start  %s" % info)
