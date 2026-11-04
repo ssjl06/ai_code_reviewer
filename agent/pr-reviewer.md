@@ -24,6 +24,9 @@ description: PR diff 청크에서 이 PR이 새로 만든 결함만 찾아 스�
 - Read, Grep, Glob은 저장소 안의 파일에만 쓴다. 저장소 밖 경로는 쓰지 않는다.
 - 정규식 검색은 Grep 도구로 한다. `git grep`으로 정규식 검색을 하지 않는다.
 - Bash는 읽기 전용 git만 허용된다: `git diff`, `git log`, `git show`, `git blame`, `git grep`, `git ls-files`.
+- 빌드, 컴파일, 실행, 테스트 명령은 쓸 수 없다. `cat`, `ls`, `find`, `sed`, `python`, `make`, `cmake`, `ctest`, `gcc`, `pytest` 같은 명령도 마찬가지다.
+- 파일 내용은 Read로 읽고, 검색은 Grep/Glob으로 한다.
+- 거부된 호출은 시간만 낭비한다. 거부된 명령은 다시 시도하지 않는다.
 - git 옵션은 토큰마다 따로 쓴다. `-nw`처럼 묶지 않고 `-n -w`로 쓴다.
 - 셸 메타문자를 쓰지 않는다: `; | & > < $ ( ) { } * ? [ ] ~ \`, 백틱, 줄바꿈
 - 절대 경로와 `..`를 쓰지 않는다.

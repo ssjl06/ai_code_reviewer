@@ -72,7 +72,8 @@ class SchemaAgentTest(unittest.TestCase):
     def test_agent_tool_rules(self):
         with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
             text = fh.read()
-        for must in ["탐색 예산 소진", "HEAD^", "git blame", "Grep 도구", "토큰마다 따로", "절대 경로"]:
+        for must in ["탐색 예산 소진", "HEAD^", "git blame", "Grep 도구", "토큰마다 따로", "절대 경로",
+                     "`cat`", "`python`", "`pytest`", "다시 시도하지 않는다"]:
             self.assertIn(must, text)
 
 

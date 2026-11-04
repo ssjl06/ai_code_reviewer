@@ -1,6 +1,7 @@
 """Run one `claude -p` process per diff chunk, with timeouts and a conclusion-only resume."""
 from __future__ import annotations
 
+import json
 import math
 import os
 import signal
@@ -12,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from review.claude_cmd import build_command, build_env
-from review.hooks.guard import STOP_FILE, TIME_STOP_FILE
+from review.hooks.guard import DENY_STOP_FILE, STOP_FILE, TIME_STOP_FILE
 from review.korean import is_korean, merge_korean
 from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT
 from review.stream_log import StreamLogger
@@ -110,6 +111,8 @@ def _cause(st, stats, state=None):
         return "time"
     if state and os.path.exists(os.path.join(state, STOP_FILE)):
         return "budget"
+    if state and os.path.exists(os.path.join(state, DENY_STOP_FILE)):
+        return "denied"
     if res.get("subtype") == "error_max_turns":
         return "max_turns"
     text = res.get("result")
@@ -125,7 +128,49 @@ def _report(r):
     return r
 
 
+def _denial_summary(state):
+    """One line counting the chunk's denied calls by command or tool, or None when there are none."""
+    counts: Dict[str, int] = {}
+    try:
+        with open(os.path.join(state, "guard-audit.jsonl"), encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                    if not isinstance(rec, dict) or rec.get("decision") not in ("deny", "stop"):
+                        continue
+                    tool, inp = rec.get("tool"), rec.get("input")
+                    if tool == "Bash":
+                        words = str((inp or {}).get("command") or "").split()
+                        key = words[0] if words else "Bash"
+                    else:
+                        key = tool if isinstance(tool, str) and tool else "?"
+                        if "outside repo" in str(rec.get("reason")):
+                            key += "(저장소 밖)"
+                except (ValueError, AttributeError):
+                    continue
+                counts[key] = counts.get(key, 0) + 1
+    except OSError:
+        return None
+    if not counts:
+        return None
+    parts = ["%s×%d" % kv for kv in sorted(counts.items(), key=lambda kv: -kv[1])]
+    return "거부된 호출 %d건: %s" % (sum(counts.values()), " ".join(parts))
+
+
 def run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadline=None):
+    try:
+        return _run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s, deadline)
+    finally:
+        try:
+            line = _denial_summary(os.path.join(paths["work"], "chunk-%d" % (chunk["index"] + 1),
+                                                "state"))
+            if line:
+                StreamLogger("c%d" % (chunk["index"] + 1), out=sys.stdout).note(line)
+        except Exception:  # a log line must never fail the chunk
+            pass
+
+
+def _run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadline=None):
     idx, t0 = chunk["index"], time.monotonic()
     cdir = os.path.join(paths["work"], "chunk-%d" % (idx + 1))
     state, conf = os.path.join(cdir, "state"), os.path.join(cdir, "config")

@@ -8,10 +8,10 @@ import unittest
 
 from unittest import mock
 
-from review.claude_runner import (TIME_RESERVE_S, _cause, chunk_limit, extract_output, run_all,
+from review.claude_runner import (TIME_RESERVE_S, _cause, _denial_summary, chunk_limit, extract_output, run_all,
                                   run_chunk, run_process)
 from review.config import load_config
-from review.hooks.guard import STOP_FILE, TIME_STOP_FILE
+from review.hooks.guard import DENY_STOP_FILE, STOP_FILE, TIME_STOP_FILE
 from review.stream_log import StreamLogger
 from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT
 from tests.fakes import make_wrapper
@@ -38,7 +38,7 @@ class RunnerTest(unittest.TestCase):
         d = tempfile.mkdtemp(dir=self.tmp.name)
         binp, self.log = make_wrapper(d, scn, resume)
         return {"claude_bin": binp, "chunk_timeout_s": 2, "fallback_timeout_s": 2, "max_turns": 10,
-                "llm_timeout_ms": 1000, "bash_timeout_ms": 1000, "explore_budget": 6,
+                "llm_timeout_ms": 1000, "bash_timeout_ms": 1000, "explore_budget": 6, "deny_limit": 5,
                 "model": "m", "concurrency": 1, "deadline_s": 1000}
 
     def run_scn(self, scn, resume="ok", deadline=None, out=None, timeout_s=None):
@@ -198,6 +198,49 @@ class RunnerTest(unittest.TestCase):
         open(os.path.join(state, TIME_STOP_FILE), "w").close()
         self.assertEqual(_cause("exited", {"result": None}, state), "time")
         self.assertEqual(_cause("timeout", {}, state), "timeout")
+        state = tempfile.mkdtemp(dir=self.tmp.name)
+        open(os.path.join(state, DENY_STOP_FILE), "w").close()
+        self.assertEqual(_cause("exited", {"result": None}, state), "denied")
+
+    def write_audit(self, lines):
+        state = os.path.join(self.paths["work"], "chunk-1", "state")
+        os.makedirs(state, exist_ok=True)
+        with open(os.path.join(state, "guard-audit.jsonl"), "w", encoding="utf-8") as f:
+            f.write(lines if isinstance(lines, str) else
+                    "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in lines))
+        return state
+
+    def test_denial_summary_groups_calls(self):
+        def rec(tool, inp, decision="deny", reason="x"):
+            return {"tool": tool, "input": inp, "decision": decision, "reason": reason}
+        state = self.write_audit(
+            [rec("Bash", {"command": "make -j4"})] * 3 + [rec("Bash", {"command": "cat a.c"})] * 2
+            + [rec("Read", {"file_path": "/etc/x"}, reason="path outside repo: /etc/x")] * 2
+            + [rec("Bash", {"command": "ls"}, "stop"), rec("Read", {}, "allow", None)])
+        self.assertEqual(_denial_summary(state),
+                         "거부된 호출 8건: make×3 cat×2 Read(저장소 밖)×2 ls×1")
+
+    def test_denial_summary_ignores_missing_or_broken_audit(self):
+        state = os.path.join(self.tmp.name, "nostate")
+        self.assertIsNone(_denial_summary(state))
+        state = self.write_audit('not json\n[1]\n{"decision":"allow"}\n{"decision":"deny","tool":5}\n')
+        self.assertEqual(_denial_summary(state), "거부된 호출 1건: ?×1")
+        state = self.write_audit([{"decision": "allow", "tool": "Read"}])
+        self.assertIsNone(_denial_summary(state))
+
+    def test_chunk_logs_denial_line(self):
+        self.write_audit([{"tool": "Bash", "input": {"command": "make"}, "decision": "deny",
+                           "reason": "r"}] * 2)
+        log = io.StringIO()
+        r = self.run_scn("ok", out=log)
+        self.assertEqual(r["status"], "ok")
+        self.assertIn("[c1] 거부된 호출 2건: make×2", log.getvalue())
+
+    def test_chunk_survives_broken_audit(self):
+        self.write_audit("\x00garbage\n")
+        log = io.StringIO()
+        self.assertEqual(self.run_scn("ok", out=log)["status"], "ok")
+        self.assertNotIn("거부된 호출", log.getvalue())
 
     def test_run_all_logs_non_ok_chunk(self):
         out = io.StringIO()

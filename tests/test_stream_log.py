@@ -80,7 +80,14 @@ class StreamLogTest(unittest.TestCase):
         lg, out = logger([0, 1, 2])
         lg.start("x")
         lg.feed('{"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"git push"}}]}}')
-        lg.feed('{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"only read-only git diff/log allowed","is_error":true}]}}')
+        lg.feed('{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"Bash로는 아무것도 실행할 수 없다. 읽기만 한다.","is_error":true}]}}')
+        self.assertEqual(lg.stats()["denied"], 1)
+
+    def test_deny_stop_message_is_denied(self):
+        lg, out = logger([0, 1, 2])
+        lg.start("x")
+        lg.feed('{"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"make"}}]}}')
+        lg.feed('{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"거부된 호출이 반복됨","is_error":true}]}}')
         self.assertEqual(lg.stats()["denied"], 1)
 
     def test_time_stop_message_is_denied(self):

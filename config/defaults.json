@@ -6,6 +6,7 @@
   "concurrency": 3,
   "max_turns": 60,
   "explore_budget": 50,
+  "deny_limit": 5,
   "llm_timeout_ms": 600000,
   "bash_timeout_ms": 60000,
   "chunk_timeout_s": 3600,

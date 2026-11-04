@@ -181,4 +181,6 @@ class RenderTest(unittest.TestCase):
         self.assertIn("- c1: 탐색 예산 소진(가드 중단) → 결론 단계 실패 (구조화 출력 없음)", b)
         self.assertIn("- c4: 탐색 시간 소진(가드 중단) → 결론 단계 실패 (구조화 출력 없음)", b)
         self.assertIn("- c2: 전체 시간 한도 도달", b)
+        self.assertIn("거부된 호출 반복(가드 중단)", render_body(
+            REVIEW("COMMENT", incomplete=[0], errors=[[0, "denied"]]), [], META, ST))
         self.assertIn("- c3: 시간 초과 → 결론 단계 생략 (전체 시간 한도 도달)", b)

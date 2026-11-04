@@ -65,6 +65,7 @@ class ClaudeCmdTest(unittest.TestCase):
         self.assertEqual(e["API_TIMEOUT_MS"], "600000")
         self.assertEqual(e["BASH_MAX_TIMEOUT_MS"], "60000")
         self.assertEqual(e["AI_REVIEW_EXPLORE_BUDGET"], "50")
+        self.assertEqual(e["AI_REVIEW_DENY_LIMIT"], "5")
         self.assertEqual(e["AI_REVIEW_KIT"], KIT_DIR)
         self.assertEqual(e["CLAUDE_CONFIG_DIR"], "/cfg")
         self.assertEqual(e["AI_REVIEW_REPO_ROOT"], os.path.realpath("/repo"))

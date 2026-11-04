@@ -17,6 +17,7 @@ _CAT_KO = {"bug": "버그", "security": "보안", "concurrency": "동시성", "m
 # chunk termination codes (claude_runner: "<main cause>" or "<main cause> → <fallback outcome>")
 _CAUSES = {"timeout": "시간 초과", "deadline": "전체 시간 한도 도달", "max_turns": "턴 한도 도달",
            "budget": "탐색 예산 소진(가드 중단)", "time": "탐색 시간 소진(가드 중단)",
+           "denied": "거부된 호출 반복(가드 중단)",
            "no structured output": "구조화 출력 없음",
            "invalid output": "출력 형식 오류"}
 

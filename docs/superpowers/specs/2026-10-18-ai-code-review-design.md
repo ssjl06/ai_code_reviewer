@@ -180,6 +180,15 @@ The child process gets an explicitly built environment:
   `success` result, empty `result` and `terminal_reason: "hook_stopped"`. The guard
   creates `budget-stop` in the state dir so the runner can report the cause.
   The structured-output tool is never counted or blocked.
+- Denials: rule denials do not use the explore budget, so the guard counts them per
+  session (`deny_limit`, default 5, env `AI_REVIEW_DENY_LIMIT`; the structured-output
+  tool is exempt). The first `deny_limit` return the rule reason; the next one stops
+  the session the same way (`stopReason` "거부된 호출 반복 — 결론 단계로 전환", audit
+  decision `stop`, marker `deny-stop`, runner cause `denied`). The denial text for
+  non-git Bash says in Korean that nothing can be executed, that only Read, Grep, Glob
+  and read-only git are allowed, and that the model should conclude from what it read.
+  After each chunk the runner reads `guard-audit.jsonl` and logs one line with the
+  denied calls grouped by command or tool (a missing or broken file is ignored).
 - Time: the runner passes the exploring session an epoch time in `AI_REVIEW_STOP_AT`
   (chunk limit minus 300 s, which leaves room for one LLM call in flight). Any tool
   call at or after it, checked before the rule denials, stops the session the same
