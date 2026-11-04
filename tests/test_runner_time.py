@@ -119,6 +119,40 @@ class AbsoluteEndTest(SimBase):
         self.assertEqual(len(self.calls), 1)
 
 
+class TimeStopTest(SimBase):
+    def test_40_chunks_at_concurrency_1(self):
+        cfg = dict(self.cfg, concurrency=1)
+        self.assertEqual(chunk_limit(cfg, 40), 300)
+        self.script = lambda text, sid: (900, None, "s") if not sid else (590, KO, sid)
+        t0 = self.clock.now
+        rs = self.review(40, concurrency=1)
+        first = [c for c in self.calls if c["sid"] is None]
+        self.assertLess(len(first), 40)
+        for c in first:
+            self.assertGreater(float(c["stop_at"]), c["start"])
+            self.assertLessEqual(c["limit"], 300)
+            self.assertGreaterEqual(t0 + 18000 - c["start"], 60)
+        self.assertEqual(float(first[0]["stop_at"]) - first[0]["start"], 225)
+        self.assertTrue(all(c["start"] + c["limit"] <= t0 + 18000 for c in self.calls))
+        self.assertEqual({r["status"] for r in rs[:len(first) - 1]}, {"ok"})
+        self.assertEqual({(r["status"], r["error"]) for r in rs[len(first):]},
+                         {("incomplete", "deadline")})
+
+    def test_every_chunk_short_of_the_deadline_still_gets_a_time_stop(self):
+        self.script = lambda text, sid: (0, KO, "s")
+        for left in (60, 61, 100, 299.5):
+            with self.subTest(left=left):
+                self.calls.clear()
+                self.review(1, left=left)
+                c = self.calls[0]
+                self.assertGreater(float(c["stop_at"]), c["start"])
+
+    def test_chunk_starts_with_exactly_a_minute_left(self):
+        self.script = lambda text, sid: (0, KO, "s")
+        self.assertEqual(self.review(1, left=60)[0]["status"], "ok")
+        self.assertEqual(self.review(1, left=59.9)[0]["error"], "deadline")
+
+
 class KoreanPassTest(SimBase):
     def answers(self, table):
         """`table`: chunk prompt -> (seconds, output or None); resumes answered by `self.resume`."""

@@ -89,9 +89,11 @@ are sent to the model; the prompt lists them as "검토 대상 줄" (added lines
 - Time per chunk is `min(60 min, deadline / rounds - 10 min)`, where a round is one batch of
   `concurrency` chunks. The first attempt and the conclusion share one absolute end, 10 min past
   that limit and never past the deadline, so one chunk's worst case is that limit + 10 min. Korean
-  re-asks run after the last chunk, `concurrency` at a time, for at most 5 min past the deadline. Exploring stops 5 minutes before that limit (`AI_REVIEW_STOP_AT`): the
-  guard ends the session and the conclusion step asks for the JSON. 23 chunks get about 27 min each;
-  40 chunks about 11 min with very little exploration, so such a PR is not reviewed in depth.
+  re-asks run after the last chunk, `concurrency` at a time, for at most 5 min past the deadline. Exploring stops `min(5 min, limit / 4)` before that limit (`AI_REVIEW_STOP_AT`),
+  so never at the start: the guard ends the session and the conclusion step asks for the JSON. 23
+  chunks get about 27 min each; 40 chunks about 11 min with about 8.5 min of exploring, so such a PR
+  is not reviewed in depth. A chunk with under 60 s left before the deadline is not started: it
+  ends `incomplete` with `deadline`.
 - If the file with a previous blocking finding is dropped from the PR (reverted or deleted), the
   finding is resolved and the review is approved without an LLM call, unless its line is found in
   another PR file (code moved): then it follows the line. Renames across pushes are followed.
@@ -137,7 +139,7 @@ Fixture: `examples/buggy-pr/make_repo.sh /tmp/x` creates a repo with four plante
 | Context length errors | `--max-model-len` too small; lower `chunk_max_tokens` |
 | `✖ ... denied` lines | guard blocked a command; harmless unless the model needed it |
 | `✖ incomplete  budget → ...` / PR "탐색 예산 소진(가드 중단)" | model kept exploring past `explore_budget`; the guard stopped the session and the conclusion step (`--tools ""`, 4 turns) also failed. Raise `explore_budget` or split chunks smaller (`chunk_max_tokens`). Other codes: `max_turns`, `timeout`, `deadline`, `no structured output`, `invalid output` |
-| `✖ incomplete  time → ...` / PR "탐색 시간 소진(가드 중단)" | the chunk's exploring time ran out (5 min before its limit), the guard stopped the session and the conclusion step also failed. A chunk that concludes stays `ok`. Check LLM speed, or raise `deadline_s` and the job's `timeout-minutes` together, or lower `chunk_max_tokens` |
+| `✖ incomplete  time → ...` / PR "탐색 시간 소진(가드 중단)" | the chunk's exploring time ran out (`min(5 min, limit / 4)` before its limit), the guard stopped the session and the conclusion step also failed. A chunk that concludes stays `ok`. Check LLM speed, or raise `deadline_s` and the job's `timeout-minutes` together, or lower `chunk_max_tokens` |
 | Review is always `COMMENT` | chunks incomplete (timeout/turn limit) or bot cannot approve its own PR |
 | Artifact upload fails | `upload-artifact@v3.2.2-node20` not synced to the air-gapped GHES (v4 is unsupported on GHES) |
 | 403/422 posting review | bot lacks write access, or PAT scope too small |

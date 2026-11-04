@@ -20,6 +20,11 @@ from tests.fakes import make_wrapper
 LONG = TIME_RESERVE_S + 60  # the time stop stays out of the way
 
 
+def stop_now():
+    """Put AI_REVIEW_STOP_AT at the start, so the guard's first check fires."""
+    return mock.patch("review.claude_runner._reserve", lambda limit: limit)
+
+
 def quiet():
     return contextlib.redirect_stdout(io.StringIO())
 
@@ -82,7 +87,7 @@ class RunnerTest(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             run_all([self.chunk], ["p"], self.cfg("unreviewed"), self.paths, self.env,
-                    time.monotonic() + 30)
+                    time.monotonic() + 120)
         self.assertIn("[c1] ✖ partial  diff not reviewed", out.getvalue())
 
     def test_ok(self):
@@ -178,7 +183,8 @@ class RunnerTest(unittest.TestCase):
 
     def test_time_stop_resumes_to_conclusion(self):
         t = time.time()
-        r = self.run_scn("time_stop", timeout_s=TIME_RESERVE_S)
+        with stop_now():
+            r = self.run_scn("time_stop", timeout_s=TIME_RESERVE_S)
         self.assertEqual((r["status"], r["error"]), ("ok", "time"))
         state = os.path.join(self.paths["work"], "chunk-1", "state")
         self.assertTrue(os.path.exists(os.path.join(state, TIME_STOP_FILE)))
@@ -188,18 +194,28 @@ class RunnerTest(unittest.TestCase):
         self.assertAlmostEqual(float(c[0]["stop_at"]), t, delta=5)
 
     def test_resume_runs_without_time_stop(self):
-        self.run_review("time_stop", "english_then_korean", limit=TIME_RESERVE_S)
+        with stop_now():
+            self.run_review("time_stop", "english_then_korean", limit=TIME_RESERVE_S)
         c = self.calls()
         self.assertEqual(len(c), 3)
         self.assertEqual([x["stop_at"] for x in c[1:]], [None, None])
 
     def test_stop_at_leaves_the_reserve(self):
-        t = time.time()
-        self.run_scn("ok", timeout_s=1000)
-        self.assertAlmostEqual(float(self.calls()[0]["stop_at"]), t + 700, delta=5)
+        for limit, stop in ((2000, 1700), (1000, 750), (685, 514), (300, 225), (120, 90), (60, 45)):
+            with self.subTest(limit=limit):
+                t = time.time()
+                self.run_scn("ok", timeout_s=limit)
+                self.assertAlmostEqual(float(self.calls()[0]["stop_at"]), t + stop, delta=5)
+
+    def test_time_stop_does_not_fire_at_the_start(self):
+        r = self.run_scn("time_stop", timeout_s=TIME_RESERVE_S)
+        self.assertEqual((r["status"], r["error"]), ("ok", "budget"))
+        state = os.path.join(self.paths["work"], "chunk-1", "state")
+        self.assertFalse(os.path.exists(os.path.join(state, TIME_STOP_FILE)))
 
     def test_time_stop_fallback_fails(self):
-        r = self.run_scn("time_stop", "broken", timeout_s=TIME_RESERVE_S)
+        with stop_now():
+            r = self.run_scn("time_stop", "broken", timeout_s=TIME_RESERVE_S)
         self.assertEqual((r["status"], r["error"]), ("incomplete", "time → no structured output"))
 
     def test_chunk_limit_examples(self):
@@ -214,7 +230,7 @@ class RunnerTest(unittest.TestCase):
 
     def test_run_all_uses_chunk_limit_capped_by_time_left(self):
         cfg = load_config()
-        for left, want in ((100000, 1650), (100, 100)):
+        for left, want in ((100000, 1650), (100, 100), (61, 61)):
             with self.subTest(left=left), mock.patch("review.claude_runner.run_chunk") as rc:
                 rc.return_value = {"index": 0, "status": "ok"}
                 run_all([self.chunk] * 23, ["p"] * 23, cfg, self.paths, self.env,
@@ -278,7 +294,7 @@ class RunnerTest(unittest.TestCase):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             run_all([self.chunk], ["p"], self.cfg("max_turns", "broken"), self.paths, self.env,
-                    time.monotonic() + 30)
+                    time.monotonic() + 120)
         self.assertIn("[c1] ✖ incomplete  max_turns → no structured output", out.getvalue())
 
     def test_hang_times_out_then_resumes(self):
@@ -348,7 +364,7 @@ class RunnerTest(unittest.TestCase):
         chunks = [dict(self.chunk, index=i) for i in range(3)]
         cfg = dict(self.cfg("ok"), claude_bin=os.path.join(self.tmp.name, "nope"))
         with quiet():
-            rs = run_all(chunks, ["p"] * 3, cfg, self.paths, self.env, time.monotonic() + 30)
+            rs = run_all(chunks, ["p"] * 3, cfg, self.paths, self.env, time.monotonic() + 120)
         self.assertEqual([(r["index"], r["status"]) for r in rs], [(0, "failed"), (1, "failed"),
                                                                     (2, "failed")])
         self.assertTrue(all(r["error"].startswith("FileNotFoundError: ") for r in rs))
@@ -373,6 +389,13 @@ class RunnerTest(unittest.TestCase):
             rs = run_all(chunks, ["p"] * 4, cfg, self.paths, self.env, time.monotonic() + 0.5)
         self.assertIn("deadline", [r["error"] for r in rs])
         self.assertEqual([r["index"] for r in rs], [0, 1, 2, 3])
+
+    def test_run_all_does_not_start_a_chunk_under_a_minute_before_the_deadline(self):
+        with quiet(), mock.patch("review.claude_runner.run_chunk") as rc:
+            rs = run_all([self.chunk], ["p"], self.cfg("ok"), self.paths, self.env,
+                         time.monotonic() + 59)
+        rc.assert_not_called()
+        self.assertEqual((rs[0]["status"], rs[0]["error"]), ("incomplete", "deadline"))
 
 
 if __name__ == "__main__":

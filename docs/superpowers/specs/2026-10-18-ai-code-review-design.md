@@ -190,7 +190,8 @@ The child process gets an explicitly built environment:
   After each chunk the runner reads `guard-audit.jsonl` and logs one line with the
   denied calls grouped by command or tool (a missing or broken file is ignored).
 - Time: the runner passes the exploring session an epoch time in `AI_REVIEW_STOP_AT`
-  (chunk limit minus 300 s, which leaves room for one LLM call in flight). Any tool
+  (chunk limit minus `min(300 s, limit / 4)`, which leaves room for one LLM call in
+  flight and is always after the start: 225 s of a 300 s limit). Any tool
   call at or after it, checked before the rule denials, stops the session the same
   way (`stopReason` "탐색 시간 소진 — 결론 단계로 전환", audit decision `stop`,
   marker `time-stop`). The structured-output tool is exempt, because stopping it would
@@ -236,10 +237,10 @@ approval is advisory.
 | Concurrency | 3 |
 | LLM request | 600 s, retries limited to 1 |
 | Tool call (Bash) | 60 s |
-| One chunk (claude process) | `min(chunk_timeout_s, deadline_s // rounds - fallback_timeout_s)`, at least 300 s, where rounds is chunks / concurrency rounded up: 60 min at most (60 turns, explore budget 50), then kill -> resume, or incomplete without output. Exploring stops 5 min before this limit (4.3) |
+| One chunk (claude process) | `min(chunk_timeout_s, deadline_s // rounds - fallback_timeout_s)`, at least 300 s, where rounds is chunks / concurrency rounded up: 60 min at most (60 turns, explore budget 50), then kill -> resume, or incomplete without output. Exploring stops `min(5 min, limit / 4)` before this limit (4.3). A chunk with under 60 s left before the deadline is not started: `incomplete`, error `deadline` |
 | Conclusion fallback call | What remains of the absolute end shared with the first attempt: chunk start + the limit above + `fallback_timeout_s` (10 min), never past the deadline; 4 turns. Worst case for one chunk: limit + 10 min |
 | Korean re-ask | After every chunk, `concurrency` at a time, each `min(fallback_timeout_s, korean_end - now)`, where `korean_end` is the deadline + 300 s (`KOREAN_GRACE_S`); 4 turns |
-| Whole review | 300 min orchestrator deadline; workflow `timeout-minutes: 320` (20 min for checkout and posting). Per-chunk limit: `min(60 min, deadline / rounds - 10 min)`. Target: a 2,000-line PR (about 2 chunks, one round) gets 60 min per chunk. A 20,000-line PR (about 11–23 chunks, up to 40 when files pack badly) gets less: 23 chunks (8 rounds) about 27 min each, 40 chunks (14 rounds) about 11 min with very little exploration, so it is covered but not reviewed in depth. Korean re-asks run after the last chunk and end at most 5 min after the deadline, which leaves 15 min of the job for checkout and posting |
+| Whole review | 300 min orchestrator deadline; workflow `timeout-minutes: 320` (20 min for checkout and posting). Per-chunk limit: `min(60 min, deadline / rounds - 10 min)`. Target: a 2,000-line PR (about 2 chunks, one round) gets 60 min per chunk. A 20,000-line PR (about 11–23 chunks, up to 40 when files pack badly) gets less: 23 chunks (8 rounds) about 27 min each, 40 chunks (14 rounds) about 11 min with about 8.5 min of exploring, so it is covered but not reviewed in depth. Korean re-asks run after the last chunk and end at most 5 min after the deadline, which leaves 15 min of the job for checkout and posting |
 
 Splitting rules:
 

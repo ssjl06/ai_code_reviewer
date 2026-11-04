@@ -21,6 +21,7 @@ from review.validate import extract_output
 
 TIME_RESERVE_S = 300  # exploring stops this long before the chunk limit: one LLM call in flight
 MIN_CHUNK_S = 300
+MIN_START_S = 60  # a chunk is not started with less than this left before the deadline
 KOREAN_GRACE_S = 300  # Korean re-asks may run this long past the deadline (the job allows 20 min)
 
 
@@ -97,6 +98,11 @@ def _finish(idx, out, stats, sid, error):
     if out.get("diff_reviewed") is False:
         return _result(idx, "partial", out, stats, sid, "diff not reviewed")
     return _result(idx, "ok", out, stats, sid, error)
+
+
+def _reserve(limit):
+    """Seconds before `limit` that exploring stops; a short limit keeps 3/4 of it to explore."""
+    return min(TIME_RESERVE_S, limit // 4)
 
 
 def chunk_limit(cfg: dict, n_chunks: int) -> int:
@@ -211,7 +217,7 @@ def _run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadl
         end = min(end, deadline)
         limit = min(limit, end - t0)
     # Only the exploring session gets the time stop: resumes must be able to answer.
-    timed = dict(env, AI_REVIEW_STOP_AT=str(time.time() + limit - TIME_RESERVE_S))
+    timed = dict(env, AI_REVIEW_STOP_AT=str(time.time() + limit - _reserve(limit)))
     st, out, sid, stats, info = attempt(build_command(cfg, paths["agents_file"]), prompt, limit,
                                         timed)
     error = "timeout" if st == "timeout" else None
@@ -277,7 +283,7 @@ def run_all(chunks, prompts, cfg, paths, base_env, deadline) -> List[dict]:
 
     def one(chunk, prompt):
         left = deadline - time.monotonic()
-        if left <= 0:
+        if left < MIN_START_S:
             return _report(_result(chunk["index"], "incomplete", None, _empty_stats(), None,
                                    "deadline"))
         try:

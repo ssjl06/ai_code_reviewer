@@ -15,12 +15,13 @@ and are written in Korean.
   Squash, rebase, force-push and merging main cost no LLM call. Earlier findings follow their
   code and are re-checked.
 - **Bounded cost.** The diff is split into chunks, with up to 3 `claude` sessions in parallel.
-  Each session has a 60-turn limit and a tool budget, and the whole run must finish within
-  300 minutes (job limit 320 minutes). A chunk gets `min(60 min, deadline / rounds - 10 min)`
-  plus up to 10 minutes for a conclusion, where a round is one batch of 3 chunks, and exploring
-  stops 5 minutes before that limit. A 2,000-line PR gets the full 60 minutes per chunk. A 20,000-line PR gets less: 23 chunks get
-  about 27 minutes each, and 40 chunks about 11 minutes with very little exploration, so such a
-  PR is covered but not reviewed in depth.
+  Each session has a 60-turn limit and a tool budget, and the chunks must finish within
+  300 minutes, Korean re-asks within 5 more (job limit 320 minutes). A chunk gets
+  `min(60 min, deadline / rounds - 10 min)` plus up to 10 minutes for a conclusion, where a round
+  is one batch of 3 chunks, and exploring stops 5 minutes (at most a quarter of the limit) before
+  that limit. A 2,000-line PR gets the full 60 minutes per chunk. A 20,000-line PR gets less: 23
+  chunks get about 27 minutes each, and 40 chunks about 11 minutes with about 8.5 of them to
+  explore, so such a PR is covered but not reviewed in depth.
 - **Visible process.** The Actions log shows every LLM request, tool call and timing. The PR
   gets one review with inline comments.
 
@@ -222,8 +223,8 @@ ways:
 | `explore_budget` | 50 | Read/Grep/Glob/Bash calls per session; the first call over it is denied, the next one stops the session and the runner asks for the conclusion |
 | `deny_limit` | 5 | calls the guard may deny by its rules per session; the next denied call stops the session like the second budget overrun, and the runner asks for the conclusion (each denied call still costs a turn). Each chunk's Actions log line lists what was denied, e.g. `[c2] 거부된 호출 7건: make×3 cat×2 Read(저장소 밖)×2` |
 | `llm_timeout_ms` / `bash_timeout_ms` | 600000 / 60000 | per request / per git command |
-| `chunk_timeout_s` / `fallback_timeout_s` | 3600 / 600 | ceiling per chunk / Korean re-ask, and the conclusion's share. A chunk's limit is `min(chunk_timeout_s, deadline_s / rounds - fallback_timeout_s)`, at least 300 s, where rounds is chunks / `concurrency` rounded up. The first attempt and the conclusion share one absolute end, limit + `fallback_timeout_s` after the chunk starts and never past the deadline: the conclusion gets what remains of it. Exploring stops 5 minutes before that limit: the guard ends the session and the runner asks for the conclusion |
-| `deadline_s` | 18000 | whole run (300 min; the job's `timeout-minutes` is 320, leaving 20 min for checkout and posting). The per-chunk limit comes from it: up to 3 chunks get 60 min, 23 chunks (8 rounds) about 27 min, and 40 chunks (14 rounds), when files pack badly, about 11 min with very little exploration. Korean re-asks run after every chunk has finished, `concurrency` at a time, each limited by `fallback_timeout_s` and by 5 min past the deadline, which leaves 15 min of the job for checkout and posting. Raise both together |
+| `chunk_timeout_s` / `fallback_timeout_s` | 3600 / 600 | ceiling per chunk / Korean re-ask, and the conclusion's share. A chunk's limit is `min(chunk_timeout_s, deadline_s / rounds - fallback_timeout_s)`, at least 300 s, where rounds is chunks / `concurrency` rounded up. The first attempt and the conclusion share one absolute end, limit + `fallback_timeout_s` after the chunk starts and never past the deadline: the conclusion gets what remains of it. Exploring stops `min(5 min, limit / 4)` before that limit, so never at the start (at 225 s of a 300 s limit): the guard ends the session and the runner asks for the conclusion |
+| `deadline_s` | 18000 | whole run (300 min; the job's `timeout-minutes` is 320, leaving 20 min for checkout and posting). The per-chunk limit comes from it: up to 3 chunks get 60 min, 23 chunks (8 rounds) about 27 min, and 40 chunks (14 rounds), when files pack badly, about 11 min with about 8.5 min of exploring. A chunk is not started with under 60 s left: it ends `incomplete` with `deadline` and the next run reviews it. Korean re-asks run after every chunk has finished, `concurrency` at a time, each limited by `fallback_timeout_s` and by 5 min past the deadline, which leaves 15 min of the job for checkout and posting. Raise both together |
 | `block_severities`, `block_confidence` | critical, major; 80 | what blocks |
 | `min_confidence` | 50 | findings below this are dropped |
 | `exclude_globs` | vendor, third_party, lock files, generated code, `.github/ai-review/**` | never reviewed |
