@@ -8,15 +8,26 @@ KOREAN_MIN_RATIO = 0.3   # Hangul share of the letters required to count as Kore
 KOREAN_MIN_LETTERS = 12  # fewer letters than this (e.g. "LGTM") is too short to judge
 _CODE = re.compile(r"`+[^`]*`+")
 _FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,}).*?(?:^[ \t]*\1[`~]*[ \t]*$|\Z)", re.M | re.S)
-_CODE_CHARS = set(";{}=(")  # a line with one of these is taken for code
+# A line is code only as a whole: it ends like a statement or block, starts like one, or is an
+# assignment or a call. Prose that merely contains `;`, `(` or `=` is still judged.
+_CODE_END = (";", "{", "}")
+_CODE_START = re.compile(r"^\s*(?:#include|//|#!|(?:if|for|while|return|auto|int|void|const|def|"
+                         r"class|import|from)[ (])")
+_CODE_WHOLE = re.compile(r"^\s*[\w.:<>\[\]*&]+\s*(?:=|\+=|-=)\s*\S"
+                         r"|^\s*[\w.:]+\([^)]*\)\s*;?\s*$")
 _HANGUL = re.compile(r"[ᄀ-ᇿ㄰-㆏가-힣]")
 _ASCII = re.compile(r"[A-Za-z]")
+
+
+def _looks_like_code(line: str) -> bool:
+    return (line.rstrip().endswith(_CODE_END) or bool(_CODE_START.match(line))
+            or bool(_CODE_WHOLE.match(line)))
 
 
 def _suggestion_prose(text: str) -> str:
     """`suggestion` without fenced blocks, inline code and lines that look like code."""
     text = _CODE.sub(" ", _FENCE.sub("", text))
-    return "\n".join(line for line in text.split("\n") if not _CODE_CHARS & set(line))
+    return "\n".join(line for line in text.split("\n") if not _looks_like_code(line))
 
 
 def _prose(output: dict) -> Iterator[str]:

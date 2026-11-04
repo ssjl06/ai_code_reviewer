@@ -486,7 +486,9 @@ Hidden in the bot review body; the latest bot review with a parsable marker
    per item, namely summary, each title, detail, suggestion, note and incomplete_reason; an
    item fails when, outside backtick code, Hangul is under 30% of its letters;
    an item with fewer than 12 letters passes; `suggestion` is judged after removing fenced
-   blocks, inline code and lines containing any of `;`, `{`, `}`, `=`, `(`), the runner resumes the session once, also after a conclusion
+   blocks, inline code and lines that look like code as a whole (ending with `;`, `{` or `}`,
+   starting with `#include`, `//`, `#!` or a statement keyword, or an assignment or single call;
+   prose that merely contains `;`, `(` or `=` is judged), the runner resumes the session once, also after a conclusion
    fallback, with a prompt to translate only the prose fields. This is a second pass
    in `run_all` after every chunk has finished, on a pool of `concurrency`, so a
    translation never delays a later chunk. Each re-ask is limited by `fallback_timeout_s`

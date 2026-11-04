@@ -64,6 +64,23 @@ class IsKoreanTest(unittest.TestCase):
     def test_english_prose_suggestion_fails(self):
         self.assertFalse(is_korean(OUT(F(suggestion="Check the length before indexing the buffer."))))
 
+    def test_prose_with_code_characters_is_judged(self):
+        for text in ("Check the length (in bytes) before indexing the buffer.",
+                     "Use a lock here; the map is shared between threads.",
+                     "Set the limit = 5 for this path."):
+            with self.subTest(text=text):
+                self.assertFalse(is_korean(OUT(F(suggestion=text))))
+
+    def test_code_lines_as_a_whole_are_not_judged(self):
+        for code in ("std::lock_guard<std::mutex> lock(mu);", "x = compute(y)", "foo(a, b)",
+                     "total += compute_the_total_value(items)", "#include <mutex_and_condition>",
+                     "// guard the shared map with a mutex", "#!/usr/bin/env python_interpreter",
+                     "return checked_lookup_of_the_buffer_value", "while (retry_budget_remaining) do_it",
+                     "import concurrent_futures_thread_pool", "const auto& entry_in_the_map = m[k]",
+                     "struct Entry { int key_of_the_entry; int value_of_the_entry; }"):
+            with self.subTest(code=code):
+                self.assertTrue(is_korean(OUT(F(suggestion=code))))
+
     def test_code_only_suggestion_passes(self):
         for code in ("```cpp\nif (index < length) {\n  value = buffer[index];\n}\n```",
                      "```\nreturn checked_lookup_of_the_buffer_value\n```",
