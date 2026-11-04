@@ -91,7 +91,10 @@ def _empty_stats() -> Dict[str, Any]:
 
 
 def _finish(idx, out, stats, sid, error):
-    """A valid output finishes the chunk; `incomplete_reason` is only a note for the PR body."""
+    """Only `diff_reviewed` false makes a chunk partial: its findings are used but its lines
+    stay unreviewed. `incomplete_reason` is only a note for the PR body."""
+    if out.get("diff_reviewed") is False:
+        return _result(idx, "partial", out, stats, sid, "diff not reviewed")
     return _result(idx, "ok", out, stats, sid, error)
 
 

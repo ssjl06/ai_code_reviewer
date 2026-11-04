@@ -57,6 +57,27 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(len(r["output"]["findings"]), 1)
         self.assertEqual(len(self.calls()), 1)
 
+    def test_note_with_diff_reviewed_is_ok(self):
+        r = self.run_scn("noted")
+        self.assertTrue(r["output"]["diff_reviewed"])
+
+    def test_diff_not_reviewed_is_partial(self):
+        r = self.run_scn("unreviewed")
+        self.assertEqual((r["status"], r["error"]), ("partial", "diff not reviewed"))
+        self.assertEqual(len(r["output"]["findings"]), 1)
+        self.assertEqual(len(self.calls()), 1)
+
+    def test_fallback_answer_decides_partial_too(self):
+        r = self.run_scn("max_turns", "unreviewed")
+        self.assertEqual((r["status"], r["error"]), ("partial", "diff not reviewed"))
+
+    def test_report_logs_partial(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run_all([self.chunk], ["p"], self.cfg("unreviewed"), self.paths, self.env,
+                    time.monotonic() + 30)
+        self.assertIn("[c1] ✖ partial  diff not reviewed", out.getvalue())
+
     def test_ok(self):
         r = self.run_scn("ok")
         self.assertEqual((r["status"], r["session_id"]), ("ok", "sess-fake"))
@@ -284,7 +305,8 @@ class RunnerTest(unittest.TestCase):
     def test_extract_output(self):
         self.assertIsNone(extract_output(None))
         self.assertIsNone(extract_output({"structured_output": {"a": 1}}))
-        empty = {"summary": "", "findings": [], "previous_findings": [], "incomplete_reason": None}
+        empty = {"summary": "", "findings": [], "previous_findings": [], "incomplete_reason": None,
+                 "diff_reviewed": True}
         self.assertEqual(extract_output({"structured_output": {"findings": []}}), empty)
         self.assertIsNone(extract_output({"result": '{"x": 1}'}))
         self.assertEqual(extract_output({"result": 'a {"x":1} b {"findings": []}'}), empty)

@@ -85,6 +85,11 @@ class MergeKoreanTest(unittest.TestCase):
     def test_incomplete_reason_only_when_original_had_one(self):
         self.assertIsNone(merge_korean(EN, OUT(F(), reason="새 사유"))["incomplete_reason"])
 
+    def test_diff_reviewed_stays_the_original(self):
+        en = dict(EN, diff_reviewed=False)
+        ko = dict(OUT(F(suggestion="길이를 확인한다.")), diff_reviewed=True)
+        self.assertIs(merge_korean(en, ko)["diff_reviewed"], False)
+
     def test_rejects_changed_findings(self):
         self.assertIsNone(merge_korean(EN, OUT(F(line=4, suggestion="확인"))))
         self.assertIsNone(merge_korean(EN, OUT(F(severity="minor"))))

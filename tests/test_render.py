@@ -174,6 +174,9 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("미완료/실패 원인", render_body(REVIEW(), [], META, ST))
 
     def test_error_cause_labels(self):
+        b = render_body(REVIEW("COMMENT", incomplete=[0], errors=[[0, "diff not reviewed"]]),
+                        [], META, ST)
+        self.assertIn("- c1: 변경 줄을 읽고 판단하지 못함", b)
         b = render_body(REVIEW("COMMENT", incomplete=[0, 1, 2], errors=[
             [0, "budget → no structured output"], [1, "deadline"], [2, "timeout → deadline"],
             [3, "time → no structured output"]]),

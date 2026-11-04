@@ -13,10 +13,12 @@ class SchemaAgentTest(unittest.TestCase):
     def test_schema_shape(self):
         with open(_path("config", "review-schema.json"), encoding="utf-8") as fh:
             s = json.load(fh)
-        self.assertEqual(set(s["required"]), {"summary", "findings", "previous_findings", "incomplete_reason"})
+        self.assertEqual(set(s["required"]), {"summary", "findings", "previous_findings", "incomplete_reason",
+                                             "diff_reviewed"})
         self.assertFalse(s["additionalProperties"])
         self.assertEqual(s["properties"]["summary"]["maxLength"], 600)
         self.assertEqual(s["properties"]["incomplete_reason"]["type"], ["string", "null"])
+        self.assertEqual(s["properties"]["diff_reviewed"]["type"], "boolean")
         f = s["properties"]["findings"]["items"]
         self.assertEqual(set(f["required"]), {"file", "line", "severity", "confidence", "category", "title", "detail"})
         self.assertEqual(f["properties"]["severity"]["enum"], ["critical", "major", "minor", "info"])
@@ -51,6 +53,16 @@ class SchemaAgentTest(unittest.TestCase):
             self.assertIn(must, text.split("## 규칙")[1].split("\n## ")[0])
         self.assertNotIn("확인하지 못한 부분이 있으면 `incomplete_reason`에 이유를", text)
         self.assertNotIn("결론을 내리지 못한 부분이 있으면", text)
+
+    def test_agent_diff_reviewed_rule(self):
+        with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        rules = text.split("## 규칙")[1].split("\n## ")[0]
+        for must in ["변경 줄을 끝까지 읽고 판단했으면", "빌드나 실행을 못 한 것",
+                     "호출부 등 주변 코드를 확인하지 못한 것", "탐색 예산이나 시간이 끝난 것",
+                     "변경 줄 자체를 읽고 판단하지 못한 경우에만"]:
+            self.assertIn(must, rules)
+        self.assertIn("`diff_reviewed`", text.split("## 출력 규칙")[1])
 
     def test_agent_sections_in_order(self):
         with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:

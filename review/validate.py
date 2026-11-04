@@ -71,7 +71,8 @@ def normalize_output(obj: Any) -> Optional[dict]:
             "findings": [f for f in map(_finding, obj["findings"]) if f is not None],
             "previous_findings": [p for p in map(_previous, prev if isinstance(prev, list) else [])
                                   if p is not None],
-            "incomplete_reason": reason if isinstance(reason, str) else None}
+            "incomplete_reason": reason if isinstance(reason, str) else None,
+            "diff_reviewed": obj.get("diff_reviewed") is not False}  # absent in older output
 
 
 def _state_entry(e: Any) -> bool:

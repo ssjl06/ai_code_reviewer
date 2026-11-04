@@ -8,7 +8,7 @@ GOOD = {"file": "a.c", "line": 3, "severity": "major", "confidence": 90, "catego
 
 def out(*findings, **kw):
     o = {"summary": "s", "findings": list(findings), "previous_findings": [],
-         "incomplete_reason": None}
+         "incomplete_reason": None, "diff_reviewed": True}
     o.update(kw)
     return o
 
@@ -25,7 +25,13 @@ class NormalizeOutputTest(unittest.TestCase):
     def test_defaults(self):
         self.assertEqual(normalize_output({"findings": []}),
                          {"summary": "", "findings": [], "previous_findings": [],
-                          "incomplete_reason": None})
+                          "incomplete_reason": None, "diff_reviewed": True})
+
+    def test_diff_reviewed(self):
+        self.assertIs(normalize_output(out(diff_reviewed=False))["diff_reviewed"], False)
+        self.assertIs(normalize_output(out(diff_reviewed=True))["diff_reviewed"], True)
+        self.assertIs(normalize_output({"findings": []})["diff_reviewed"], True)
+        self.assertIs(normalize_output(out(diff_reviewed=None))["diff_reviewed"], True)
 
     def test_missing_category_defaulted_and_coercions(self):
         raw = {"file": "a.c", "line": "4", "severity": "minor", "confidence": "90",

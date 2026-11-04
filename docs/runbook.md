@@ -77,11 +77,15 @@ are sent to the model; the prompt lists them as "검토 대상 줄" (added lines
 - When there are no new lines the run logs `새로 리뷰할 변경 없음 — 리뷰를 건너뜀` and posts
   nothing. A previous blocking review stays as it is; dismissal happens only on `APPROVE`.
 - A run that cannot finish gives `COMMENT` (never `APPROVE`): a chunk without valid output
-  (timeout, deadline, failure), a truncated file, files skipped by the chunk limit, or a previous
-  blocking finding the model could not confirm ("이전 차단 지적 확인 필요"). Lines of failed or
-  skipped chunks stay "new" for the next run.
-- A chunk with valid output is done, whatever `incomplete_reason` says. That text is only a note,
-  shown as `(참고: ...)` in the chunk summary, and does not stop an `APPROVE`.
+  (timeout, deadline, failure), a `partial` chunk, a truncated file, files skipped by the chunk
+  limit, or a previous blocking finding the model could not confirm ("이전 차단 지적 확인 필요").
+  Lines of partial, failed or skipped chunks stay "new" for the next run.
+- `incomplete_reason` never changes a chunk's status. That text is only a note, shown as
+  `(참고: ...)` in the chunk summary, and does not stop an `APPROVE`. A chunk is `partial` only
+  when the model answers `diff_reviewed: false`, meaning it did not read and judge the changed
+  lines (not "could not build" or "callers not inspected"). A partial chunk keeps its findings,
+  its lines stay new for the next run, and the review is incomplete (PR cause
+  "변경 줄을 읽고 판단하지 못함").
 - Time per chunk is `min(60 min, deadline / rounds - 10 min)`, where a round is one batch of
   `concurrency` chunks. Exploring stops 5 minutes before that limit (`AI_REVIEW_STOP_AT`): the
   guard ends the session and the conclusion step asks for the JSON. 23 chunks get about 27 min each;

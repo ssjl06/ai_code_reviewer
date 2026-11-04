@@ -15,6 +15,16 @@ class ResolvedTrustTest(unittest.TestCase):
                 [P(blocking=True)], {0: ["a.cu"]})
         self.assertEqual(r["previous"][0]["status"], "resolved")
 
+    def test_resolved_from_partial_chunk_ignored(self):
+        r = run([res(0, [], status="partial", prev=[("f1", "resolved")])],
+                [P(blocking=True)], {0: ["a.cu"]})
+        self.assertEqual((r["previous"][0]["status"], r["event"]), ("open", "REQUEST_CHANGES"))
+
+    def test_open_from_partial_chunk_accepted(self):
+        r = run([res(0, [], status="partial", prev=[("f1", "unclear")])],
+                [P(blocking=True)], {0: ["a.cu"]})
+        self.assertEqual(r["previous"][0]["status"], "unclear")
+
     def test_resolved_from_incomplete_chunk_ignored(self):
         r = run([res(0, [], status="incomplete", prev=[("f1", "resolved")])],
                 [P(blocking=True)], {0: ["a.cu"]})

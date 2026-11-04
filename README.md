@@ -263,7 +263,12 @@ python3 -E -s -m review --dry-run --repo <checkout> --base <sha> --head <sha> \
   suggestion?}`
 - `previous_findings[]`, each `{id, status: resolved|open|unclear, note?}`
 - `incomplete_reason`: a note for people, or `null`. The PR body shows it as `(참고: ...)`; it
-  does not make the review incomplete. A chunk with valid output is done.
+  never changes a chunk's status.
+- `diff_reviewed`: `true` when the model read the changed lines to the end and judged them. A
+  failed build, unread callers, or a spent budget or time are not reasons for `false`. `false`
+  makes the chunk `partial`: its findings are kept, its lines stay unreviewed for the next run
+  and the review is incomplete (`COMMENT`, or `REQUEST_CHANGES` on a blocking finding). A missing
+  value counts as `true`.
 
 **Korean prose.** The prose fields (`summary`, `title`, `detail`, `suggestion`, `note`,
 `incomplete_reason`) must be Korean. Each item except `suggestion`, which is often code, is judged

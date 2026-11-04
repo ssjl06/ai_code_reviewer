@@ -44,7 +44,7 @@ class UpdateSeenTest(unittest.TestCase):
         b = lines_of("b")
         old = Counter([fp_line(b, 1)])
         scope, d = scope_for({"a.py": lines_of("a"), "b.py": b}, prev={"b.py": old})
-        for status in ("failed", "incomplete"):
+        for status in ("failed", "partial", "incomplete"):
             got = update_seen(scope, [chunk(0, d["a.py"]), chunk(1, d["b.py"])],
                               [res(0), res(1, status)])
             self.assertEqual(got, {"a.py": scope["head_prints"]["a.py"], "b.py": old})

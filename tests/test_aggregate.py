@@ -83,6 +83,16 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual((len(r["findings"]), r["event"], r["complete"], r["incomplete"]),
                          (1, "APPROVE", True, []))
 
+    def test_partial_keeps_findings_but_blocks_approve(self):
+        r = run([res(0, [F(sev="minor")], status="partial", reason="x")])
+        self.assertEqual((len(r["findings"]), r["event"], r["complete"], r["incomplete"]),
+                         (1, "COMMENT", False, [0]))
+        self.assertEqual(r["summaries"], ["[c1] s (참고: x)"])
+
+    def test_partial_blocking_finding_requests_changes(self):
+        r = run([res(0, [F()], status="partial", reason="x")])
+        self.assertEqual(r["event"], "REQUEST_CHANGES")
+
     def test_incomplete_chunk_output_is_not_used(self):
         r = run([res(0, [F()], status="incomplete")])
         self.assertEqual((r["findings"], r["event"], r["incomplete"]), ([], "COMMENT", [0]))

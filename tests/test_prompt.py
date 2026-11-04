@@ -87,6 +87,21 @@ class PromptTest(unittest.TestCase):
         self.assertIn("언급하지 않는다", FALLBACK_PROMPT)  # no "could not run" as a reason
         self.assertNotIn("확인하지 못한 부분은", FALLBACK_PROMPT)
 
+    def test_diff_reviewed_rule_reaches_every_answer(self):
+        must = ("변경 줄을 끝까지 읽고 판단했으면", "변경 줄 자체를 읽고 판단하지 못한 경우에만")
+        chunk = {"index": 0, "files": ["a.c"], "diff": "d\n", "est_tokens": 1}
+        ctx = {"chunk_total": 1, "mode": "full", "pr_title": "t", "explore_budget": 6}
+        for text in (FALLBACK_PROMPT, build_prompt(chunk, ctx)):
+            for m in must:
+                self.assertIn(m, text)
+        self.assertTrue(FALLBACK_PROMPT.endswith(KOREAN_RULE))
+
+    def test_fallback_still_judges_the_diff(self):
+        self.assertIn("변경 줄", FALLBACK_PROMPT.split("diff_reviewed")[0])
+
+    def test_korean_prompt_keeps_diff_reviewed(self):
+        self.assertIn("diff_reviewed", KOREAN_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()

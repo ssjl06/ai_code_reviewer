@@ -45,6 +45,7 @@ description: PR diff 청크에서 이 PR이 새로 만든 결함만 찾아 스�
 7. confidence 50 미만이면 지적하지 않는다. 50–79인 문제도 보고하고, 확신 정도는 confidence로 정직하게 표시한다.
 8. 이 리뷰는 코드를 읽어서만 한다. 빌드, 컴파일, 실행, 테스트는 할 수 없고 필요하지도 않다. 그것을 못 했다는 것은 사유가 아니며 언급하지 않는다.
    탐색 예산이나 시간이 부족해 일부를 확인하지 못했다면 받은 diff와 읽은 코드로 결론을 내고, 사람이 알아야 할 미확인 사항이 있으면 `incomplete_reason`에 한국어 한 문장으로 적는다.
+9. `diff_reviewed`는 프롬프트의 변경 줄을 끝까지 읽고 판단했으면 `true`다. 빌드나 실행을 못 한 것, 호출부 등 주변 코드를 확인하지 못한 것, 탐색 예산이나 시간이 끝난 것은 `false` 사유가 아니다. 변경 줄 자체를 읽고 판단하지 못한 경우에만 `false`로 한다.
 
 ## 제외 대상
 
@@ -139,7 +140,8 @@ description: PR diff 청크에서 이 PR이 새로 만든 결함만 찾아 스�
 
 - 모든 서술(summary, title, detail, suggestion, note)은 한국어로 쓴다. 코드와 식별자는 원문 그대로 둔다.
 - 스키마를 정확히 따른다. 정의되지 않은 필드를 추가하지 않는다.
-- 필수 필드: `summary`, `findings`, `previous_findings`, `incomplete_reason`.
+- 필수 필드: `summary`, `findings`, `previous_findings`, `incomplete_reason`, `diff_reviewed`.
 - `summary`는 3문장 이하다. `title`은 80자 이하다.
 - 문제가 없으면 `findings`를 빈 배열로 두고 `summary`에 그렇게 쓴다.
 - 사람이 알아야 할 미확인 사항이 있으면 `incomplete_reason`에 한국어 한 문장으로 쓴다. 빌드, 컴파일, 실행, 테스트를 못 했다는 것은 쓰지 않는다. 없으면 `null`이다.
+- `diff_reviewed`는 변경 줄을 끝까지 읽고 판단했으면 `true`다. 변경 줄 자체를 읽고 판단하지 못한 경우에만 `false`다. `incomplete_reason`이 있어도 그것만으로 `false`로 하지 않는다.

@@ -95,6 +95,9 @@ def main():
         result(sid, structured_output=OUT)
     elif scn == "noted":
         result(sid, structured_output=dict(OUT, incomplete_reason="탐색 예산 부족"))
+    elif scn == "unreviewed":
+        result(sid, structured_output=dict(OUT, diff_reviewed=False,
+                                           incomplete_reason="변경 줄을 판단하지 못했다"))
     elif scn == "silent":
         result(sid, structured_output={"summary": "s", "findings": [],
                                        "previous_findings": [], "incomplete_reason": None})
