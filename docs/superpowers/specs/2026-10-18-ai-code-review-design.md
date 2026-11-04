@@ -131,7 +131,7 @@ GitHub API are replaceable by fakes.
 claude -p --verbose --output-format stream-json \
   --agent pr-reviewer --agents <generated from agent/pr-reviewer.md> \
   --json-schema "$(cat config/review-schema.json)" \
-  --max-turns 10 \
+  --max-turns 60 \
   --tools "Read,Grep,Glob,Bash" \
   --permission-mode dontAsk \
   --setting-sources user --settings config/settings.json \
@@ -215,9 +215,9 @@ approval is advisory.
 | Concurrency | 3 |
 | LLM request | 300 s, retries limited to 1 |
 | Tool call (Bash) | 60 s |
-| One chunk (claude process) | 20 min (30 turns, explore budget 20), then kill -> incomplete |
+| One chunk (claude process) | 30 min (60 turns, explore budget 50), then kill -> incomplete |
 | Conclusion fallback call | 5 min |
-| Whole review | 240 min orchestrator deadline; workflow `timeout-minutes: 260` (20 min for checkout and posting). Target: a 2,000-line PR (about 2 chunks, one round) with room to spare; limit: a 20,000-line PR (about 11–23 chunks, up to 40 when files pack badly) completes in one run even at the worst-case chunk time (`chunk_timeout_s` 1200 + `fallback_timeout_s` 300, concurrency 3); when chunks run slow the deadline cuts the rest and a re-run resumes it |
+| Whole review | 300 min orchestrator deadline; workflow `timeout-minutes: 320` (20 min for checkout and posting). Target: a 2,000-line PR (about 2 chunks, one round) with room to spare; limit: a 20,000-line PR (about 11–23 chunks, up to 40 when files pack badly). Worst-case chunk time is `chunk_timeout_s` 1800 + `fallback_timeout_s` 300 (35 min), concurrency 3: up to 23 chunks (8 rounds) finish in one run even then; the 40-chunk case needs about 20 min per chunk, otherwise the deadline cuts the rest and a re-run resumes it |
 
 Splitting rules:
 
@@ -537,7 +537,7 @@ review payload instead of posting.
   `cancel-in-progress: true`.
 - Workflow-level `env:` with `AI_REVIEW_MODEL`, `MAX_CHUNKS`, `CONCURRENCY`;
   `defaults.run.shell: bash` (runner login shell is tcsh); `runs-on: [self-hosted]`
-  in one place; `timeout-minutes: 25`.
+  in one place; `timeout-minutes: 320`.
 - Steps: one checkout of the PR head (`ref: head.sha`, `fetch-depth: 0`,
   `persist-credentials: false`, bot PAT), preflight (`claude`, `python3`, `git`
   versions), `cd .github/ai-review && python3 -E -s -m review --repo
@@ -575,7 +575,7 @@ review payload instead of posting.
   (`partial`: findings kept, COMMENT, lines stay new).
 - Smoke (manual on the runner, `--dry-run`) against real LiteLLM with
   `examples/buggy-pr` (CUDA missing sync, unquoted `rm -rf`, Python
-  `shell=True`, docs/code mismatch). Pass: >= 3 of 4 detected, < 20 min, zero
+  `shell=True`, docs/code mismatch). Pass: >= 3 of 4 detected, < 30 min, zero
   guard bypass, all chunks schema-valid. Also performs the checks in 4.5.
 
 ## 12. Out of Scope

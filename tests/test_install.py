@@ -114,19 +114,19 @@ class InstallTest(InstallBase):
     def test_kept_workflow_timeout_raised(self):
         with open(TEMPLATE, encoding="utf-8") as t:
             tpl = t.read()
-        old = tpl.replace("timeout-minutes: 260", "timeout-minutes: 25") + "# local edit\n"
+        old = tpl.replace("timeout-minutes: 320", "timeout-minutes: 25") + "# local edit\n"
         self.assertNotEqual(old, tpl)
         self.write(".github/workflows/ai-review.yml", old)
         p = self.install_run()
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertIn("raised timeout-minutes 25 -> 260 in " + self.wf, p.stdout)
+        self.assertIn("raised timeout-minutes 25 -> 320 in " + self.wf, p.stdout)
         with open(self.wf, encoding="utf-8") as f:
-            self.assertEqual(f.read(), old.replace("timeout-minutes: 25", "timeout-minutes: 260"))
+            self.assertEqual(f.read(), old.replace("timeout-minutes: 25", "timeout-minutes: 320"))
         self.assertIn("differs from the current template", p.stderr)  # still has the local edit
 
     def test_kept_workflow_higher_timeout_untouched(self):
         with open(TEMPLATE, encoding="utf-8") as t:
-            old = t.read().replace("timeout-minutes: 260", "timeout-minutes: 300")
+            old = t.read().replace("timeout-minutes: 320", "timeout-minutes: 400")
         self.write(".github/workflows/ai-review.yml", old)
         p = self.install_run()
         self.assertEqual(p.returncode, 0, p.stderr)

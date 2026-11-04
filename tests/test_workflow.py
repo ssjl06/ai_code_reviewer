@@ -16,7 +16,7 @@ W = _read("templates/ai-review.yml")
 class WorkflowTest(unittest.TestCase):
     def test_required_settings(self):
         for s in ["shell: bash", "cancel-in-progress: true",
-                  "timeout-minutes: 260", "persist-credentials: false",
+                  "timeout-minutes: 320", "persist-credentials: false",
                   "fetch-depth: 0", "ref: ${{ github.event.pull_request.head.sha }}",
                   "token: ${{ secrets.AI_REVIEW_BOT_PAT }}",
                   "uses: actions/upload-artifact@v3.2.2-node20",

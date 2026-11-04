@@ -35,7 +35,7 @@ jobs:
     if: github.event.pull_request.draft == false
     # Runner labels: edit here, e.g. [self-hosted, linux].
     runs-on: [self-hosted]
-    timeout-minutes: 260
+    timeout-minutes: 320
     steps:
       # Note: upload-artifact v4 is not supported on GHES; the kit pins
       # v3.2.2-node20 (Node 20, like checkout@v4). Sync both actions to GHES
