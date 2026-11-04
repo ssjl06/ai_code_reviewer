@@ -172,8 +172,13 @@ The child process gets an explicitly built environment:
   and options `--output`, `-c`, `-C`, `--git-dir`, `--work-tree`, `--no-index`,
   `--ext-diff`, `--exec-path`.
 - Budget: count exploration calls (Read/Grep/Glob/Bash) per session in a state
-  file under the run temp dir. Beyond the budget (default 6) deny with reason
-  "탐색 예산 소진. 추가 도구 호출 없이 지금 최종 JSON 결과를 출력하라."
+  file under the run temp dir. The first call beyond the budget (default 6) is
+  denied with reason "탐색 예산 소진. 추가 도구 호출 없이 지금 최종 JSON 결과를 출력하라."
+  Later calls are denied the same way and also stop the session with the common
+  hook field `"continue": false` (`stopReason` "탐색 예산 소진 — 결론 단계로 전환"),
+  which takes precedence over `permissionDecision`; `claude -p` then ends with a
+  `success` result, empty `result` and `terminal_reason: "hook_stopped"`. The guard
+  creates `budget-stop` in the state dir so the runner can report the cause.
   The structured-output tool is never counted or blocked.
 - Every decision is appended to a JSONL audit file uploaded with the logs.
 
@@ -216,7 +221,7 @@ approval is advisory.
 | LLM request | 300 s, retries limited to 1 |
 | Tool call (Bash) | 60 s |
 | One chunk (claude process) | 30 min (60 turns, explore budget 50), then kill -> incomplete |
-| Conclusion fallback call | 5 min |
+| Conclusion fallback call | 5 min, 4 turns |
 | Whole review | 300 min orchestrator deadline; workflow `timeout-minutes: 320` (20 min for checkout and posting). Target: a 2,000-line PR (about 2 chunks, one round) with room to spare; limit: a 20,000-line PR (about 11–23 chunks, up to 40 when files pack badly). Worst-case chunk time is `chunk_timeout_s` 1800 + `fallback_timeout_s` 300 (35 min), concurrency 3: up to 23 chunks (8 rounds) finish in one run even then; the 40-chunk case needs about 20 min per chunk, otherwise the deadline cuts the rest and a re-run resumes it |
 
 Splitting rules:
@@ -231,11 +236,19 @@ Splitting rules:
 "Always conclude within 10 turns" is enforced in three layers:
 
 1. Instructions state the budget: at most 6 exploration calls, then output.
-2. The guard hook denies exploration beyond the budget with a "conclude now" reason.
-3. If the result is `error_max_turns` or lacks `structured_output`, the runner
-   resumes the session once with tools disabled and asks only for the final
-   JSON (2 min, `--max-turns 2`). If that also fails, the chunk is marked
-   incomplete. As a last resort, JSON embedded in the result text is parsed.
+2. The guard hook denies the first call beyond the budget with a "conclude now"
+   reason and stops the session on the next one (4.3). `max_turns` is raised to
+   at least `explore_budget + 4` at config load.
+3. If the result is `error_max_turns`, lacks `structured_output`, or the guard
+   stopped the session, the runner resumes the session once with tools disabled
+   and asks only for the final JSON (2 min, `--max-turns 4`). If that also fails,
+   the chunk is marked incomplete. As a last resort, JSON embedded in the result
+   text is parsed.
+4. A non-ok chunk's `error` names the cause: `timeout`, `deadline`, `max_turns`,
+   `budget`, `no structured output` or `invalid output`, joined with the
+   fallback outcome as `<cause> → <outcome>` (e.g. `budget → no structured output`).
+   The Actions log gets one `[cN] ✖ <status>  <error>` line; the PR comment shows
+   Korean labels.
 
 ## 6. Incremental Review
 

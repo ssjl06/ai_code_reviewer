@@ -123,6 +123,7 @@ Fixture: `examples/buggy-pr/make_repo.sh /tmp/x` creates a repo with four plante
 | Tool calls printed as text | vLLM missing `--enable-auto-tool-choice` or wrong `--tool-call-parser` |
 | Context length errors | `--max-model-len` too small; lower `chunk_max_tokens` |
 | `✖ ... denied` lines | guard blocked a command; harmless unless the model needed it |
+| `✖ incomplete  budget → ...` / PR "탐색 예산 소진(가드 중단)" | model kept exploring past `explore_budget`; the guard stopped the session and the conclusion step (`--tools ""`, 4 turns) also failed. Raise `explore_budget` or split chunks smaller (`chunk_max_tokens`). Other codes: `max_turns`, `timeout`, `deadline`, `no structured output`, `invalid output` |
 | Review is always `COMMENT` | chunks incomplete (timeout/turn limit) or bot cannot approve its own PR |
 | Artifact upload fails | `upload-artifact@v3.2.2-node20` not synced to the air-gapped GHES (v4 is unsupported on GHES) |
 | 403/422 posting review | bot lacks write access, or PAT scope too small |

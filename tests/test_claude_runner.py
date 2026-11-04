@@ -6,7 +6,8 @@ import tempfile
 import time
 import unittest
 
-from review.claude_runner import extract_output, run_all, run_chunk, run_process
+from review.claude_runner import _cause, extract_output, run_all, run_chunk, run_process
+from review.hooks.guard import STOP_FILE
 from review.stream_log import StreamLogger
 from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT
 from tests.fakes import make_wrapper
@@ -106,6 +107,47 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(r["output"]["findings"][0]["title"], "Out-of-bounds read")
         self.assertEqual(len(self.calls()), 1)
         self.assertNotIn("한국어", log.getvalue())
+
+    def test_max_turns_cause_after_failed_fallback(self):
+        r = self.run_scn("max_turns", "broken")
+        self.assertEqual((r["status"], r["error"]), ("incomplete", "max_turns → no structured output"))
+
+    def test_budget_stop_resumes_to_conclusion(self):
+        r = self.run_scn("budget_stop")
+        self.assertEqual((r["status"], r["error"]), ("ok", "budget"))
+        self.assertTrue(os.path.exists(os.path.join(self.paths["work"], "chunk-1", "state",
+                                                    STOP_FILE)))
+        c = self.calls()
+        self.assertEqual(len(c), 2)
+        a = c[1]["argv"]
+        self.assertEqual((a[a.index("--resume") + 1], c[1]["stdin"]), ("sess-fake", FALLBACK_PROMPT))
+        self.assertEqual((a[a.index("--max-turns") + 1], a[a.index("--tools") + 1]), ("4", ""))
+
+    def test_fallback_output_reasked_in_korean(self):
+        for first, cause in (("max_turns", "max_turns"), ("budget_stop", "budget")):
+            with self.subTest(first=first):
+                r = self.run_scn(first, "english_then_korean")
+                self.assertEqual((r["status"], r["error"]), ("ok", cause))
+                self.assertEqual(r["output"]["findings"][0]["title"], "범위를 벗어난 읽기")
+                self.assertEqual([c["stdin"] for c in self.calls()[1:]],
+                                 [FALLBACK_PROMPT, KOREAN_PROMPT])
+
+    def test_budget_stop_fallback_fails(self):
+        r = self.run_scn("budget_stop", "broken")
+        self.assertEqual((r["status"], r["error"]), ("incomplete", "budget → no structured output"))
+
+    def test_cause_codes(self):
+        self.assertEqual(_cause("timeout", {}), "timeout")
+        self.assertEqual(_cause("exited", {"result": {"subtype": "error_max_turns"}}), "max_turns")
+        self.assertEqual(_cause("exited", {"result": {"result": '{"x": 1}'}}), "invalid output")
+        self.assertEqual(_cause("exited", {"result": None}), "no structured output")
+
+    def test_run_all_logs_non_ok_chunk(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run_all([self.chunk], ["p"], self.cfg("max_turns", "broken"), self.paths, self.env,
+                    time.monotonic() + 30)
+        self.assertIn("[c1] ✖ incomplete  max_turns → no structured output", out.getvalue())
 
     def test_hang_times_out_then_resumes(self):
         t = time.monotonic()

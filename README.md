@@ -215,8 +215,8 @@ ways:
 | `chunk_max_tokens` | 20000 | chunk size (estimated as characters / 3.5) |
 | `max_chunks` | 40 | ceiling on chunks per run, so a large PR is not cut off; in practice `deadline_s` limits how many run, and chunks past it stay unreviewed for the next run |
 | `concurrency` | 3 | parallel `claude` sessions |
-| `max_turns` | 60 | turns per session; kept at least 10 above `explore_budget` so the answer still fits |
-| `explore_budget` | 50 | Read/Grep/Glob/Bash calls per session before the guard forces the answer |
+| `max_turns` | 60 | turns per session; raised (with a warning) to at least `explore_budget + 4` |
+| `explore_budget` | 50 | Read/Grep/Glob/Bash calls per session; the first call over it is denied, the next one stops the session and the runner asks for the conclusion |
 | `llm_timeout_ms` / `bash_timeout_ms` | 300000 / 60000 | per request / per git command |
 | `chunk_timeout_s` / `fallback_timeout_s` | 1800 / 300 | per chunk / resume fallback |
 | `deadline_s` | 18000 | whole run (300 min; the job's `timeout-minutes` is 320, leaving 20 min for checkout and posting). A 20,000-line PR is about 11–23 chunks: up to 23 chunks finish in one run even at the worst-case chunk time (35 min, 8 rounds). The 40-chunk case, when files pack badly, needs about 20 min per chunk; otherwise the deadline cuts the rest and the next run resumes it. Raise both together |

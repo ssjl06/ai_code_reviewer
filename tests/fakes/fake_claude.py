@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Fake `claude -p`: fake_claude.py [--scenario S] [--resume-scenario S] [--log F] <claude argv...>"""
 import json
+import os
 import re
+import subprocess
 import sys
 import time
 
@@ -50,6 +52,26 @@ def result(sid, subtype="success", **extra):
     emit(ev)
 
 
+def budget_stop(sid):
+    """Call Read through the real guard hook until it stops the session, like claude would."""
+    guard = os.path.join(os.environ["AI_REVIEW_KIT"], "review", "hooks", "guard.py")
+    path = os.path.join(os.environ["AI_REVIEW_REPO_ROOT"], "a.c")
+    for n in range(1, 100):
+        tid = "tu-%d" % n
+        emit({"type": "assistant", "session_id": sid, "message": {"id": "m%d" % n, "content": [
+            {"type": "tool_use", "id": tid, "name": "Read", "input": {"file_path": path}}]}})
+        ev = {"session_id": sid, "tool_name": "Read", "tool_input": {"file_path": path}}
+        out = subprocess.run(["python3", "-I", guard], input=json.dumps(ev), text=True,
+                             capture_output=True, env=os.environ).stdout
+        hook = json.loads(out) if out.strip() else {}
+        reason = (hook.get("hookSpecificOutput") or {}).get("permissionDecisionReason")
+        emit({"type": "user", "session_id": sid, "message": {"content": [
+            {"type": "tool_result", "tool_use_id": tid, "is_error": bool(reason),
+             "content": "PreToolUse:Read hook error: %s" % reason if reason else "x"}]}})
+        if hook.get("continue") is False:  # observed claude 2.1.x: success, empty result
+            return result(sid, result="", terminal_reason="hook_stopped")
+
+
 def main():
     argv = sys.argv[1:]
     opts = {"--scenario": "ok", "--resume-scenario": "ok", "--log": None}
@@ -79,11 +101,15 @@ def main():
         result(sid, structured_output=scenario_output(scn, stdin))
     elif scn == "english":
         result(sid, structured_output=ENGLISH)
+    elif scn == "english_then_korean":  # the fallback answer is English, the re-ask is Korean
+        result(sid, structured_output=KOREAN if KOREAN_ASK in stdin else ENGLISH)
     elif scn in ("korean", "korean_moved"):  # resume answers only the Korean re-ask prompt
         if KOREAN_ASK in stdin:
             result(sid, structured_output=KOREAN if scn == "korean" else KOREAN_MOVED)
         else:
             result(sid, "error_max_turns")
+    elif scn == "budget_stop":
+        budget_stop(sid)
     elif scn == "max_turns":
         result(sid, "error_max_turns")
     elif scn == "broken":

@@ -13,6 +13,8 @@ import time
 EXPLORE_TOOLS = {"Read", "Grep", "Glob", "Bash"}
 GIT_SUBCOMMANDS = {"diff", "log", "show", "blame", "grep", "ls-files"}
 BUDGET_REASON = "탐색 예산 소진. 추가 도구 호출 없이 지금 최종 JSON 결과를 출력하라."
+STOP_REASON = "탐색 예산 소진 — 결론 단계로 전환"
+STOP_FILE = "budget-stop"  # created in the state dir once the guard stops a session
 _SHELL_META = set(";|&><$`(){}*?[]~\\\n\r")
 _DIFFISH = ("--stat --shortstat --numstat --name-only --name-status --no-color --oneline -p --patch "
             "--no-patch --follow -M -w --word-diff --abbrev-commit --diff-filter= --format= --pretty=")
@@ -87,7 +89,8 @@ def check_bash(command):
 
 
 def check_budget(session_id, state_dir, budget):
-    """Count one explore call for the session; return BUDGET_REASON once over budget."""
+    """Count one explore call for the session: None within budget, BUDGET_REASON on the
+    first overrun, STOP_REASON (and STOP_FILE) on later ones."""
     os.makedirs(state_dir, exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id or "unknown")
     with open(os.path.join(state_dir, "budget-%s.json" % safe), "a+") as f:
@@ -102,7 +105,12 @@ def check_budget(session_id, state_dir, budget):
         f.seek(0)
         f.truncate()
         f.write(json.dumps({"count": count}))
-    return BUDGET_REASON if count > budget else None
+    if count <= budget:
+        return None
+    if count == budget + 1:
+        return BUDGET_REASON
+    open(os.path.join(state_dir, STOP_FILE), "a").close()
+    return STOP_REASON
 
 
 def decide(event, env):
@@ -141,6 +149,17 @@ def _audit(state_dir, event, decision, reason):
         pass
 
 
+def output(reason):
+    """Hook JSON denying the call; on STOP_REASON also end the session (`continue` wins)."""
+    stop = reason == STOP_REASON
+    out = {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": BUDGET_REASON if stop else reason}}
+    if stop:
+        out.update({"continue": False, "stopReason": STOP_REASON})
+    return out
+
+
 def main():
     event = {}
     try:
@@ -153,11 +172,9 @@ def main():
     state_dir = os.environ.get("AI_REVIEW_STATE_DIR")
     if state_dir:
         _audit(state_dir, event if isinstance(event, dict) else {},
-               "deny" if reason else "allow", reason)
+               "stop" if reason == STOP_REASON else "deny" if reason else "allow", reason)
     if reason:
-        print(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse", "permissionDecision": "deny",
-            "permissionDecisionReason": reason}}, ensure_ascii=False))
+        print(json.dumps(output(reason), ensure_ascii=False))
     return 0
 
 

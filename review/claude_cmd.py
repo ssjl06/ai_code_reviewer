@@ -46,7 +46,7 @@ def build_command(
     if resume_session:
         cmd += ["--resume", resume_session]
     cmd += ["--agent", AGENT_NAME, "--agents", agents_file, "--json-schema", schema]
-    cmd += ["--max-turns", "2" if resume_session else str(cfg["max_turns"])]
+    cmd += ["--max-turns", "4" if resume_session else str(cfg["max_turns"])]
     cmd += ["--tools", "" if resume_session else "Read,Grep,Glob,Bash"]
     cmd += ["--permission-mode", "dontAsk", "--setting-sources", "user"]
     cmd += ["--settings", _SETTINGS_PATH, "--strict-mcp-config"]
