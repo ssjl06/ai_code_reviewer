@@ -19,6 +19,7 @@ _CAUSES = {"timeout": "시간 초과", "deadline": "전체 시간 한도 도달"
            "budget": "탐색 예산 소진(가드 중단)", "time": "탐색 시간 소진(가드 중단)",
            "denied": "거부된 호출 반복(가드 중단)",
            "diff not reviewed": "변경 줄을 읽고 판단하지 못함",
+           "diff_reviewed missing": "diff_reviewed 필드 누락 또는 불리언 아님",
            "no structured output": "구조화 출력 없음",
            "invalid output": "출력 형식 오류"}
 

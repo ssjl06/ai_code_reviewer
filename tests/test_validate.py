@@ -25,13 +25,23 @@ class NormalizeOutputTest(unittest.TestCase):
     def test_defaults(self):
         self.assertEqual(normalize_output({"findings": []}),
                          {"summary": "", "findings": [], "previous_findings": [],
-                          "incomplete_reason": None, "diff_reviewed": True})
+                          "incomplete_reason": None, "diff_reviewed": False,
+                          "diff_reviewed_invalid": True})
 
     def test_diff_reviewed(self):
         self.assertIs(normalize_output(out(diff_reviewed=False))["diff_reviewed"], False)
         self.assertIs(normalize_output(out(diff_reviewed=True))["diff_reviewed"], True)
-        self.assertIs(normalize_output({"findings": []})["diff_reviewed"], True)
-        self.assertIs(normalize_output(out(diff_reviewed=None))["diff_reviewed"], True)
+        self.assertNotIn("diff_reviewed_invalid", normalize_output(out(diff_reviewed=False)))
+        self.assertNotIn("diff_reviewed_invalid", normalize_output(out(diff_reviewed=True)))
+
+    def test_only_boolean_true_counts_as_reviewed(self):
+        for bad in (None, "false", "true", 1, 0, [], {}):
+            o = normalize_output(out(diff_reviewed=bad))
+            self.assertIs(o["diff_reviewed"], False, bad)
+            self.assertIs(o["diff_reviewed_invalid"], True, bad)
+        missing = normalize_output({"findings": []})
+        self.assertIs(missing["diff_reviewed"], False)
+        self.assertIs(missing["diff_reviewed_invalid"], True)
 
     def test_missing_category_defaulted_and_coercions(self):
         raw = {"file": "a.c", "line": "4", "severity": "minor", "confidence": "90",

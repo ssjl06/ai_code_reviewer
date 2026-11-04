@@ -82,7 +82,8 @@ are sent to the model; the prompt lists them as "검토 대상 줄" (added lines
   Lines of partial, failed or skipped chunks stay "new" for the next run.
 - `incomplete_reason` never changes a chunk's status. That text is only a note, shown as
   `(참고: ...)` in the chunk summary, and does not stop an `APPROVE`. A chunk is `partial` only
-  when the model answers `diff_reviewed: false`, meaning it did not read and judge the changed
+  when the model answers `diff_reviewed: false` or leaves it missing, `null` or not a boolean
+  (error `diff_reviewed missing`; only an explicit `true` counts), meaning it did not read and judge the changed
   lines (not "could not build" or "callers not inspected"). A partial chunk keeps its findings,
   its lines stay new for the next run, and the review is incomplete (PR cause
   "변경 줄을 읽고 판단하지 못함").

@@ -73,6 +73,12 @@ class RunnerTest(unittest.TestCase):
         r = self.run_scn("noted")
         self.assertTrue(r["output"]["diff_reviewed"])
 
+    def test_plain_text_json_without_a_boolean_diff_reviewed_is_partial(self):
+        for scn in ("text_missing", "text_null", "text_false_str"):
+            r = self.run_scn(scn)
+            self.assertEqual((r["status"], r["error"]), ("partial", "diff_reviewed missing"), scn)
+            self.assertEqual(len(r["output"]["findings"]), 1)
+
     def test_diff_not_reviewed_is_partial(self):
         r = self.run_scn("unreviewed")
         self.assertEqual((r["status"], r["error"]), ("partial", "diff not reviewed"))
@@ -334,10 +340,12 @@ class RunnerTest(unittest.TestCase):
         self.assertIsNone(extract_output({"structured_output": {"a": 1}}))
         empty = {"summary": "", "findings": [], "previous_findings": [], "incomplete_reason": None,
                  "diff_reviewed": True}
-        self.assertEqual(extract_output({"structured_output": {"findings": []}}), empty)
+        self.assertEqual(extract_output({"structured_output": {"findings": [], "diff_reviewed": True}}),
+                         empty)
         self.assertIsNone(extract_output({"result": '{"x": 1}'}))
-        self.assertEqual(extract_output({"result": 'a {"x":1} b {"findings": []}'}), empty)
-        self.assertEqual(extract_output({"result": '{"findings": 1} {"findings": []}'}), empty)
+        self.assertEqual(extract_output({"result": 'a {"x":1} b {"findings": [], "diff_reviewed": true}'}), empty)
+        self.assertEqual(extract_output({"result": '{"findings": 1} {"findings": [], "diff_reviewed": true}'}),
+                         empty)
 
     def _proc(self, script, stdin, timeout):
         info = {}

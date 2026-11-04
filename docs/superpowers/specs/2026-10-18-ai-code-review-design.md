@@ -413,12 +413,14 @@ Hidden in the bot review body; the latest bot review with a parsable marker
 ### 6.5 Failures and Caps
 
 - Chunk statuses: `ok` = valid output with `diff_reviewed` true, whatever
-  `incomplete_reason` says; `partial` = valid output with `diff_reviewed` false; `incomplete`;
+  `incomplete_reason` says; `partial` = valid output with `diff_reviewed` not true; `incomplete`;
   `failed`. A partial chunk keeps its findings and open/unclear previous statuses, but its
   "resolved" reports are ignored, its lines stay new, and the review is incomplete (error
   `diff not reviewed`). `diff_reviewed` is true when the model read the changed lines to the
   end and judged them; a failed build, unread surrounding code, or a spent budget or time
-  are not reasons for false, and a missing value counts as true. Other incompleteness is
+  are not reasons for false. Only an explicit boolean true counts: a missing, null or
+  non-boolean value (plain-text JSON has no schema) is `partial` with error
+  `diff_reviewed missing`. Other incompleteness is
   determined by code (timeout, no output, skipped, truncated, deadline).
   `incomplete_reason` is only a note: it never changes a status, and the PR body shows it as
   `(참고: ...)` after the chunk summary.

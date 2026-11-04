@@ -10,7 +10,7 @@ import time
 OUT = {"summary": "s", "findings": [{"file": "a.c", "line": 1, "severity": "major",
                                      "confidence": 90, "category": "bug", "title": "t",
                                      "detail": "d"}],
-       "previous_findings": [], "incomplete_reason": None}
+       "previous_findings": [], "incomplete_reason": None, "diff_reviewed": True}
 BAD_FINDING = {"line": "x", "severity": "major", "confidence": 90, "title": "no file"}
 
 BLOCKING = {"file": "src/k.cu", "line": 2, "severity": "major", "confidence": 85,
@@ -22,7 +22,7 @@ EN_FINDING = {"file": "src/k.cu", "line": 2, "severity": "major", "confidence": 
               "detail": "`p[1]` reads past the end of a one-element buffer.",
               "suggestion": "Check the length before indexing."}
 ENGLISH = {"summary": "Found one out-of-bounds read in the kernel.", "findings": [EN_FINDING],
-           "previous_findings": [], "incomplete_reason": None}
+           "previous_findings": [], "incomplete_reason": None, "diff_reviewed": True}
 KO_FINDING = dict(EN_FINDING, title="범위를 벗어난 읽기",
                   detail="`p[1]`은 길이 1 버퍼의 끝을 넘어 읽는다.",
                   suggestion="인덱싱 전에 길이를 확인한다.")
@@ -34,11 +34,11 @@ KOREAN_ASK = "서술 필드만 한국어로"  # marker phrase of review.prompt.K
 def scenario_output(scn, stdin):
     if scn == "blocking":
         return {"summary": "차단 1건", "findings": [BLOCKING], "previous_findings": [],
-                "incomplete_reason": None}
+                "incomplete_reason": None, "diff_reviewed": True}
     ids = re.findall(r'"id": "([^"]+)"', stdin)  # previous findings JSON in the prompt
     return {"summary": "해결 확인", "findings": [],
             "previous_findings": [{"id": i, "status": "resolved"} for i in ids],
-            "incomplete_reason": None}
+            "incomplete_reason": None, "diff_reviewed": True}
 
 
 def emit(ev):
@@ -101,7 +101,8 @@ def main():
                                            incomplete_reason="변경 줄을 판단하지 못했다"))
     elif scn == "silent":
         result(sid, structured_output={"summary": "s", "findings": [],
-                                       "previous_findings": [], "incomplete_reason": None})
+                                       "previous_findings": [], "incomplete_reason": None,
+                                       "diff_reviewed": True})
     elif scn in ("blocking", "resolved"):
         result(sid, structured_output=scenario_output(scn, stdin))
     elif scn == "english":
@@ -121,6 +122,11 @@ def main():
         result(sid, result="not json at all")
     elif scn == "text_json":
         result(sid, result="Here: " + json.dumps(OUT) + " done")
+    elif scn in ("text_missing", "text_null", "text_false_str"):  # plain text, no schema
+        raw = {k: v for k, v in OUT.items() if k != "diff_reviewed"}
+        if scn != "text_missing":
+            raw["diff_reviewed"] = None if scn == "text_null" else "false"
+        result(sid, result="Here: " + json.dumps(raw) + " done")
     elif scn == "text_json_bad":
         bad = dict(OUT, findings=OUT["findings"] + [BAD_FINDING])
         result(sid, result="Here: " + json.dumps(bad) + " done")

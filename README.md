@@ -268,8 +268,10 @@ python3 -E -s -m review --dry-run --repo <checkout> --base <sha> --head <sha> \
 - `diff_reviewed`: `true` when the model read the changed lines to the end and judged them. A
   failed build, unread callers, or a spent budget or time are not reasons for `false`. `false`
   makes the chunk `partial`: its findings are kept, its lines stay unreviewed for the next run
-  and the review is incomplete (`COMMENT`, or `REQUEST_CHANGES` on a blocking finding). A missing
-  value counts as `true`.
+  and the review is incomplete (`COMMENT`, or `REQUEST_CHANGES` on a blocking finding). A missing,
+  `null` or non-boolean value (possible in plain-text JSON, which has no schema enforcement)
+  also makes it `partial`; only an explicit boolean `true` counts as reviewed. The chunk error
+  then reads `diff_reviewed missing` (PR cause "diff_reviewed 필드 누락 또는 불리언 아님").
 
 **Korean prose.** The prose fields (`summary`, `title`, `detail`, `suggestion`, `note`,
 `incomplete_reason`) must be Korean. Each item is judged on its own, `suggestion` after removing

@@ -67,12 +67,16 @@ def normalize_output(obj: Any) -> Optional[dict]:
         return None
     prev = obj.get("previous_findings")
     reason = obj.get("incomplete_reason")
-    return {"summary": _str(obj.get("summary")),
+    reviewed = obj.get("diff_reviewed")
+    out = {"summary": _str(obj.get("summary")),
             "findings": [f for f in map(_finding, obj["findings"]) if f is not None],
             "previous_findings": [p for p in map(_previous, prev if isinstance(prev, list) else [])
                                   if p is not None],
             "incomplete_reason": reason if isinstance(reason, str) else None,
-            "diff_reviewed": obj.get("diff_reviewed") is not False}  # absent in older output
+            "diff_reviewed": reviewed is True}  # only an explicit boolean true counts
+    if not isinstance(reviewed, bool):
+        out["diff_reviewed_invalid"] = True  # missing / null / not a boolean, not the model's false
+    return out
 
 
 def _state_entry(e: Any) -> bool:

@@ -96,6 +96,10 @@ class PromptTest(unittest.TestCase):
                 self.assertIn(m, text)
         self.assertTrue(FALLBACK_PROMPT.endswith(KOREAN_RULE))
 
+    def test_prompts_require_a_json_boolean(self):
+        for text in (FALLBACK_PROMPT, KOREAN_PROMPT):
+            self.assertIn("JSON 불리언", text)
+
     def test_fallback_still_judges_the_diff(self):
         self.assertIn("변경 줄", FALLBACK_PROMPT.split("diff_reviewed")[0])
 

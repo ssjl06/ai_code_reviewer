@@ -93,9 +93,12 @@ def _empty_stats() -> Dict[str, Any]:
 
 
 def _finish(idx, out, stats, sid, error):
-    """Only `diff_reviewed` false makes a chunk partial: its findings are used but its lines
+    """Only an explicit boolean `diff_reviewed: true` makes a chunk ok; false, or a missing or
+    non-boolean value (logged separately), makes it partial: its findings are used but its lines
     stay unreviewed. `incomplete_reason` is only a note for the PR body."""
-    if out.get("diff_reviewed") is False:
+    if out.get("diff_reviewed_invalid"):
+        return _result(idx, "partial", out, stats, sid, "diff_reviewed missing")
+    if out.get("diff_reviewed") is not True:
         return _result(idx, "partial", out, stats, sid, "diff not reviewed")
     return _result(idx, "ok", out, stats, sid, error)
 
