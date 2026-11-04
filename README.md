@@ -16,8 +16,11 @@ and are written in Korean.
   code and are re-checked.
 - **Bounded cost.** The diff is split into chunks, with up to 3 `claude` sessions in parallel.
   Each session has a 60-turn limit and a tool budget, and the whole run must finish within
-  300 minutes (job limit 320 minutes). Sized so a 2,000-line PR is reviewed with room to spare
-  and a 20,000-line PR completes in one run even at the worst-case chunk time.
+  300 minutes (job limit 320 minutes). A chunk gets `min(60 min, deadline / rounds - 10 min)`,
+  where a round is one batch of 3 chunks, and exploring stops 5 minutes before that limit. A
+  2,000-line PR gets the full 60 minutes per chunk. A 20,000-line PR gets less: 23 chunks get
+  about 27 minutes each, and 40 chunks about 11 minutes with very little exploration, so such a
+  PR is covered but not reviewed in depth.
 - **Visible process.** The Actions log shows every LLM request, tool call and timing. The PR
   gets one review with inline comments.
 
@@ -217,9 +220,9 @@ ways:
 | `concurrency` | 3 | parallel `claude` sessions |
 | `max_turns` | 60 | turns per session; raised (with a warning) to at least `explore_budget + 4` |
 | `explore_budget` | 50 | Read/Grep/Glob/Bash calls per session; the first call over it is denied, the next one stops the session and the runner asks for the conclusion |
-| `llm_timeout_ms` / `bash_timeout_ms` | 300000 / 60000 | per request / per git command |
-| `chunk_timeout_s` / `fallback_timeout_s` | 1800 / 300 | per chunk / resume fallback |
-| `deadline_s` | 18000 | whole run (300 min; the job's `timeout-minutes` is 320, leaving 20 min for checkout and posting). A 20,000-line PR is about 11–23 chunks: up to 23 chunks finish in one run even at the worst-case chunk time (35 min, 8 rounds). The 40-chunk case, when files pack badly, needs about 20 min per chunk; otherwise the deadline cuts the rest and the next run resumes it. Raise both together |
+| `llm_timeout_ms` / `bash_timeout_ms` | 600000 / 60000 | per request / per git command |
+| `chunk_timeout_s` / `fallback_timeout_s` | 3600 / 600 | ceiling per chunk / each resume (conclusion fallback, Korean re-ask). A chunk's limit is `min(chunk_timeout_s, deadline_s / rounds - fallback_timeout_s)`, at least 300 s, where rounds is chunks / `concurrency` rounded up. Exploring stops 5 minutes before that limit: the guard ends the session and the runner asks for the conclusion |
+| `deadline_s` | 18000 | whole run (300 min; the job's `timeout-minutes` is 320, leaving 20 min for checkout and posting). The per-chunk limit comes from it: up to 3 chunks get 60 min, 23 chunks (8 rounds) about 27 min, and 40 chunks (14 rounds), when files pack badly, about 11 min with very little exploration. A Korean re-ask is not part of that share; if time runs out the deadline cuts the rest and the next run resumes it. Raise both together |
 | `block_severities`, `block_confidence` | critical, major; 80 | what blocks |
 | `min_confidence` | 50 | findings below this are dropped |
 | `exclude_globs` | vendor, third_party, lock files, generated code, `.github/ai-review/**` | never reviewed |
@@ -258,10 +261,12 @@ python3 -E -s -m review --dry-run --repo <checkout> --base <sha> --head <sha> \
 - `findings[]`, each `{file, line, end_line?, severity, confidence, category, title, detail,
   suggestion?}`
 - `previous_findings[]`, each `{id, status: resolved|open|unclear, note?}`
-- `incomplete_reason`
+- `incomplete_reason`: a note for people, or `null`. The PR body shows it as `(참고: ...)`; it
+  does not make the review incomplete. A chunk with valid output is done.
 
-**Korean prose.** The prose fields (`summary`, `title`, `detail`, `suggestion`, `note`) must be
-Korean; a chunk whose prose is mostly English is re-asked once on its session (log line
+**Korean prose.** The prose fields (`summary`, `title`, `detail`, `suggestion`, `note`,
+`incomplete_reason`) must be Korean. Each item except `suggestion`, which is often code, is judged
+on its own; a chunk with an English item is re-asked once on its session (log line
 `한국어로 다시 받음` or `한국어 재요청 실패 — 원문 유지`), and the PR shows severity and
 category as Korean labels (`치명`/`중대`/`경미`/`참고`, `버그`, `보안`, ...).
 
@@ -320,7 +325,7 @@ verdict:
    - Shell metacharacters are denied.
    - Mode stays `dontAsk`, and `CLAUDE_CONFIG_DIR` stays a fresh empty directory.
 3. The verdict is computed in `review/aggregate.py`, never by the model. Never let a run that
-   did not review everything return `APPROVE`. That covers partial, failed or truncated chunks,
+   did not review everything return `APPROVE`. That covers incomplete, failed or truncated chunks,
    skipped files, and an unconfirmed previous blocker.
 4. The state marker format (v2) is shared between runs. Changing it means the next run on every
    open PR does a full review again. Bump `"v"` if you change its meaning.
