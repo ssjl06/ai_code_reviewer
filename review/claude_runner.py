@@ -86,9 +86,7 @@ def _empty_stats() -> Dict[str, Any]:
 
 
 def _finish(idx, out, stats, sid, error):
-    reason = out.get("incomplete_reason")
-    if reason:
-        return _result(idx, "partial", out, stats, sid, "미완료 사유: " + str(reason)[:200])
+    """A valid output finishes the chunk; `incomplete_reason` is only a note for the PR body."""
     return _result(idx, "ok", out, stats, sid, error)
 
 

@@ -44,6 +44,14 @@ class SchemaAgentTest(unittest.TestCase):
             self.assertIn(must, text)
         self.assertIn("파일 길이", text.split("## 제외 대상")[1].split("\n## ")[0])
 
+    def test_agent_read_only_review_rule(self):
+        with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        for must in ["코드를 읽어서만", "빌드, 컴파일, 실행, 테스트", "한국어 한 문장"]:
+            self.assertIn(must, text.split("## 규칙")[1].split("\n## ")[0])
+        self.assertNotIn("확인하지 못한 부분이 있으면 `incomplete_reason`에 이유를", text)
+        self.assertNotIn("결론을 내리지 못한 부분이 있으면", text)
+
     def test_agent_sections_in_order(self):
         with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
             text = fh.read()

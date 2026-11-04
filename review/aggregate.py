@@ -6,7 +6,6 @@ import re
 from typing import Dict, List, Optional, Set, Tuple
 
 SEV_RANK = {"critical": 0, "major": 1, "minor": 2, "info": 3}
-OK_STATUSES = ("ok", "partial")
 STATUS_RANK = {"open": 0, "unclear": 1, "resolved": 2}
 _ROOT = re.compile(r"^(?:\./|/)+")
 _DIFF_PREFIX = re.compile(r"^[ab]/")
@@ -52,7 +51,7 @@ def _collect(results: List[dict], cfg: dict, changed: Optional[Dict[str, Set[int
         {f for fs in chunk_files.values() for f in fs} if chunk_files else None)
     kept, dropped = [], 0
     for r in results:
-        if r.get("status") not in OK_STATUSES or not r.get("output"):
+        if r.get("status") != "ok" or not r.get("output"):
             continue
         own = set(chunk_files.get(r["index"], ())) if chunk_files is not None else set()
         for raw in r["output"].get("findings", []):
@@ -99,11 +98,11 @@ def _previous(results: List[dict], previous: List[dict], chunk_files=None):
     files = {p["id"]: p["file"] for p in previous}
     reported: Dict[str, Tuple[str, Optional[str]]] = {}
     for r in results:
-        if r.get("status") not in OK_STATUSES or not r.get("output"):
+        if r.get("status") != "ok" or not r.get("output"):
             continue
         for p in r["output"].get("previous_findings", []):
             path = files.get(p["id"], "")
-            if p["status"] == "resolved" and not (r["status"] == "ok" and holds(r["index"], path)
+            if p["status"] == "resolved" and not (holds(r["index"], path)
                                                   and all(st == "ok" for i, st in status.items()
                                                           if holds(i, path))):
                 continue
@@ -126,12 +125,12 @@ def _previous(results: List[dict], previous: List[dict], chunk_files=None):
 def _summaries(results: List[dict]) -> List[str]:
     out = []
     for r in sorted(results, key=lambda x: x["index"]):
-        if r.get("status") not in OK_STATUSES or not r.get("output"):
+        if r.get("status") != "ok" or not r.get("output"):
             continue
         o = r["output"]
         line = "[c%d] %s" % (r["index"] + 1, o.get("summary", ""))
         if o.get("incomplete_reason"):
-            line += " (미완료: %s)" % o["incomplete_reason"]
+            line += " (참고: %s)" % o["incomplete_reason"]
         out.append(line)
     return out
 

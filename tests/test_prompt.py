@@ -81,6 +81,8 @@ class PromptTest(unittest.TestCase):
     def test_fallback_prompt(self):
         self.assertIn("도구", FALLBACK_PROMPT)
         self.assertIn("incomplete_reason", FALLBACK_PROMPT)
+        self.assertIn("언급하지 않는다", FALLBACK_PROMPT)  # no "could not run" as a reason
+        self.assertNotIn("확인하지 못한 부분은", FALLBACK_PROMPT)
 
 
 if __name__ == "__main__":

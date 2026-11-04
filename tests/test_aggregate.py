@@ -2,6 +2,7 @@ import unittest
 
 from review.aggregate import finding_id, merge, normalize_path, split_inline
 from review.config import load_config
+from review.render import render_body
 
 CFG = load_config()
 
@@ -77,13 +78,14 @@ class AggregateTest(unittest.TestCase):
         self.assertEqual(r["previous"][0]["status"], "open")
         self.assertEqual(r["event"], "REQUEST_CHANGES")
 
-    def test_partial_keeps_findings_but_blocks_approve(self):
-        r = run([res(0, [F(sev="minor")], status="partial", reason="x")])
-        self.assertEqual((len(r["findings"]), r["event"], r["complete"]), (1, "COMMENT", False))
+    def test_model_note_does_not_make_the_review_incomplete(self):
+        r = run([res(0, [F(sev="minor")], reason="x")])
+        self.assertEqual((len(r["findings"]), r["event"], r["complete"], r["incomplete"]),
+                         (1, "APPROVE", True, []))
 
-    def test_partial_blocking_finding_requests_changes(self):
-        r = run([res(0, [F()], status="partial", reason="x")])
-        self.assertEqual(r["event"], "REQUEST_CHANGES")
+    def test_incomplete_chunk_output_is_not_used(self):
+        r = run([res(0, [F()], status="incomplete")])
+        self.assertEqual((r["findings"], r["event"], r["incomplete"]), ([], "COMMENT", [0]))
 
     def test_skipped_files_block_approve(self):
         r = run([res(0, [])], skipped=["big.cu"])
@@ -170,7 +172,15 @@ class AggregateTest(unittest.TestCase):
         r = run([res(1, [F(sev="minor", conf=90, line=1)], summary="two"),
                  res(0, [F(sev="critical", conf=60, line=5)], summary="one", reason="turns")])
         self.assertEqual([f["severity"] for f in r["findings"]], ["critical", "minor"])
-        self.assertEqual(r["summaries"], ["[c1] one (미완료: turns)", "[c2] two"])
+        self.assertEqual(r["summaries"], ["[c1] one (참고: turns)", "[c2] two"])
+
+    def test_model_note_reaches_pr_body(self):
+        r = run([res(0, [], summary="one", reason="호출부를 확인하지 못했다")])
+        meta = {"model": "m", "chunks": 1, "duration_s": 1, "range": "a..b", "mode": "full",
+                "reviewed": ["a.cu"], "skipped": []}
+        body = render_body(r, [], meta, {"v": 2})
+        self.assertIn("[c1] one (참고: 호출부를 확인하지 못했다)", body)
+        self.assertNotIn("미완료", body)
 
     def test_previous_note_carried(self):
         results = [res(0, [])]

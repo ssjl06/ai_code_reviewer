@@ -9,7 +9,9 @@ KOREAN_RULE = ("모든 서술(summary, title, detail, suggestion, note)은 반�
                "코드와 식별자는 원문 그대로 둔다.")
 FALLBACK_PROMPT = (
     "도구를 더 호출하지 말고 지금까지의 근거만으로 스키마에 맞는 최종 JSON을 출력하라. "
-    "확인하지 못한 부분은 incomplete_reason에 적어라.\n" + KOREAN_RULE
+    "이 리뷰는 코드를 읽어서만 한다. 빌드, 컴파일, 실행, 테스트를 못 했다는 것은 사유가 아니며 "
+    "언급하지 않는다. 받은 diff와 읽은 코드로 결론을 내고, 사람이 알아야 할 미확인 사항이 있으면 "
+    "incomplete_reason에 한국어 한 문장으로 적어라. 없으면 null로 둔다.\n" + KOREAN_RULE
 )
 KOREAN_PROMPT = (
     "직전 최종 결과를 내용과 필드(file, line, severity, confidence, category, id, status)는 "
