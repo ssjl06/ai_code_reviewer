@@ -339,13 +339,36 @@ class PendingAfterTest(unittest.TestCase):
     def test_recheck_in_a_failed_chunk_is_pending(self):
         from review.ledger import pending_after
         self.assertEqual(pending_after({0: [{"id": "i1"}]}, ["i2"],
-                                       [{"index": 0, "status": "failed"}]), ["i2", "i1"])
+                                       [{"index": 0, "status": "failed"}], []), ["i2", "i1"])
 
     def test_recheck_in_an_ok_chunk_is_not_pending(self):
         from review.ledger import pending_after
         results = [{"index": 0, "status": "ok"}, {"index": 1, "status": "partial"}]
         self.assertEqual(pending_after({0: [{"id": "a"}], 1: [{"id": "b"}], 2: [{"id": "c"}]},
-                                       [], results), ["b", "c"])
+                                       [], results, []), ["b", "c"])
+
+    def test_recheck_in_an_ok_chunk_is_pending_when_another_chunk_of_its_file_is_not_ok(self):
+        from review.ledger import pending_after
+        chunks = [{"index": 0, "files": ["a.cc", "b.cc"]}, {"index": 1, "files": ["a.cc"]},
+                  {"index": 2, "files": ["c.cc"]}]
+        results = [{"index": 0, "status": "ok"}, {"index": 1, "status": "failed"},
+                   {"index": 2, "status": "ok"}]
+        recheck = {0: [{"id": "a", "file": "a.cc"}, {"id": "b", "file": "b.cc"}],
+                   2: [{"id": "c", "file": "c.cc"}]}
+        self.assertEqual(pending_after(recheck, [], results, chunks), ["a"])
+
+    def test_an_id_is_listed_once(self):
+        from review.ledger import pending_after
+        chunks = [{"index": 0, "files": ["a.cc"]}, {"index": 1, "files": ["a.cc"]}]
+        results = [{"index": 0, "status": "partial"}, {"index": 1, "status": "failed"}]
+        self.assertEqual(pending_after({0: [{"id": "a", "file": "a.cc"}]}, ["a"], results, chunks),
+                         ["a"])
+
+    def test_a_chunk_without_a_result_is_not_ok(self):
+        from review.ledger import pending_after
+        chunks = [{"index": 0, "files": ["a.cc"]}, {"index": 1, "files": ["a.cc"]}]
+        self.assertEqual(pending_after({0: [{"id": "a", "file": "a.cc"}]}, [],
+                                       [{"index": 0, "status": "ok"}], chunks), ["a"])
 
 
 class PromptListsTest(unittest.TestCase):

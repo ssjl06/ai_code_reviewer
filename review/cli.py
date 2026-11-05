@@ -154,7 +154,7 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
                    skipped=skipped, anchor=anchor_of(scope["blobs"]), truncated=truncated,
                    chunk_files={c["index"]: c["files"] for c in chunks},
                    closed=scope["closed"], shown=shown_lines(chunks, recheck))
-    review["recheck_pending"] = _pending(review, pending_after(recheck, left_out, results))
+    review["recheck_pending"] = _pending(review, pending_after(recheck, left_out, results, chunks))
     review["waived_now"] = int((scope["prev"] or {}).get("waived_now") or 0)
     _log_matches(review)
     inline, body_only = split_inline(review["findings"],

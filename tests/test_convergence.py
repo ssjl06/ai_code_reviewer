@@ -220,3 +220,22 @@ class Scenario(IntegrationBase):
         self.assertEqual(r2.state["recheck_pending"], [])
         self.assertEqual([i["status"] for i in r2.state["issues"]], ["resolved", "resolved"])
         self.assertEqual(r2.event, "APPROVE")
+
+    def test_resolved_refused_because_of_another_chunk_is_retried_on_the_same_sha(self):
+        """A file split over two chunks: the one with the recheck says resolved, the other is not ok."""
+        code = ["static int variable_number_%03d_of_this_long_list;\n" % n for n in range(200)]
+        self.push({"src/r.cu": "".join(code)})
+        first = self.go([rule("- src/r.cu\n", [find("src/r.cu", 10)])])
+        self.assertEqual(first.event, "REQUEST_CHANGES")
+        code[9], code[189] = "int fixed;\n", "int other;\n"
+        self.push({"src/r.cu": "".join(code)})
+        cap = ("--set", "chunk_max_tokens=150")  # one hunk fits a chunk, two do not
+        r1 = self.go([rule("int other;", unreviewed=True), rule(resolve_rechecked=True)], *cap)
+        self.assertGreater(len(r1.prompts), 1)
+        self.assertEqual(r1.issue("i1")["status"], "open")
+        self.assertEqual(r1.state["recheck_pending"], [self.ids["i1"]])
+        r2 = self.go([rule(resolve_rechecked=True)], *cap)
+        self.assertEqual(r2.state["sha"], r1.state["sha"])
+        self.assertTrue(any("이슈 %s, " % self.ids["i1"] in p for p in r2.prompts))
+        self.assertEqual(r2.issue("i1")["status"], "resolved")
+        self.assertEqual((r2.state["recheck_pending"], r2.event), ([], "APPROVE"))

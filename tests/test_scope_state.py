@@ -195,7 +195,7 @@ def run_blocking_with_pending():
                    "block_confidence": 80, "min_confidence": 50}, prev, {}, False,
                    chunk_files={0: ["a"]})
     review["recheck_pending"] = pending_after({0: [{"id": "i1"}]}, [],
-                                              [{"index": 0, "status": "failed"}])
+                                              [{"index": 0, "status": "failed"}], [])
     return review
 
 

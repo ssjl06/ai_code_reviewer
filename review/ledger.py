@@ -202,14 +202,16 @@ def assign_recheck(chunks: List[dict], previous: List[dict], blobs: Dict[str, Li
     return by_chunk, left
 
 
-def pending_after(recheck: Dict[int, List[dict]], left_out: List[str],
-                  results: List[dict]) -> List[str]:
-    """Ids still to be rechecked: the ones left out, then the ones whose chunk is not `ok`."""
+def pending_after(recheck: Dict[int, List[dict]], left_out: List[str], results: List[dict],
+                  chunks: List[dict]) -> List[str]:
+    """Ids still to be rechecked: the ones left out, the ones whose chunk is not `ok`, and the
+    ones whose file is in any chunk that is not `ok`, whose `resolved` report is refused."""
     status = {r["index"]: r.get("status") for r in results}
+    bad = {p for c in chunks if status.get(c["index"]) != "ok" for p in c["files"]}
     out = list(left_out)
     for index in sorted(recheck):
-        if status.get(index) != "ok":
-            out += [i["id"] for i in recheck[index] if i["id"] not in out]
+        out += [i["id"] for i in recheck[index] if i["id"] not in out
+                and (status.get(index) != "ok" or i.get("file") in bad)]
     return out
 
 
