@@ -2,7 +2,7 @@ import hashlib
 import unittest
 from collections import Counter
 
-from review.fingerprint import decode_seen, encode_seen, whole_hash
+from review.fingerprint import decode_seen, encode_seen, pack, whole_hash
 from review.render import render_body, state_marker
 from review.scope import next_state
 from review.state_fit import MARKER_BUDGET, fit_state
@@ -76,20 +76,74 @@ class FitStateTest(unittest.TestCase):
         self.assertEqual(set(out["seen"]), {"small"})
         self.assertEqual(decode_seen(out)[1], {"big": whole_hash(seen["big"])})
 
-    def test_drops_seen_before_touching_issues(self):
-        st = state_with(open_=3)
+    def test_blanks_display_before_dropping_seen(self):
+        st = state_with(open_=3, long_titles=True)
         st.update(seen={"a": "AAAAAA=="}, seen_files={"b": "AAAAAA=="})
-        out = fit_state(st, budget=len(state_marker(dict(st, seen={}, seen_files={}))))
-        self.assertEqual((out["seen"], out["seen_files"]), ({}, {}))
+        out = fit_state(st, budget=len(state_marker(st)) - 100)
+        self.assertEqual(out["seen_files"].get("b"), "AAAAAA==")
+        self.assertIn("a", {**out["seen"], **out["seen_files"]})
+        self.assertIn(None, [x.get("title") for x in out["issues"]])
+
+    def test_blanks_display_of_blocking_issues_before_dropping_seen(self):
+        st = state_with(open_=4, long_titles=True, blocking_every=1)
+        st.update(seen={"a": "AAAAAA=="})
+        blank = dict(st, issues=[{k: v for k, v in i.items() if k not in ("title", "excerpt")}
+                                 for i in st["issues"]])
+        out = fit_state(st, budget=len(state_marker(blank)) + 60)
+        self.assertNotEqual({**out["seen"], **out["seen_files"]}, {})
+        self.assertEqual(out["issues"], blank["issues"])
+
+    def test_drops_seen_when_blank_display_is_not_enough_and_restores_what_fits(self):
+        st = state_with(open_=3, long_titles=True, seen=SEEN_OVER_BUDGET)
+        st["seen_hunks"] = {"a": "AAAAAA=="}
+        out = fit_state(st, budget=len(state_marker(dict(st, seen={}, seen_hunks={}))))
+        self.assertEqual((out["seen"], out["seen_files"], out["seen_hunks"]), ({}, {}, {}))
         self.assertEqual([x["title"] for x in out["issues"]], [x["title"] for x in st["issues"]])
 
-    def test_fit_keeps_200_closed_issues_with_seen_present(self):
+    def test_fit_keeps_200_closed_issues_and_the_seen_data(self):
+        seen = {"src/p%03d.py" % i: pack(prints("p%d" % i, 40)) for i in range(200)}
+        st = state_with(closed=200, seen=seen)
+        self.assertGreater(len(state_marker(st)), MARKER_BUDGET)
+        out = fit_state(st)
+        self.assertEqual(len(normalize_state(out)["issues"]), 200)
+        self.assertLessEqual(len(state_marker(out)), MARKER_BUDGET)
+        self.assertGreater(len(out["seen_files"]), 0)
+        self.assertEqual(len(out["seen"]) + len(out["seen_files"]), 200)
+
+    def test_fit_keeps_200_closed_issues_with_seen_too_large_for_hashes(self):
         st = state_with(closed=200, seen=SEEN_OVER_BUDGET)
         self.assertGreater(len(state_marker(st)), MARKER_BUDGET)
         out = fit_state(st)
         self.assertEqual(len(normalize_state(out)["issues"]), 200)
         self.assertLessEqual(len(state_marker(out)), MARKER_BUDGET)
-        self.assertEqual(out["seen"], {})
+        self.assertEqual((out["seen"], out["seen_files"]), ({}, {}))
+
+    def test_160_open_blocking_issues_with_long_text_fit(self):
+        issues = [dict(issue(i, blocking=True), title="한" * 60, excerpt="설" * 200)
+                  for i in range(160)]
+        st = dict(state_with(), issues=issues)
+        self.assertGreater(len(state_marker(st)), MARKER_BUDGET)
+        out = fit_state(st)
+        self.assertLessEqual(len(state_marker(out)), MARKER_BUDGET)
+        self.assertEqual(count(out, "open"), 160)
+        kept = [bool(i.get("title")) for i in out["issues"]]
+        self.assertIn(False, kept)
+        self.assertEqual(kept, sorted(kept, reverse=True))  # only the oldest are blank
+
+    def test_blocking_display_goes_only_after_all_non_blocking_display(self):
+        st = state_with(open_=150, long_titles=True, blocking_every=2)
+        st["issues"] = [dict(i, excerpt="설" * 200) for i in st["issues"]]
+        out = fit_state(st)
+        self.assertLessEqual(len(state_marker(out)), MARKER_BUDGET)
+        self.assertFalse(any(i.get("title") for i in out["issues"] if not i["blocking"]))
+        self.assertIn(None, [i.get("title") for i in out["issues"] if i["blocking"]])
+
+    def test_closed_records_go_only_after_seen_and_all_display(self):
+        seen = {"a": "AAAAAA=="}
+        out = fit_state(state_with(closed=3000, open_=5, long_titles=True, seen=seen))
+        self.assertGreater(out["dropped_closed"], 0)
+        self.assertEqual((out["seen"], out["seen_files"]), ({}, {}))
+        self.assertFalse(any(i.get("title") for i in out["issues"]))
 
     def test_fit_drops_display_of_closed_before_open(self):
         st = state_with(closed=800, open_=50, long_titles=True)

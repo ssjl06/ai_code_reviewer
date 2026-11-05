@@ -36,8 +36,7 @@ def _fewest(n: int, ok: Callable[[int], bool]) -> int:
 
 def _move_seen(st: dict, budget: int, partial: AbstractSet[str]) -> None:
     """Move the largest files from seen to seen_files (`partial` files, not fully reviewed,
-    last: their hash never matches); drop seen, seen_files and seen_hunks when that is not
-    enough (the next run reviews everything again)."""
+    last: their hash never matches)."""
     seen, files = st["seen"], st["seen_files"]
     total = len(state_marker(st))
     order = sorted(seen, key=lambda p: (p not in partial, _len({p: seen[p]}), p))
@@ -48,10 +47,13 @@ def _move_seen(st: dict, budget: int, partial: AbstractSet[str]) -> None:
         total += _len({path: files[path]}) - 1
         if total <= budget:
             total = len(state_marker(st))  # the estimate may be off by a comma
-    if total > budget:
-        st["seen"], st["seen_files"] = {}, {}
-        if "seen_hunks" in st:
-            st["seen_hunks"] = {}
+
+
+def _drop_seen(st: dict) -> None:
+    """The next run reviews the whole PR again: the failure the ledger is meant to prevent."""
+    st["seen"], st["seen_files"] = {}, {}
+    if "seen_hunks" in st:
+        st["seen_hunks"] = {}
 
 
 def _compact_closed(st: dict) -> List[Tuple[str, str]]:
@@ -71,13 +73,28 @@ def _closed_map(recs: List[Tuple[str, str]]) -> Dict[str, str]:
     return {p: " ".join(t) for p, t in out.items()}
 
 
+def _blank_order(issues: List[dict]) -> List[int]:
+    """Indexes of the open issues in blanking order, oldest first (state order is newest
+    first): the non-blocking ones, then the blocking ones."""
+    oldest = list(reversed(range(len(issues))))
+    return sorted(oldest, key=lambda n: bool(issues[n].get("blocking")))
+
+
+def _blanked(issues: List[dict], order: List[int], k: int) -> List[dict]:
+    out = list(issues)
+    for n in order[:k]:
+        out[n] = {key: v for key, v in issues[n].items() if key not in _DISPLAY}
+    return out
+
+
 def fit_state(state: dict, budget: int = MARKER_BUDGET,
               partial: AbstractSet[str] = frozenset()) -> dict:
-    """In order, until the marker fits: move the largest files from seen to seen_files, drop
-    seen, seen_files and seen_hunks, move the closed issues into the compact `closed` map
-    (title, excerpt and anchor go), drop title and excerpt of the open non-blocking issues
-    (oldest first; state order is newest first), then drop the oldest compact closed records
-    and count them in `dropped_closed`. Open issues and `recheck_pending` are never removed."""
+    """In order, until the marker fits: move the largest files from seen to seen_files, move
+    the closed issues into the compact `closed` map (title, excerpt and anchor go), drop title
+    and excerpt of the open non-blocking issues, then of the open blocking ones (oldest first),
+    drop seen, seen_files and seen_hunks (the display text that then fits is kept), then drop
+    the oldest compact closed records and count them in `dropped_closed`. Open issues and
+    `recheck_pending` are never removed."""
     st = dict(state, seen=dict(state.get("seen") or {}),
               seen_files=dict(state.get("seen_files") or {}),
               issues=[dict(i) for i in state.get("issues") or []])
@@ -89,15 +106,16 @@ def fit_state(state: dict, budget: int = MARKER_BUDGET,
     if _fits(st, budget):
         return st
     base = list(st["issues"])
-    blankable = [n for n, i in enumerate(base) if not i.get("blocking")]
+    order = _blank_order(base)
 
-    def blanked(k: int) -> List[dict]:
-        out = list(base)
-        for n in blankable[len(blankable) - k:] if k else ():
-            out[n] = {key: v for key, v in base[n].items() if key not in _DISPLAY}
-        return out
-    k = _fewest(len(blankable), lambda k: _fits(dict(st, issues=blanked(k)), budget))
-    st["issues"] = blanked(k)
+    def blank_fewest() -> None:
+        k = _fewest(len(order), lambda k: _fits(dict(st, issues=_blanked(base, order, k)), budget))
+        st["issues"] = _blanked(base, order, k)
+    blank_fewest()
+    if _fits(st, budget):
+        return st
+    _drop_seen(st)
+    blank_fewest()
     if _fits(st, budget):
         return st
 
