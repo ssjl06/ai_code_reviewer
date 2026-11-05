@@ -58,11 +58,41 @@ def _by_anchor(i: dict, blobs: Dict[str, List[str]]) -> None:
     i["line"], i["lo"], i["hi"] = found, i["lo"] + d, i["hi"] + d
 
 
-def advance(issues: List[dict], u0: Optional[Dict[str, dict]],
-            blobs: Dict[str, List[str]]) -> Tuple[List[dict], bool]:
+def moved_lookups(issues: List[dict], u0: Dict[str, dict]) -> List[Tuple[str, str]]:
+    """`(old path, head path)` of each open issue whose whole region was deleted from a file
+    that still exists: `advance` searches those files for the lines."""
+    out = []
+    for i in issues:
+        entry = None if i["orphan"] or _closed(i) else u0.get(i["file"])
+        if entry and not entry["deleted"] and map_region(
+                entry["hunks"], i["line"], i["lo"], i["hi"]) is None:
+            out.append((i["file"], entry["path"]))
+    return out
+
+
+def _relocate(i: dict, old: Optional[List[str]], head: Optional[List[str]]) -> bool:
+    """Move `i` to the copy of its old lines nearest its old place, as raw contiguous lines of
+    `head`. False when there is none, or either blob is missing."""
+    lo, n = i["lo"], i["hi"] - i["lo"] + 1
+    want = (old or [])[lo - 1:i["hi"]]
+    if len(want) != n or head is None:
+        return False
+    hits = [s for s in range(1, len(head) - n + 2) if head[s - 1:s - 1 + n] == want]
+    if not hits:
+        return False
+    d = min(hits, key=lambda s: (abs(s - lo), s)) - lo
+    i["line"], i["lo"], i["hi"] = i["line"] + d, i["lo"] + d, i["hi"] + d
+    return True
+
+
+def advance(issues: List[dict], u0: Optional[Dict[str, dict]], blobs: Dict[str, List[str]],
+            old: Optional[Dict[str, List[str]]] = None) -> Tuple[List[dict], bool]:
     """Move every issue to the new head. `u0` is `regions.parse_u0` of the diff between the
     previously reviewed head and this one, or None when that head is unknown: the issues are
-    then relocated by anchor (the second value is True) or keep their region."""
+    then relocated by anchor (the second value is True) or keep their region. An open issue
+    whose whole region was deleted is searched in its file (`_relocate`: `old` holds the blobs
+    at the previous head, `blobs` those at this one, see `moved_lookups`) and is an orphan
+    when its lines are gone. A closed issue is never searched: a waiver does not transfer."""
     out = []
     for src in issues:
         i = dict(src)
@@ -80,10 +110,11 @@ def advance(issues: List[dict], u0: Optional[Dict[str, dict]],
             continue
         mapped = map_region(entry["hunks"], i["line"], i["lo"], i["hi"])
         i["file"] = entry["path"]
-        if mapped is None:
-            i["orphan"] = True
-        else:
+        if mapped is not None:
             i["line"], i["lo"], i["hi"] = mapped
+        elif _closed(i) or not _relocate(i, (old or {}).get(src["file"]),
+                                         blobs.get(entry["path"])):
+            i["orphan"] = True
     return out, u0 is None
 
 

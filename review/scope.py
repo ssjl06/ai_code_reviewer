@@ -8,7 +8,7 @@ from review.diff_split import line_map, parse_unified_diff, reviewable
 from review.fingerprint import decode_hunks, decode_seen, encode_seen, pack, whole_hash
 from review.gitutil import diff_text, diff_u0, read_blobs, renames_between
 from review.hunks import near_hunks, select_file
-from review.ledger import CLOSED, advance, new_issue
+from review.ledger import CLOSED, advance, moved_lookups, new_issue
 from review.previous import _closest, annotate
 from review.regions import parse_u0
 from review.seen import update_hunks, update_seen
@@ -35,16 +35,19 @@ def _advance(repo: str, head: str, prev: Optional[dict], issues: List[dict],
              names: Dict[str, str]):
     """The ledger issues moved to `head`: `(issues, weak)`. `weak` is True when the previous
     head is not available locally, so the issues were located by anchor instead of by diff;
-    their files are first mapped through `names` (the renames of the PR itself)."""
+    their files are first mapped through `names` (the renames of the PR itself). With a diff,
+    only the files of open issues whose region was deleted are read, at both heads, to search
+    for moved lines; a file missing at either head is simply not searched."""
     if prev is None:
         return [], False
     text = diff_u0(repo, prev["sha"], head)
     u0 = None if text is None else parse_u0(text)
     if u0 is None:
         issues = [dict(i, file=names.get(i["file"], i["file"])) for i in issues]
-    pre = read_blobs(repo, head, sorted({i["file"] for i in issues})) if u0 is None else {}
-    moved, weak = advance(issues, u0, pre)
-    return moved, weak
+        return advance(issues, u0, read_blobs(repo, head, sorted({i["file"] for i in issues})))
+    look = moved_lookups(issues, u0)
+    return advance(issues, u0, read_blobs(repo, head, sorted({new for _, new in look})),
+                   read_blobs(repo, prev["sha"], sorted({old for old, _ in look})))
 
 
 def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) -> Dict[str, Any]:

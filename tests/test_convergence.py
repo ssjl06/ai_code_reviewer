@@ -139,6 +139,46 @@ class Scenario(IntegrationBase):
         self.assertIn(self.ids["i1"], chunk)
         self.assertEqual(r.new_findings, 0)
 
+    # a function with a defect at line 3 that a push moves below the rest of the file
+    FUNC = "void g(int *p) {\n  int n = size(p);\n  p[n] = 0;\n  use(p);\n  done(p);\n}\n"
+    REST = "".join("int h%d(void) { return %d; }\n" % (n, n * 3) for n in range(30))
+
+    def reorder(self):
+        self.push({"src/m.cu": self.FUNC + self.REST})
+        first = self.go([rule("- src/m.cu\n", [find("src/m.cu", 3)])])
+        self.assertEqual(first.event, "REQUEST_CHANGES")
+        self.push({"src/m.cu": self.REST + self.FUNC})
+
+    def test_in_file_move_with_a_silent_model_keeps_the_issue_open_at_the_new_line(self):
+        self.reorder()
+        r = self.go([rule()])
+        self.assertEqual(r.event, "REQUEST_CHANGES")
+        i1 = r.issue("i1")
+        self.assertEqual((i1["status"], i1["line"], i1["lo"], i1["hi"]), ("open", 33, 33, 33))
+        self.assertFalse(i1.get("orphan"))
+        self.assertEqual(self.gh.dismissed, [])
+        self.assertIn("이슈 %s, " % self.ids["i1"], r.prompts[0])  # rechecked as usual
+
+    def test_in_file_move_can_be_resolved_by_the_recheck(self):
+        self.reorder()
+        r = self.go([rule(resolve_rechecked=True)])
+        self.assertEqual((r.issue("i1")["status"], r.event), ("resolved", "APPROVE"))
+
+    def test_in_file_move_of_a_fixed_line_is_an_orphan_and_resolves(self):
+        self.push({"src/m.cu": self.FUNC + self.REST})
+        self.go([rule("- src/m.cu\n", [find("src/m.cu", 3)])])
+        self.push({"src/m.cu": self.REST + self.FUNC.replace("p[n]", "p[n - 1]")})
+        r = self.go([rule()])
+        self.assertEqual((r.issue("i1")["status"], r.event), ("resolved", "APPROVE"))
+
+    def test_in_file_move_does_not_carry_a_waiver(self):
+        self.push({"src/m.cu": self.FUNC + self.REST})
+        self.go([rule("- src/m.cu\n", [find("src/m.cu", 3)])])
+        self.dismiss_all()
+        self.push({"src/m.cu": self.REST + self.FUNC})
+        r = self.go([rule()])
+        self.assertEqual((r.issue("i1")["status"], r.issue("i1").get("orphan")), ("waived", True))
+
     def test_skipped_chunk_cannot_close_and_the_retry_reports(self):
         first = self.go([rule("- src/k.cu\n", [find("src/k.cu", 2)])])
         self.assertEqual(first.event, "REQUEST_CHANGES")

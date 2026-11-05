@@ -1,7 +1,8 @@
 import unittest
 
 from review.fingerprint import fp_line
-from review.ledger import CLOSED, advance, apply_waivers, classify, finding_id, from_v2, new_issue, unique_id
+from review.ledger import (CLOSED, advance, apply_waivers, classify, finding_id, from_v2,
+                           moved_lookups, new_issue, unique_id)
 
 V2 = {"id": "abc123", "file": "a.cc", "line": 7, "anchor": "ff", "title": "T",
       "severity": "major", "blocking": True}
@@ -85,6 +86,68 @@ class LedgerTest(unittest.TestCase):
                        "severity": "minor", "blocking": False, "detail": "d" * 300})
         self.assertEqual((n["lo"], n["hi"], len(n["excerpt"]), n["status"]), (3, 3, 200, "open"))
         self.assertEqual(CLOSED, ("resolved", "waived"))
+
+class MovedRegionTest(unittest.TestCase):
+    """An open issue whose whole region was deleted is searched in the same file at head."""
+    OLD = ["a", "b", "c", "x", "y", "d"]
+    U0 = {"a.cc": {"path": "a.cc", "deleted": False, "hunks": [(4, 2, 3, 0)]}}
+
+    def run_it(self, i, head, old=None, u0=None):
+        old = {"a.cc": self.OLD} if old is None else old
+        return advance([i], u0 or self.U0, head, old)[0][0]
+
+    def where(self, i):
+        return (i["file"], i["line"], i["lo"], i["hi"], i["orphan"], i["status"])
+
+    def test_an_open_issue_relocates_with_the_primary_line_at_the_same_offset(self):
+        i = self.run_it(issue("a.cc", 5, lo=4, hi=5), {"a.cc": ["a", "b", "c", "d", "x", "y"]})
+        self.assertEqual(self.where(i), ("a.cc", 6, 5, 6, False, "open"))
+
+    def test_the_hit_nearest_the_old_line_wins(self):
+        head = ["x", "y", "a", "b", "c", "d", "1", "2", "3", "x", "y"]
+        i = self.run_it(issue("a.cc", 4, lo=4, hi=5), {"a.cc": head})
+        self.assertEqual(self.where(i), ("a.cc", 1, 1, 2, False, "open"))
+        head = ["1"] * 3 + ["x", "y"] + ["2"] * 40 + ["x", "y"]
+        i = self.run_it(issue("a.cc", 4, lo=4, hi=5), {"a.cc": head})
+        self.assertEqual(self.where(i), ("a.cc", 4, 4, 5, False, "open"))
+
+    def test_lines_that_are_not_contiguous_at_head_are_not_a_hit(self):
+        i = self.run_it(issue("a.cc", 4, lo=4, hi=5), {"a.cc": ["x", "new", "y", "a"]})
+        self.assertTrue(i["orphan"])
+
+    def test_a_changed_line_is_not_a_hit(self):
+        i = self.run_it(issue("a.cc", 4), {"a.cc": ["a", "b", "c", "d", " x"]})
+        self.assertTrue(i["orphan"])
+
+    def test_a_closed_issue_stays_an_orphan(self):
+        head = {"a.cc": ["a", "b", "c", "d", "x", "y"]}
+        for status in CLOSED:
+            i = self.run_it(issue("a.cc", 4, status=status), head)
+            self.assertEqual(self.where(i), ("a.cc", 4, 4, 4, True, status))
+
+    def test_a_missing_blob_makes_an_orphan(self):
+        self.assertTrue(self.run_it(issue("a.cc", 4), {"a.cc": ["x"]}, old={})["orphan"])
+        self.assertTrue(self.run_it(issue("a.cc", 4), {})["orphan"])
+
+    def test_a_region_past_the_end_of_the_old_file_makes_an_orphan(self):
+        u0 = {"a.cc": {"path": "a.cc", "deleted": False, "hunks": [(6, 10, 5, 0)]}}
+        i = self.run_it(issue("a.cc", 6, lo=6, hi=9), {"a.cc": ["d"]}, u0=u0)
+        self.assertTrue(i["orphan"])
+
+    def test_a_renamed_file_is_read_at_both_paths(self):
+        u0 = {"a.cc": {"path": "b.cc", "deleted": False, "hunks": [(4, 2, 3, 0)]}}
+        i = self.run_it(issue("a.cc", 4), {"b.cc": ["a", "b", "c", "d", "x"]}, u0=u0)
+        self.assertEqual(self.where(i), ("b.cc", 5, 5, 5, False, "open"))
+
+    def test_only_a_wholly_deleted_open_region_needs_a_search(self):
+        u0 = dict(self.U0, **{
+            "b.cc": {"path": "c.cc", "deleted": False, "hunks": [(4, 2, 3, 0)]},
+            "gone.cc": {"path": "gone.cc", "deleted": True, "hunks": [(1, 9, 0, 0)]}})
+        issues = [issue("a.cc", 4), issue("a.cc", 9), issue("a.cc", 4, status="waived"),
+                  issue("a.cc", 4, orphan=True), issue("b.cc", 5), issue("gone.cc", 4),
+                  issue("other.cc", 4)]
+        self.assertEqual(moved_lookups(issues, u0), [("a.cc", "a.cc"), ("b.cc", "c.cc")])
+
 
 def state_with(*issues):
     return {"v": 3, "sha": "h", "complete": True, "issues": list(issues), "recheck_pending": []}
