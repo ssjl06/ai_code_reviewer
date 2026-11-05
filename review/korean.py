@@ -15,11 +15,15 @@ _CODE_START = re.compile(r"^\s*(?:#include|//|#!|(?:if|for|while|return|auto|int
                          r"class|import|from)[ (])")
 _CODE_WHOLE = re.compile(r"^\s*[\w.:<>\[\]*&]+\s*(?:=|\+=|-=)\s*\S"
                          r"|^\s*[\w.:]+\([^)]*\)\s*;?\s*$")
+# A line opening with 4+ plain words (letters only, optional trailing , . ; :) is prose.
+_PROSE_RUN = re.compile(r"^\s*[A-Za-z]+[,.;:]?(?:\s+[A-Za-z]+[,.;:]?){3}(?=\s|$)")
 _HANGUL = re.compile(r"[ᄀ-ᇿ㄰-㆏가-힣]")
 _ASCII = re.compile(r"[A-Za-z]")
 
 
 def _looks_like_code(line: str) -> bool:
+    if _PROSE_RUN.search(line):
+        return False
     return (line.rstrip().endswith(_CODE_END) or bool(_CODE_START.match(line))
             or bool(_CODE_WHOLE.match(line)))
 

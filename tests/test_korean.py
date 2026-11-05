@@ -1,6 +1,6 @@
 import unittest
 
-from review.korean import KOREAN_MIN_RATIO, is_korean, merge_korean
+from review.korean import KOREAN_MIN_RATIO, _suggestion_prose, is_korean, merge_korean
 
 
 def F(line=3, title="범위를 벗어난 읽기", detail="`p[1]`은 버퍼 밖을 읽는다.", **kw):
@@ -60,6 +60,20 @@ class IsKoreanTest(unittest.TestCase):
     def test_code_suggestion_is_not_judged(self):
         code = "if (index < buffer_length) { value = buffer[index]; }"
         self.assertTrue(is_korean(OUT(F(suggestion=code))))
+
+    def test_prose_with_four_plain_words_is_kept(self):
+        for text in ("if the buffer is empty, skip the copy and return early.",
+                     "return an error when the size is zero instead of crashing.",
+                     "Use a lock around this block;",
+                     "Check the length (in bytes) before indexing the buffer.",
+                     "Check the length; then index the buffer."):
+            self.assertEqual(_suggestion_prose(text), text)
+            self.assertFalse(is_korean(OUT(F(suggestion=text))), text)
+
+    def test_code_lines_are_still_removed(self):
+        for text in ("return foo(bar);", "for (int i = 0; i < n; ++i) {", "auto x = compute();",
+                     "#include <vector>", "}"):
+            self.assertEqual(_suggestion_prose(text), "", text)
 
     def test_english_prose_suggestion_fails(self):
         self.assertFalse(is_korean(OUT(F(suggestion="Check the length before indexing the buffer."))))
