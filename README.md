@@ -293,7 +293,8 @@ severity and category as Korean labels (`치명`/`중대`/`경미`/`참고`, `�
 It holds line fingerprints of what was reviewed, plus the issue ledger (state v3): every issue with its
 file, a line region that is moved across pushes with `git diff -U0`, status and severity. Closed
 issues may be kept in the compact `closed` map (about 20 characters each). Its size is capped at
-40,000 characters: over that, seen data goes first, then the display text of issues, and only
+40,000 characters: over that, seen data becomes whole-file hashes and closed issues go compact,
+then the display text of open issues goes (non-blocking first), then the seen data, and only
 then the oldest closed records (the body says how many). Open issues are never dropped.
 A person other than the bot who dismisses a bot review waives that review's open issues: they
 become closed and are not raised again. Do not edit or strip the marker. Spec section 6.2 and

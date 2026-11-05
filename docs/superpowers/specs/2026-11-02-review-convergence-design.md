@@ -1,6 +1,7 @@
 # Review Convergence: Issue Ledger
 
-Status: draft for review, rev 5 (after four Codex adversarial reviews). Extends
+Status: draft for review, rev 6 (after four Codex adversarial reviews and the final branch
+review). Extends
 `2026-10-18-ai-code-review-design.md` (state marker, sections 6 and 8).
 
 ## Problem
@@ -40,7 +41,9 @@ line shift lost the issue. Rev 2 tracks position through git instead.
   - a line outside every hunk shifts by the hunks above it;
   - a line inside a hunk's old range (rewritten or deleted) maps to that hunk's new range,
     clipped to 5 lines on each side of the proportional position (a rewrite of a large
-    block does not swallow the whole block);
+    block does not swallow the whole block). An end of the region inside a hunk with old and
+    new lines takes that hunk's new start or end before the clipping, so a one-line region
+    widens through a rewrite (rev 6); a pure insertion never widens a region;
   - a hunk with no new lines maps to the single line where it was.
   The primary line is mapped the same way. After mapping, the region is cut to at most 5 lines
   on each side of the primary line (rev 5), so code inserted inside a region cannot widen it:
@@ -49,11 +52,22 @@ line shift lost the issue. Rev 2 tracks position through git instead.
 - Moves (rev 5): `-M` follows file renames only. Code moved inside or across files shows up as
   a deletion hunk plus an insertion hunk, and the status never follows it automatically. Rev 3
   and rev 4 tried to detect moves by similarity, and each rule had a counterexample that passed
-  a waiver to unrelated code, such as the same block on a different resource. An issue whose
-  whole region falls in lines deleted by a hunk with no new lines becomes an orphan: it has no
-  region, and only the model's `same_as` can attach a finding to it (see below). Accepted cost:
-  if the model does not link moved code, the same issue can be raised once more. That fails
-  toward showing a defect, not hiding one.
+  a waiver to unrelated code, such as the same block on a different resource.
+  An open issue whose whole region falls in lines deleted by a hunk with no new lines is first
+  looked for in its own file (rev 6): the region's lines at the previous sha are searched as
+  raw contiguous lines in the head file, and the hit nearest the old line wins. A hit relocates
+  the issue (region to the hit, primary line at the same offset); it stays open and is
+  rechecked as usual. The reason: a move inside one file is not re-reviewed by the seen-set.
+  The moved lines keep their fingerprints, so they are seen and not in `changed`, the model
+  cannot report them, and without this search a reorder of functions would close a blocking
+  issue unseen. Accepted cost: an open issue can relocate to an unrelated identical line, and
+  the model is asked once more.
+  Without a hit, and always for a closed issue, the issue becomes an orphan: it has no region,
+  and only the model's `same_as` can attach a finding to it (see below). Closed issues are
+  never searched, so a waiver does not transfer (rev 6). Accepted cost: if the model does not
+  link moved code, the same issue can be raised once more. That fails toward showing a defect,
+  not hiding one. The other side of the seen-set rule applies here too: code with a closed
+  orphan that moved inside one file is seen, so it is not reviewed again.
 - A new finding matches an issue when it is in the same file and its line is within 3 lines
   of the issue's region. A finding farther away is a separate issue, however similar its
   text or code (Codex finding 1). An orphan has no region, so position never matches it.
@@ -96,13 +110,18 @@ line shift lost the issue. Rev 2 tracks position through git instead.
   - these lines count as shown for closure, but they are not added to `changed`, so new
     findings there are still dropped ("incremental reviews flag only newly changed lines");
   - recheck context counts toward the chunk size. An issue left out because of size, or
-    whose chunk is not `ok`, goes into the state's `recheck_pending` list of ids. A state with
-    a non-empty list never stops early as `unchanged` on the same sha. The list does not
-    change the verdict: an open blocking issue still blocks.
-- An open orphan is resolved automatically when the run is complete, because its code is gone;
-  a moved defect is on new lines and gets reported there. A `same_as` link in that run comes
-  first and keeps the issue open at its new region. On an incomplete run it stays open. A closed
-  orphan stays closed and stays in the ledger, so a later link can still match it.
+    whose chunk is not `ok`, goes into the state's `recheck_pending` list of ids. So does an
+    issue whose file is held by any chunk that is not `ok`, because a `resolved` report is
+    refused then (rev 6), and an issue of a file with no hunks in the PR diff (a pure rename),
+    which no chunk can hold; the log names it (rev 6). A state with a non-empty list never
+    stops early as `unchanged` on the same sha. The list does not change the verdict: an open
+    blocking issue still blocks.
+- An open orphan is resolved automatically when the run is complete. Since rev 6 an open issue
+  becomes an orphan only when its lines are no longer in its file, so its code is gone or was
+  changed; code moved to another file is on new lines there and gets reported there. A
+  `same_as` link in that run comes first and keeps the issue open at its new region. On an
+  incomplete run it stays open. A closed orphan stays closed and stays in the ledger, so a later
+  link can still match it.
 - A new finding that matches an open issue is merged into it (no new comment). One that
   matches a closed issue is dropped. The body shows "기존 이슈와 중복되어 생략 n건"; the
   log lists each one.
@@ -138,15 +157,22 @@ line shift lost the issue. Rev 2 tracks position through git instead.
 
 - Marker v3. Issue records are split into identity and display:
   - identity, which is always kept: id, file, region, status, severity, blocking, anchor.
-    Closed issues are stored per file in a compact form, about 20 characters each.
-    `recheck_pending` is identity data too.
+    Closed issues are stored per file in a compact form, about 20 characters each. A compact
+    closed record holds id, file, line, region, status and severity, with no anchor or blocking
+    (rev 6). `recheck_pending` is identity data too.
   - display, which can be dropped: title and description excerpt.
-- `fit_state` order when over budget: compact seen into hashes (as today), drop seen and
-  seen hunks (costs a re-review, not correctness), drop display text of closed issues, then
-  of open non-blocking issues. Identity records are never dropped by size.
+- `fit_state` order when over budget (rev 6), until the marker fits:
+  1. move seen to whole-file hashes;
+  2. compact the closed issues;
+  3. blank title and excerpt of open non-blocking issues, oldest first;
+  4. blank title and excerpt of open blocking issues, oldest first;
+  5. drop seen, seen files and seen hunks; the display text that then fits is kept;
+  6. drop the oldest compact closed records and set `dropped_closed`.
+  Seen goes late because an empty seen-set re-reviews the whole PR, the failure this design
+  prevents; display text only costs readability. Open issues and `recheck_pending` are never
+  removed.
 - With seen dropped, the 40,000-character budget holds about 1,900 issue records. Beyond
-  that, the oldest closed records are dropped and the body says so; this is the only path
-  that loses closure memory.
+  that, step 6 applies and the body says so; this is the only path that loses closure memory.
 - A v2 marker is migrated on first read: each finding becomes an open issue with region
   `[line, line]` at the v2 sha.
 
@@ -205,6 +231,21 @@ Regression tests for the fourth Codex review (rev 5):
   lists the orphan, and `same_as` links it;
 - an open orphan: resolved on a complete run, kept open on an incomplete run, and kept open at
   the new region when linked.
+
+Regression tests for the final review (rev 6):
+
+- a function with a blocking defect reordered inside its file, model silent:
+  `REQUEST_CHANGES`, and the issue stays open at the new line;
+- the same move of a waived issue: it stays a waived orphan;
+- the same move with the defect line changed: an orphan, resolved on a complete run;
+- a one-line region rewritten into 11 lines: the region is 6 lines, and a reworded re-raise on
+  the rewritten block is not new;
+- 160 open blocking issues with long text fit the budget, and a state over budget keeps its seen
+  data until blank display text is not enough;
+- a file split over two chunks, the chunk with the recheck `ok` and saying `resolved`, the other
+  not `ok`: the id is in `recheck_pending`, and a same-sha re-run resolves the issue;
+- an open issue in a file with no hunks in the PR diff: the id is in `recheck_pending`, the log
+  names it, and the run is not `unchanged`.
 
 ## Order
 
