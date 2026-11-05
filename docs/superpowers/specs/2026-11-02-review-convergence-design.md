@@ -1,6 +1,6 @@
 # Review Convergence: Issue Ledger
 
-Status: draft for review, rev 4 (after three Codex adversarial reviews). Extends
+Status: draft for review, rev 5 (after four Codex adversarial reviews). Extends
 `2026-10-18-ai-code-review-design.md` (state marker, sections 6 and 8).
 
 ## Problem
@@ -32,8 +32,8 @@ Rev 1 matched issues by line-content fingerprints. Codex showed both failure dir
 common lines (`}`, request parsing) merged distant distinct defects, and a rename plus a
 line shift lost the issue. Rev 2 tracks position through git instead.
 
-- Each ledger issue has a file and a region `[lo, hi]` of head lines; a new issue starts as
-  `[line, line]`.
+- Each ledger issue has a file, a primary line and a region `[lo, hi]` of head lines; a new
+  issue starts as `[line, line]`.
 - Every run maps each region from the previous state's sha to the new head with
   `git diff -U0 -M <prev sha> <head>` (the same diff `renames_between` already uses; the
   checkout has `fetch-depth: 0`):
@@ -42,30 +42,28 @@ line shift lost the issue. Rev 2 tracks position through git instead.
     clipped to 5 lines on each side of the proportional position (a rewrite of a large
     block does not swallow the whole block);
   - a hunk with no new lines maps to the single line where it was.
+  The primary line is mapped the same way. After mapping, the region is cut to at most 5 lines
+  on each side of the primary line (rev 5), so code inserted inside a region cannot widen it:
+  `[95, 105]` with 1,000 lines inserted after line 100 does not become `[95, 1105]`.
   The mapped region is stored, so it is followed across any number of pushes.
-- Moves (rev 3): `-M` follows file renames only; code moved inside or across files shows up
-  as a deletion hunk plus an insertion hunk elsewhere. When an issue's whole region falls in
-  deleted lines, before mapping it to the deletion point, compare the whole deletion hunk with
-  every insertion hunk of the same diff (any file), after normalizing whitespace and
-  identifiers. An insertion hunk receives the issue (id kept, region mapped to the
-  corresponding lines) only when all of these hold (rev 4):
-  - both hunks have at least 5 non-blank lines, because a single statement such as
-    `free(cache);` also matches an unrelated `free(shared);` once identifiers are normalized;
-  - the similarity is at least 0.6;
-  - at least 2 lines match with identifiers kept, so the hunks are not only the same shape;
-  - it is the only candidate: the next best is at least 0.1 lower.
-  Otherwise the move is uncertain and the status does not follow. The issue is an orphan: its
-  code is gone, so a `same_as` naming it is honored anywhere in the PR (see below). Only the
-  model's explicit link can attach a finding to an orphan, and the log lists each such link.
+- Moves (rev 5): `-M` follows file renames only. Code moved inside or across files shows up as
+  a deletion hunk plus an insertion hunk, and the status never follows it automatically. Rev 3
+  and rev 4 tried to detect moves by similarity, and each rule had a counterexample that passed
+  a waiver to unrelated code, such as the same block on a different resource. An issue whose
+  whole region falls in lines deleted by a hunk with no new lines becomes an orphan: it has no
+  region, and only the model's `same_as` can attach a finding to it (see below). Accepted cost:
+  if the model does not link moved code, the same issue can be raised once more. That fails
+  toward showing a defect, not hiding one.
 - A new finding matches an issue when it is in the same file and its line is within 3 lines
   of the issue's region. A finding farther away is a separate issue, however similar its
-  text or code (Codex finding 1).
+  text or code (Codex finding 1). An orphan has no region, so position never matches it.
 - The model may also link a finding to a ledger issue by giving its id in a new optional
   `same_as` field. The link is honored only in the same file and within 15 lines of the
   region, so a wrong link cannot hide a defect elsewhere. This covers rewrites that move the
   code more than 3 lines (Codex finding 2). For an orphan issue (above) the distance limit
   does not apply: the code it pointed at no longer exists, so the link cannot hide a defect
-  in code the issue still covers.
+  in code the issue still covers. A link gives the orphan a region at the finding's line, and
+  the log lists each such link.
 - Fallback when the previous sha is not available (force-push to a commit never fetched):
   locate by the stored anchor print as today (`previous.relocate`); if that fails, keep the
   old region. Only this case weakens the guarantee; the run log says so.
@@ -101,6 +99,10 @@ line shift lost the issue. Rev 2 tracks position through git instead.
     whose chunk is not `ok`, goes into the state's `recheck_pending` list of ids. A state with
     a non-empty list never stops early as `unchanged` on the same sha. The list does not
     change the verdict: an open blocking issue still blocks.
+- An open orphan is resolved automatically when the run is complete, because its code is gone;
+  a moved defect is on new lines and gets reported there. A `same_as` link in that run comes
+  first and keeps the issue open at its new region. On an incomplete run it stays open. A closed
+  orphan stays closed and stays in the ledger, so a later link can still match it.
 - A new finding that matches an open issue is merged into it (no new comment). One that
   matches a closed issue is dropped. The body shows "기존 이슈와 중복되어 생략 n건"; the
   log lists each one.
@@ -127,6 +129,9 @@ line shift lost the issue. Rev 2 tracks position through git instead.
   severity, status, title and the first 200 characters of the description, with the rules
   "do not report these again in `findings`" and "if a finding is the same problem as a
   listed issue, set `same_as` to its id".
+- Every chunk also lists all orphan issues of the PR, whatever their file (rev 5), because moved
+  code usually lands in a file other than the issue's: id, severity, status and title, at most
+  4000 characters per chunk, newest first. Orphans left out are named in the log.
 - The prompt only saves effort; convergence is enforced by the matching rules above.
 
 ### State (Codex finding 4)
@@ -177,10 +182,7 @@ Regression tests for the second Codex review (rev 3):
 - a `resolved` report from an ok chunk that did not show the issue's region is rejected;
 - a dismissal during a run, then a re-run on the same sha: the run is not `unchanged`, posts
   `APPROVE` when nothing blocking is left, and makes no model call;
-- a function with a waived issue moved 40+ lines in the same file and a local variable
-  renamed: the issue follows the insertion hunk and stays waived; the same move into another
-  file also works;
-- an orphan issue (code deleted, no similar insertion): `same_as` far from the old region is
+- an orphan issue (code deleted): `same_as` far from the old region is
   honored; a `same_as` beyond 15 lines for a non-orphan issue is not.
 
 Regression tests for the third Codex review (rev 4):
@@ -190,9 +192,19 @@ Regression tests for the third Codex review (rev 4):
 - a fix in another file, with no new lines in the issue's file: the issue is still rechecked;
 - recheck context that does not fit: the id is in `recheck_pending`, the verdict still blocks,
   and a same-sha re-run is not `unchanged`;
-- a waived `free(cache);` deleted and `free(shared);` added in another file: the waiver does not
-  move, and a new finding on the new line is kept;
-- two similar insertion hunks within 0.1 of each other: the status does not move.
+
+Regression tests for the fourth Codex review (rev 5):
+
+- 1,000 lines inserted inside a closed region: the region stays within 5 lines of the primary
+  line, and a new finding in the inserted code is kept;
+- a waived 5-line block deleted and the same block on another variable added in another file:
+  the waiver does not move, and a new finding on the new lines is kept;
+- a function with a waived issue moved 40+ lines: without `same_as` the finding is new, with
+  `same_as` it is dropped and the issue gets a region at the finding's line;
+- a short block moved to another file, in a different chunk: the destination chunk's prompt
+  lists the orphan, and `same_as` links it;
+- an open orphan: resolved on a complete run, kept open on an incomplete run, and kept open at
+  the new region when linked.
 
 ## Order
 
