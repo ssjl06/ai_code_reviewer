@@ -157,7 +157,7 @@ def _denial_summary(state):
                         key = words[0] if words else "Bash"
                     else:
                         key = tool if isinstance(tool, str) and tool else "?"
-                        if "outside repo" in str(rec.get("reason")):
+                        if any(m in str(rec.get("reason")) for m in ("저장소 밖", "outside repo")):
                             key += "(저장소 밖)"
                 except (ValueError, AttributeError):
                     continue

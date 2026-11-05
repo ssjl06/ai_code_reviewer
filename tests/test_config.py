@@ -16,7 +16,8 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(c["concurrency"], 3)
         self.assertEqual(c["max_turns"], 60)
         self.assertEqual(c["explore_budget"], 50)
-        self.assertEqual(c["deny_limit"], 5)
+        self.assertEqual(c["deny_repeat_limit"], 3)
+        self.assertEqual(c["deny_total_limit"], 20)
         self.assertEqual(c["deadline_s"], 18000)
         self.assertEqual((c["llm_timeout_ms"], c["fallback_timeout_s"], c["chunk_timeout_s"]),
                          (600000, 600, 3600))
@@ -45,6 +46,18 @@ class ConfigTest(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()) as quiet:
             self.assertEqual(load_config(None, {"max_turns": 54})["max_turns"], 54)
         self.assertEqual(quiet.getvalue(), "")
+
+    def test_retired_deny_limit_is_ignored_with_a_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "cfg.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"deny_limit": 9, "concurrency": 2}, f)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                c = load_config(path, {"deny_limit": 7})
+        self.assertNotIn("deny_limit", c)
+        self.assertEqual((c["concurrency"], c["deny_repeat_limit"], c["deny_total_limit"]), (2, 3, 20))
+        self.assertEqual(err.getvalue().count("deny_limit"), 2)
 
     def test_unknown_key_rejected(self):
         with self.assertRaises(KeyError):

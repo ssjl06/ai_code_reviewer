@@ -82,7 +82,8 @@ def build_env(
         "AI_REVIEW_REPO_ROOT": os.path.realpath(repo_root),
         "AI_REVIEW_STATE_DIR": state_dir,
         "AI_REVIEW_EXPLORE_BUDGET": str(cfg["explore_budget"]),
-        "AI_REVIEW_DENY_LIMIT": str(cfg["deny_limit"]),
+        "AI_REVIEW_DENY_REPEAT_LIMIT": str(cfg["deny_repeat_limit"]),
+        "AI_REVIEW_DENY_TOTAL_LIMIT": str(cfg["deny_total_limit"]),
         "AI_REVIEW_KIT": KIT_DIR,
     })
     # The API retry-limit env var is unconfirmed: see docs/runbook.md pending check #2.

@@ -140,6 +140,7 @@ Fixture: `examples/buggy-pr/make_repo.sh /tmp/x` creates a repo with four plante
 | Tool calls printed as text | vLLM missing `--enable-auto-tool-choice` or wrong `--tool-call-parser` |
 | Context length errors | `--max-model-len` too small; lower `chunk_max_tokens` |
 | `✖ ... denied` lines | guard blocked a command; harmless unless the model needed it |
+| `✖ incomplete  denied → ...` / PR "거부된 호출 반복(가드 중단)" | the same call was denied `deny_repeat_limit` times or `deny_total_limit` calls were denied in one session; the guard stopped it and the conclusion step also failed. Read the chunk's `거부된 호출 N건` line for what the model kept trying; denial texts name the allowed tool, so a model that ignores them may need a stronger model or a smaller chunk |
 | `✖ incomplete  budget → ...` / PR "탐색 예산 소진(가드 중단)" | model kept exploring past `explore_budget`; the guard stopped the session and the conclusion step (`--tools ""`, 4 turns) also failed. Raise `explore_budget` or split chunks smaller (`chunk_max_tokens`). Other codes: `max_turns`, `timeout`, `deadline`, `no structured output`, `invalid output` |
 | `✖ incomplete  time → ...` / PR "탐색 시간 소진(가드 중단)" | the chunk's exploring time ran out (`min(5 min, limit / 4)` before its limit), the guard stopped the session and the conclusion step also failed. A chunk that concludes stays `ok`. Check LLM speed, or raise `deadline_s` and the job's `timeout-minutes` together, or lower `chunk_max_tokens` |
 | Review is always `COMMENT` | chunks incomplete (timeout/turn limit) or bot cannot approve its own PR |
