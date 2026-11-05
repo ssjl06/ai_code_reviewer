@@ -114,7 +114,7 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
     if prev is None:
         mode = "full"
     elif not targets and not pending and not (prev or {}).get("waived_now") and not any(
-            p["pre"] in ("resolved", "orphan") for p in previous):
+            p["pre"] in ("resolved", "orphan") or p.get("recheck") for p in previous):
         mode = "unchanged"
     else:
         mode = "incremental"
@@ -129,8 +129,10 @@ def _recheck(previous: List[dict], rev: List[dict], tpaths: Set[str], limit: int
     PR file the run can review is marked `recheck` and `pre="ask"`: the model is asked about it
     with the lines around its region (`ledger.assign_recheck`). A file without new lines
     gets the hunks nearest the issues as targets (none of their lines is in `changed`); a
-    file that is a target already needs no new one. Orphans and issues of files that left the
-    PR are not rechecked."""
+    file that is a target already needs no new one. A file without any hunk (a pure rename)
+    cannot be a target: its issues stay marked, so `assign_recheck` lists them as left out
+    (logged, and pending for the next run). Orphans and issues of files that left the PR are
+    not rechecked."""
     want: Dict[str, List[dict]] = {}
     for p in previous:
         if p["pre"] in ("open", "ask") and (p["id"] in ask or not p["located"]):
@@ -138,11 +140,10 @@ def _recheck(previous: List[dict], rev: List[dict], tpaths: Set[str], limit: int
     out = []
     for f in rev:
         mine = want.get(f["path"], [])
-        if f["path"] not in tpaths:
+        if mine and f["path"] not in tpaths:
             t = near_hunks(f, [p.get("line") or 0 for p in mine], limit)
-            if t is None:
-                continue
-            out.append(t)
+            if t is not None:
+                out.append(t)
         for p in mine:
             p["pre"], p["recheck"] = "ask", True
     return out

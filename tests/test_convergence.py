@@ -239,3 +239,32 @@ class Scenario(IntegrationBase):
         self.assertTrue(any("이슈 %s, " % self.ids["i1"] in p for p in r2.prompts))
         self.assertEqual(r2.issue("i1")["status"], "resolved")
         self.assertEqual((r2.state["recheck_pending"], r2.event), ([], "APPROVE"))
+
+    # a defect in the last line of a file; the fix reverts the file and renames it, so the PR
+    # diff of the file has no hunk to attach a recheck to
+    def rename_after_revert(self, *others):
+        pad = "".join("int pad%d = %d;\n" % (n, n) for n in range(40))
+        self.gh.base = self.add_commit({"src/z.cu": pad + "int ok = 1;\n"})
+        self.gh.head = self.add_commit({"src/z.cu": pad + "int bug = 1;\n"})
+        self.assertEqual(self.go([rule("- src/z.cu\n", [find("src/z.cu", 41)])]).event,
+                         "REQUEST_CHANGES")
+        git(self.R, "mv", "src/z.cu", "src/y.cu")
+        self.push(dict({"src/y.cu": pad + "int ok = 1;\n"}, **dict(others)))
+
+    def assert_pending(self, r):
+        self.assertEqual(r.state["recheck_pending"], [self.ids["i1"]])
+        self.assertEqual((r.issue("i1")["status"], r.event), ("open", "REQUEST_CHANGES"))
+        self.assertIn("다시 확인할 이슈 1건을 이번 실행에 담지 못함", self.stdout)
+
+    def test_a_file_without_hunks_leaves_its_issue_pending_and_logged(self):
+        self.rename_after_revert()
+        first = self.go()
+        self.assert_pending(first)
+        self.assertEqual(first.prompts, [])
+        self.assert_pending(self.go())  # a re-run on the same sha is not `unchanged`
+
+    def test_a_file_without_hunks_is_pending_when_other_files_are_reviewed(self):
+        self.rename_after_revert(("src/other.cu", "int other = 1;\n"))
+        r = self.go([rule(resolve_rechecked=True)])
+        self.assert_pending(r)
+        self.assertEqual(len(r.prompts), 1)
