@@ -3,6 +3,7 @@
   "claude_bin": "claude",
   "chunk_max_tokens": 20000,
   "max_chunks": 40,
+  "recheck_max_chars": 8000,
   "concurrency": 3,
   "max_turns": 60,
   "explore_budget": 50,

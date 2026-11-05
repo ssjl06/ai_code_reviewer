@@ -89,31 +89,31 @@ def _resolve(prev: dict) -> str:
 
 def _previous(results: List[dict], previous: List[dict], chunk_files=None,
               shown=None, skipped=(), truncated=()):
-    """Model reports win over `_resolve`; "resolved" counts only from an ok chunk that holds
-    the file, only when every chunk holding that file is ok (None: chunks hold all files),
-    the file is neither skipped nor truncated, and some chunk holding it showed the whole
-    region (`shown` None: not checked)."""
+    """Model reports win over `_resolve`. With `shown`, a report counts only from a chunk that
+    showed the whole region of the issue (a chunk that did not is ignored, and the issue falls
+    to `_resolve`); None: not checked. "resolved" counts only from an ok chunk that holds the
+    file, only when every chunk holding that file is ok (None: chunks hold all files), and the
+    file is neither skipped nor truncated."""
     status = {r["index"]: r.get("status") for r in results}
     holds = lambda i, path: chunk_files is None or path in chunk_files.get(i, ())
     files = {p["id"]: p["file"] for p in previous}
     spans = {p["id"]: range(p.get("lo", p["line"]), p.get("hi", p["line"]) + 1)
              for p in previous}
 
-    def seen(pid, path):
-        return shown is None or any(
-            holds(i, path) and set(spans[pid]) <= shown.get(i, {}).get(path, set())
-            for i in status)
+    def saw(index, pid, path):
+        return shown is None or set(spans[pid]) <= shown.get(index, {}).get(path, set())
     reported: Dict[str, Tuple[str, Optional[str]]] = {}
     for r in results:
         if r.get("status") not in OK_STATUSES or not r.get("output"):
             continue
         for p in r["output"].get("previous_findings", []):
             path = files.get(p["id"], "")
+            if p["id"] not in spans or not saw(r["index"], p["id"], path):
+                continue
             if p["status"] == "resolved" and not (
                     r["status"] == "ok" and holds(r["index"], path)
                     and all(st == "ok" for i, st in status.items() if holds(i, path))
-                    and path not in skipped and path not in truncated
-                    and p["id"] in spans and seen(p["id"], path)):
+                    and path not in skipped and path not in truncated):
                 continue
             cur = reported.get(p["id"])
             if cur is None or STATUS_RANK[p["status"]] < STATUS_RANK[cur[0]]:

@@ -27,13 +27,15 @@ class ForcePushTest(IntegrationBase):
     def review(self, scenario):
         return self.run_main(scenario, "--repo", self.R, "--pr", "1")
 
-    def test_squash_no_llm_call_nothing_posted(self):
+    def test_squash_rechecks_the_open_issue(self):
+        # no new lines, but the head moved: the open issue is shown to the model again
         new = self.force({})
         self.assertNotEqual(new, self.C1)
         calls = len(self.fake_calls())
         self.assertEqual(self.review("silent"), 0)
-        self.assertEqual((len(self.fake_calls()), len(self.gh.posted)), (calls, 1))
-        self.assertIn("새로 리뷰할 변경 없음", self.stdout)
+        self.assertEqual((len(self.fake_calls()), len(self.gh.posted)), (calls + 1, 2))
+        self.assertIn("다시 확인하기 위한 현재 코드", self.fake_calls()[-1]["stdin"])
+        self.assertEqual(self.gh.posted[-1]["event"], "REQUEST_CHANGES")  # silent: still open
 
     def test_rebase_shift_keeps_block_same_id(self):
         first_id = parse_state(self.first["body"])["issues"][0]["id"]
@@ -67,7 +69,7 @@ class ForcePushTest(IntegrationBase):
         self.assertEqual(self.gh.posted[-1]["event"], "APPROVE")
         self.assertEqual(self.gh.dismissed, [1])
 
-    def test_merge_main_no_review(self):
+    def test_merge_main_rechecks_the_open_issue(self):
         pr_branch = git(self.R, "rev-parse", "--abbrev-ref", "HEAD")
         git(self.R, "checkout", "-q", "-b", "newmain", self.BASE)
         main_tip = self.add_commit({"m.py": "m = 1\n"})
@@ -77,8 +79,8 @@ class ForcePushTest(IntegrationBase):
         self.gh.base = main_tip
         calls = len(self.fake_calls())
         self.assertEqual(self.review("silent"), 0)
-        self.assertEqual((len(self.fake_calls()), len(self.gh.posted)), (calls, 1))
-        self.assertIn("새로 리뷰할 변경 없음", self.stdout)
+        self.assertEqual((len(self.fake_calls()), len(self.gh.posted)), (calls + 1, 2))
+        self.assertNotIn("새로 리뷰할 변경 없음", self.stdout)  # the open issue is rechecked
 
     def test_deletion_reviewed(self):
         self.gh.head = self.add_commit({"README.md": "kept\n"})  # C2 deletes base line "r"

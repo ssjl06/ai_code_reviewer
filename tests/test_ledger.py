@@ -163,6 +163,98 @@ class UniqueIdTest(unittest.TestCase):
         self.assertNotEqual(unique_id(f, {first, second}), second)
 
 
+def chunk(*files, index=0):
+    return {"index": index, "files": list(files), "diff": "", "est_tokens": 1}
+
+
+def prev(id_, path, lo, hi, **kw):
+    e = issue(path, lo, id=id_, hi=hi, pre="ask", located=True, recheck=True)
+    e.update(kw)
+    return e
+
+
+CFG8000 = {"recheck_max_chars": 8000}
+
+
+class AssignRecheckTest(unittest.TestCase):
+    def assign(self, chunks, previous, blobs, cfg=CFG8000):
+        from review.ledger import assign_recheck
+        return assign_recheck(chunks, previous, blobs, cfg)
+
+    def test_recheck_context_has_20_lines_each_side(self):
+        by, left = self.assign([chunk("a.cc")], [prev("i1", "a.cc", 50, 50)],
+                               {"a.cc": ["x"] * 100})
+        self.assertEqual((by[0][0]["start"], by[0][0]["text"].count("\n") + 1, left),
+                         (30, 41, []))
+        self.assertEqual((by[0][0]["id"], by[0][0]["file"], by[0][0]["lo"], by[0][0]["hi"]),
+                         ("i1", "a.cc", 30, 70))
+
+    def test_context_is_clipped_to_the_file_and_the_region_is_kept(self):
+        by, _ = self.assign([chunk("a.cc")], [prev("i1", "a.cc", 3, 8)],
+                            {"a.cc": ["l%d" % n for n in range(1, 31)]})
+        item = by[0][0]
+        self.assertEqual((item["start"], item["hi"]), (1, 28))
+        self.assertEqual(item["text"].split("\n")[:2], ["l1", "l2"])
+        self.assertFalse(item["text"].endswith("\n"))
+
+    def test_recheck_over_budget_is_left_out(self):
+        by, left = self.assign([chunk("a.cc")], [prev("i1", "a.cc", 50, 50)],
+                               {"a.cc": ["x" * 500] * 100})
+        self.assertEqual((by, left), ({}, ["i1"]))
+
+    def test_budget_is_per_chunk_and_shared_by_its_items(self):
+        blobs = {"a.cc": ["x" * 100] * 100}
+        cfg = {"recheck_max_chars": 5000}
+        by, left = self.assign([chunk("a.cc")], [prev("i1", "a.cc", 50, 50),
+                                                 prev("i2", "a.cc", 50, 50)], blobs, cfg)
+        self.assertEqual(([i["id"] for i in by[0]], left), (["i1"], ["i2"]))
+
+    def test_item_goes_in_the_first_chunk_that_holds_the_file(self):
+        by, left = self.assign([chunk("b.cc", index=0), chunk("a.cc", "b.cc", index=1),
+                                chunk("a.cc", index=2)], [prev("i1", "a.cc", 5, 5)],
+                               {"a.cc": ["x"] * 10})
+        self.assertEqual(({k: [i["id"] for i in v] for k, v in by.items()}, left),
+                         ({1: ["i1"]}, []))
+
+    def test_a_file_in_no_chunk_is_left_out(self):
+        by, left = self.assign([chunk("b.cc")], [prev("i1", "a.cc", 5, 5)], {"a.cc": ["x"] * 10})
+        self.assertEqual((by, left), ({}, ["i1"]))
+
+    def test_only_issues_marked_for_recheck_are_items(self):
+        previous = [prev("o1", "a.cc", 5, 5, orphan=True, pre="orphan"),
+                    prev("r1", "a.cc", 5, 5, pre="resolved"),
+                    prev("n1", "a.cc", 5, 5, recheck=False),
+                    prev("g1", "gone.cc", 5, 5)]
+        by, left = self.assign([chunk("a.cc", "gone.cc")], previous, {"a.cc": ["x"] * 10})
+        self.assertEqual((by, left), ({}, []))  # gone.cc has no blob: nothing to show
+
+
+class PendingAfterTest(unittest.TestCase):
+    def test_recheck_in_a_failed_chunk_is_pending(self):
+        from review.ledger import pending_after
+        self.assertEqual(pending_after({0: [{"id": "i1"}]}, ["i2"],
+                                       [{"index": 0, "status": "failed"}]), ["i2", "i1"])
+
+    def test_recheck_in_an_ok_chunk_is_not_pending(self):
+        from review.ledger import pending_after
+        results = [{"index": 0, "status": "ok"}, {"index": 1, "status": "partial"}]
+        self.assertEqual(pending_after({0: [{"id": "a"}], 1: [{"id": "b"}], 2: [{"id": "c"}]},
+                                       [], results), ["b", "c"])
+
+
+class PromptListsTest(unittest.TestCase):
+    def test_open_and_closed_issues_go_to_the_ledger_and_orphans_to_the_orphan_list(self):
+        from review.ledger import prompt_lists
+        previous = [issue("a.cc", 5, id="o1", pre="open"), issue("a.cc", 6, id="o2", pre="ask"),
+                    issue("a.cc", 7, id="r1", pre="resolved"),
+                    issue("a.cc", 8, id="p1", pre="orphan", orphan=True)]
+        closed = [issue("a.cc", 9, id="c1", status="waived"),
+                  issue("gone.cc", 9, id="c2", status="resolved", orphan=True)]
+        ledger, orphans = prompt_lists(previous, closed)
+        self.assertEqual(([i["id"] for i in ledger], [i["id"] for i in orphans]),
+                         (["o1", "o2", "c1"], ["p1", "c2"]))
+
+
 if __name__ == "__main__":
     unittest.main()
 

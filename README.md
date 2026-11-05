@@ -218,6 +218,7 @@ ways:
 | `model` | `deepseek-v4-flash` | model name sent to LiteLLM |
 | `chunk_max_tokens` | 20000 | chunk size (estimated as characters / 3.5) |
 | `max_chunks` | 40 | ceiling on chunks per run, so a large PR is not cut off; in practice `deadline_s` limits how many run, and chunks past it stay unreviewed for the next run |
+| `recheck_max_chars` | 8000 | characters of recheck context per chunk, on top of its diff: the lines around each open issue shown again on every new head. An issue that does not fit is rechecked on the next run |
 | `concurrency` | 3 | parallel `claude` sessions |
 | `max_turns` | 60 | turns per session; raised (with a warning) to at least `explore_budget + 4` |
 | `explore_budget` | 50 | Read/Grep/Glob/Bash calls per session; the first call over it is denied, the next one stops the session and the runner asks for the conclusion |

@@ -89,6 +89,36 @@ class RereportAndTruncTest(unittest.TestCase):
         self.assertTrue(run([res(0, [])])["complete"])
 
 
+class ReporterShownTest(unittest.TestCase):
+    """With `shown`, only a chunk that showed the issue's region can report on the issue."""
+
+    def two_chunks(self, first, second):
+        results = [res(0, [], prev=[("i1", first)]), res(1, [], prev=[("i1", second)])]
+        return run_merge(results, issue("a.cu", 50), chunk_files={0: ["a.cu"], 1: ["a.cu"]},
+                         shown={0: {"a.cu": {1, 2}}, 1: {"a.cu": {49, 50, 51}}})
+
+    def test_resolved_from_a_chunk_that_did_not_show_the_region_is_ignored(self):
+        self.assertEqual(status(self.two_chunks("resolved", "open"), "i1"), "open")
+        out = run_merge([res(0, [], prev=[("i1", "resolved")]), res(1, [])], issue("a.cu", 50),
+                        chunk_files={0: ["a.cu"], 1: ["a.cu"]},
+                        shown={0: {"a.cu": {1, 2}}, 1: {"a.cu": {49, 50, 51}}})
+        self.assertEqual(status(out, "i1"), "open")
+
+    def test_open_from_a_chunk_that_did_not_show_the_region_is_ignored(self):
+        self.assertEqual(status(self.two_chunks("open", "resolved"), "i1"), "resolved")
+
+    def test_unclear_from_a_chunk_that_did_not_show_the_region_is_ignored(self):
+        out = run_merge([res(0, [], prev=[("i1", "unclear")]), res(1, [])], issue("a.cu", 50),
+                        chunk_files={0: ["a.cu"], 1: ["a.cu"]},
+                        shown={0: {"a.cu": {1, 2}}, 1: {"a.cu": {50}}})
+        self.assertEqual(status(out, "i1"), "open")
+
+    def test_open_from_a_chunk_that_showed_the_region_is_kept(self):
+        out = run_merge([res(0, [], prev=[("i1", "unclear")])], issue("a.cu", 50),
+                        shown={0: {"a.cu": {50}}})
+        self.assertEqual(status(out, "i1"), "unclear")
+
+
 if __name__ == "__main__":
     unittest.main()
 

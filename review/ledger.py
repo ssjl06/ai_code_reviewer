@@ -11,6 +11,7 @@ from review.regions import map_region
 CLOSED = ("resolved", "waived")
 NEAR = 3       # a finding this close to an issue's region is the same issue
 SAME_AS = 15   # how far from the region a `same_as` may point
+CONTEXT = 20   # recheck context: lines shown on each side of an issue's region
 
 
 def finding_id(f: dict) -> str:
@@ -136,6 +137,59 @@ def shown_lines(chunks: List[dict], recheck: Dict[int, List[dict]]) -> Dict[int,
             n = len(item["text"].split("\n"))
             files.setdefault(item["file"], set()).update(range(item["start"], item["start"] + n))
     return out
+
+
+def assign_recheck(chunks: List[dict], previous: List[dict], blobs: Dict[str, List[str]],
+                   cfg: dict) -> Tuple[Dict[int, List[dict]], List[str]]:
+    """Give each issue marked `recheck` (and `pre == "ask"`, not an orphan) the head lines of
+    its region with CONTEXT lines on each side, in the first chunk that holds its file.
+    Items are `{"id", "file", "lo", "hi", "start", "text"}` (`lo`..`hi` is the shown range,
+    `start == lo`, `text` has no trailing newline). Each chunk has its own budget of
+    `recheck_max_chars` on top of its diff; an item that does not fit, or whose file is in no
+    chunk, is left out: the second value lists those ids. An issue whose file has no blob
+    cannot be shown and is neither."""
+    budget = int(cfg["recheck_max_chars"])
+    used: Dict[int, int] = {}
+    by_chunk: Dict[int, List[dict]] = {}
+    left: List[str] = []
+    for p in previous:
+        lines = blobs.get(p["file"])
+        if (not p.get("recheck") or p.get("pre") != "ask" or p.get("orphan")
+                or lines is None):
+            continue
+        holder = next((c["index"] for c in chunks if p["file"] in c["files"]), None)
+        lo = max(1, p.get("lo", p["line"]) - CONTEXT)
+        hi = min(len(lines), p.get("hi", p["line"]) + CONTEXT)
+        text = "\n".join(lines[lo - 1:hi])
+        if holder is None or lo > hi or used.get(holder, 0) + len(text) > budget:
+            left.append(p["id"])
+            continue
+        used[holder] = used.get(holder, 0) + len(text)
+        by_chunk.setdefault(holder, []).append(
+            {"id": p["id"], "file": p["file"], "lo": lo, "hi": hi, "start": lo, "text": text})
+    return by_chunk, left
+
+
+def pending_after(recheck: Dict[int, List[dict]], left_out: List[str],
+                  results: List[dict]) -> List[str]:
+    """Ids still to be rechecked: the ones left out, then the ones whose chunk is not `ok`."""
+    status = {r["index"]: r.get("status") for r in results}
+    out = list(left_out)
+    for index in sorted(recheck):
+        if status.get(index) != "ok":
+            out += [i["id"] for i in recheck[index] if i["id"] not in out]
+    return out
+
+
+def prompt_lists(previous: List[dict], closed: List[dict]) -> Tuple[List[dict], List[dict]]:
+    """`(ledger, orphans)` for the reviewer prompt: the open issues of `previous` and the closed
+    ones with a region form the ledger; open and closed orphans form the orphan list (open ones
+    first). An issue of a file that left the PR (`pre == "resolved"`) is in neither."""
+    ledger = [p for p in previous if p.get("pre") not in ("orphan", "resolved")]
+    ledger += [c for c in closed if not c.get("orphan")]
+    orphans = [p for p in previous if p.get("pre") == "orphan"]
+    orphans += [c for c in closed if c.get("orphan")]
+    return ledger, orphans
 
 
 def finish_orphans(prev_out: List[dict], links: List[dict], complete: bool) -> None:

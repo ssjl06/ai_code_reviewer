@@ -1,6 +1,10 @@
+import contextlib
+import io
 import json
 import os
 import unittest
+
+from review import cli
 
 from review.render import parse_state
 from tests.test_integration import BUGGY, FIXED, IntegrationBase
@@ -75,6 +79,72 @@ class IntegrationStateTest(IntegrationBase):
         self.assertEqual(self.gh.reviews[0]["state"], "CHANGES_REQUESTED")
         st = parse_state(self.gh.posted[-1]["body"])
         self.assertEqual((st["complete"], [i["status"] for i in st["issues"]]), (False, ["open"]))
+
+
+    def test_fix_in_another_file_resolves_through_the_recheck_context(self):
+        self.assertEqual(self.run_main("blocking", "--repo", self.R, "--pr", "1"), 0)
+        fid = parse_state(self.gh.posted[-1]["body"])["issues"][0]["id"]
+        self.gh.head = self.add_commit({"src/u.cu": "int other = 2;\n"})  # k.cu untouched
+        self.assertEqual(self.run_main("resolved", "--repo", self.R, "--pr", "1"), 0)
+        prompt = self.fake_calls()[-1]["stdin"]
+        self.assertIn("다시 확인하기 위한 현재 코드", prompt)
+        self.assertIn("src/k.cu", prompt)
+        self.assertIn("2:   return p[1];", prompt)
+        self.assertIn('same_as', prompt)
+        posted = self.gh.posted[-1]
+        self.assertEqual(posted["event"], "APPROVE")
+        st = parse_state(posted["body"])
+        self.assertEqual([(i["id"], i["status"]) for i in st["issues"]], [(fid, "resolved")])
+        self.assertEqual(st["recheck_pending"], [])
+
+    def dry_run_state(self):
+        out_dir = os.path.join(self.tmp, "dry")
+        self.assertEqual(self.run_main("blocking", "--repo", self.R, "--dry-run", "--base",
+                                       self.BASE, "--head", self.C1, "--out-dir", out_dir), 0)
+        with open(os.path.join(out_dir, "review.json"), encoding="utf-8") as f:
+            return out_dir, parse_state(json.load(f)["body"])
+
+    def test_unknown_previous_commit_is_logged_as_weak_tracking(self):
+        out_dir, state = self.dry_run_state()
+        sf = os.path.join(self.tmp, "state.json")
+        with open(sf, "w", encoding="utf-8") as f:
+            json.dump(dict(state, sha="0" * 40), f)
+        C2 = self.add_commit({"src/k.cu": BUGGY + "int z;\n"})
+        self.assertEqual(self.run_main("silent", "--repo", self.R, "--dry-run", "--base",
+                                       self.BASE, "--head", C2, "--state-file", sf,
+                                       "--out-dir", out_dir), 0)
+        self.assertIn("[main] 이전 커밋을 찾을 수 없어 위치 추적이 약해짐", self.stdout)
+
+    def test_known_previous_commit_is_not_logged_as_weak_tracking(self):
+        out_dir, state = self.dry_run_state()
+        sf = os.path.join(self.tmp, "state.json")
+        with open(sf, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        C2 = self.add_commit({"src/k.cu": BUGGY + "int z;\n"})
+        self.assertEqual(self.run_main("silent", "--repo", self.R, "--dry-run", "--base",
+                                       self.BASE, "--head", C2, "--state-file", sf,
+                                       "--out-dir", out_dir), 0)
+        self.assertNotIn("위치 추적이 약해짐", self.stdout)
+        self.assertIn("다시 확인하기 위한 현재 코드", self.fake_calls()[-1]["stdin"])
+
+    def test_pushed_state_carries_recheck_pending_only_for_open_issues(self):
+        review = {"previous": [{"id": "a", "status": "open"}, {"id": "b", "status": "resolved"},
+                               {"id": "c", "status": "unclear"}]}
+        self.assertEqual(cli._pending(review, ["a", "b", "c", "x"]), ["a", "c"])
+
+    def test_each_duplicate_and_link_is_logged(self):
+        review = {"duplicates": [{"file": "a.cc", "line": 7, "dup_of": "i1"}],
+                  "links": [{"id": "i2", "file": "b.cc", "line": 9}]}
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            cli._log_matches(review)
+            cli._log_left_out(["o1", "o2"], ["r1"])
+        text = out.getvalue()
+        self.assertIn("[main] 기존 이슈와 중복되어 생략: a.cc:7 (이슈 i1)", text)
+        self.assertIn("[main] 기존 이슈에 연결: b.cc:9 (이슈 i2)", text)
+        self.assertIn("고아 이슈 2건은 프롬프트 목록에서 제외됨: o1, o2", text)
+        self.assertIn("다시 확인할 이슈 1건을 이번 실행에 담지 못함", text)
+        self.assertIn("r1", text)
 
 
 if __name__ == "__main__":

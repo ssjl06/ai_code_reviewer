@@ -58,7 +58,8 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
                            "prev_seen": {}, "previous": [], "hunk_keys": {}, "prior": {},
                            "prev_hunks": {}, "closed": [], "weak_tracking": False,
                            "dropped_closed": int((prev or {}).get("dropped_closed") or 0)}
-    if prev and prev["sha"] == head and prev["complete"]:
+    pending = list((prev or {}).get("recheck_pending") or [])
+    if prev and prev["sha"] == head and prev["complete"] and not pending:
         return out
     live = {f["path"] for f in pr_files if f["status"] != "D"}
     gone = {f["path"] for f in pr_files if f["status"] == "D"}
@@ -98,10 +99,12 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
     previous = annotate(opened, live, tpaths, gone, lost, weak)
     changed = line_map(targets, "right_lines") if prev is None else {
         p: out["added"][p] | out["deleted"][p] for p in tpaths}
-    targets += _recheck(previous, rev, tpaths, limit)
+    ask = {i["id"] for i in previous} if prev and prev["sha"] != head else set(pending)
+    targets += _recheck(previous, rev, tpaths, limit, ask)
     if prev is None:
         mode = "full"
-    elif not targets and not any(p["pre"] in ("resolved", "orphan") for p in previous):
+    elif not targets and not pending and not any(
+            p["pre"] in ("resolved", "orphan") for p in previous):
         mode = "unchanged"
     else:
         mode = "incremental"
@@ -110,20 +113,28 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
     return out
 
 
-def _recheck(previous: List[dict], rev: List[dict], tpaths: Set[str], limit: int) -> List[dict]:
-    """A lost (or anchor-moved) previous finding in a PR file without new lines: the hunks
-    nearest its line become targets (none of their lines is in `changed`); the model is asked."""
-    lost: Dict[str, List[dict]] = {}
+def _recheck(previous: List[dict], rev: List[dict], tpaths: Set[str], limit: int,
+             ask: Set[str]) -> List[dict]:
+    """Every open issue in `ask`, and every one that could not be located (weak tracking), in a
+    PR file the run can review is marked `recheck` and `pre="ask"`: the model is asked about it
+    with the lines around its region (`ledger.assign_recheck`). A file without new lines
+    gets the hunks nearest the issues as targets (none of their lines is in `changed`); a
+    file that is a target already needs no new one. Orphans and issues of files that left the
+    PR are not rechecked."""
+    want: Dict[str, List[dict]] = {}
     for p in previous:
-        if p["pre"] == "open" and not p["located"] and p["file"] not in tpaths:
-            lost.setdefault(p["file"], []).append(p)
+        if p["pre"] in ("open", "ask") and (p["id"] in ask or not p["located"]):
+            want.setdefault(p["file"], []).append(p)
     out = []
     for f in rev:
-        t = near_hunks(f, [p.get("line") or 0 for p in lost.get(f["path"], [])], limit)
-        if t is not None:
+        mine = want.get(f["path"], [])
+        if f["path"] not in tpaths:
+            t = near_hunks(f, [p.get("line") or 0 for p in mine], limit)
+            if t is None:
+                continue
             out.append(t)
-            for p in lost[f["path"]]:
-                p["pre"] = "ask"
+        for p in mine:
+            p["pre"], p["recheck"] = "ask", True
     return out
 
 

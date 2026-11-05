@@ -95,8 +95,10 @@ class RenameChainTest(unittest.TestCase):
         head = self.r.commit({})
         s, _, rv, _ = review(self.r, self.base, head, self.st)
         self._assert_open(s["previous"])
-        # same content already reviewed: no new review, the change request stands
-        self.assertEqual((s["mode"], rv), ("unchanged", None))
+        # no new lines, but the head moved: the open issue is rechecked, and a silent model
+        # leaves a located issue open, so the change request stands
+        self.assertEqual((s["mode"], rv["event"]), ("incremental", "REQUEST_CHANGES"))
+        self.assertEqual([p["recheck"] for p in s["previous"]], [True])
 
     def test_rename_with_other_change_requests_changes(self):
         head = self.r.commit({"a.py": "a = 2\n"})
@@ -129,8 +131,8 @@ class RenameChainTest(unittest.TestCase):
         r.git("mv", "old.py", "new.py")
         head = r.commit({})
         weak = dict(st, sha="0" * 40)
-        s, _, rv, _ = review(r, base, head, weak)  # a pure rename: nothing to review, stands
-        self.assertEqual((s["mode"], rv), ("unchanged", None))
+        s, _, rv, _ = review(r, base, head, weak)  # a pure rename: rechecked, the issue stands
+        self.assertEqual((s["mode"], rv["event"]), ("incremental", "REQUEST_CHANGES"))
         head = r.commit({"a.py": "a = 2\n"})
         s, _, rv, nxt = review(r, base, head, weak)
         self.assertTrue(s["weak_tracking"])

@@ -89,5 +89,14 @@ class SchemaAgentTest(unittest.TestCase):
             self.assertIn(must, text)
 
 
+    def test_agent_incremental_rules_cover_the_ledger_and_recheck(self):
+        with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        rules = text.split("## 증분 리뷰 규칙")[1].split("\n## ")[0]
+        for must in ["same_as", "이슈 목록", "코드가 사라져 자리를 잃은 이슈", "다시 확인하기 위한 현재 코드",
+                     "새 지적의 대상이 아니다", "resolved", "다시 지적하지 않는다"]:
+            self.assertIn(must, rules)
+
+
 if __name__ == "__main__":
     unittest.main()
