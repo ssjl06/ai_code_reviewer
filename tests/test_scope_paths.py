@@ -105,16 +105,53 @@ class RenameChainTest(unittest.TestCase):
         self.assertEqual(rv["event"], "REQUEST_CHANGES")
         self.assertEqual([f["file"] for f in st["issues"]], ["final.py"])
 
-    def test_prev_sha_unavailable_cannot_follow_a_rename(self):
+    def test_prev_sha_unavailable_cannot_follow_a_rename_chain(self):
         # was test_prev_sha_unavailable_uses_anchor: the anchor search used to find the code in
-        # final.py and ask the model. Without the previous head the fallback only looks in the
-        # issue's own file, so a renamed file's issue is resolved (weak tracking, said in the log)
+        # final.py. Without the previous head only the PR's own renames (old.py -> final.py)
+        # map a path, so middle.py is neither mapped nor in the PR. Left-the-PR cannot be told
+        # from renamed here, so the issue is not resolved: it is unclear, a COMMENT.
         head = self.r.commit({})
         st = dict(self.st, sha="0" * 40)
         s, _, rv, nxt = review(self.r, self.base, head, st)
         self.assertTrue(s["weak_tracking"])
-        self.assertEqual([(p["file"], p["pre"]) for p in s["previous"]], [("middle.py", "resolved")])
-        self.assertEqual([i["status"] for i in nxt["issues"]], ["resolved"])
+        self.assertEqual([(p["file"], p["pre"], p["located"]) for p in s["previous"]],
+                         [("middle.py", "ask", False)])
+        self.assertEqual((rv["event"], rv["unclear_blocking"]), ("COMMENT", True))
+        self.assertEqual([(i["file"], i["status"]) for i in nxt["issues"]],
+                         [("middle.py", "open")])
+
+    def test_prev_sha_unavailable_follows_a_plain_rename(self):
+        r = Repo(self)
+        base = r.commit({"old.py": PY, "a.py": "a = 1\n"})
+        head = r.commit({"old.py": PY.replace("v5 = 5", "v5 = eval(x)")})
+        _, _, rv, st = review(r, base, head, None, finds=[bad("old.py", 6)])
+        self.assertEqual(rv["event"], "REQUEST_CHANGES")
+        r.git("mv", "old.py", "new.py")
+        head = r.commit({})
+        weak = dict(st, sha="0" * 40)
+        s, _, rv, _ = review(r, base, head, weak)  # a pure rename: nothing to review, stands
+        self.assertEqual((s["mode"], rv), ("unchanged", None))
+        head = r.commit({"a.py": "a = 2\n"})
+        s, _, rv, nxt = review(r, base, head, weak)
+        self.assertTrue(s["weak_tracking"])
+        self.assertEqual([(p["file"], p["line"], p["located"]) for p in s["previous"]],
+                         [("new.py", 6, True)])
+        self.assertEqual(rv["event"], "REQUEST_CHANGES")
+        self.assertEqual([(i["file"], i["line"], i["status"]) for i in nxt["issues"]],
+                         [("new.py", 6, "open")])
+
+    def test_known_prev_sha_still_resolves_a_file_that_left_the_pr(self):
+        r = Repo(self)
+        base = r.commit({"k.cu": K, "a.py": PY})
+        head = r.commit({"k.cu": K.replace("int k5 = 5;", "int k5 = *null;"), "a.py": PY + "w = 1\n"})
+        _, _, rv, st = review(r, base, head, None, finds=[bad("k.cu", 6)])
+        r.git("checkout", "-q", base, "--", "k.cu")
+        head = r.commit({})
+        s, _, rv, _ = review(r, base, head, st)
+        self.assertFalse(s["weak_tracking"])
+        self.assertEqual([(p["pre"], p["note"]) for p in s["previous"]],
+                         [("resolved", "파일이 PR에서 빠짐")])
+        self.assertEqual(rv["event"], "APPROVE")
 
 
 if __name__ == "__main__":

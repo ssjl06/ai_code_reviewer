@@ -50,6 +50,13 @@ class AnnotateTest(unittest.TestCase):
         r = annotate([E(orphan=True)], {"src/k.cu"}, {"src/k.cu"})[0]
         self.assertEqual((r["pre"], r["located"]), ("orphan", True))
 
+    def test_weak_tracking_does_not_resolve_a_missing_file(self):
+        # without the previous head a left-the-PR file cannot be told from a renamed one
+        r = annotate([E()], set(), set(), {"src/k.cu"}, weak=True)[0]
+        self.assertEqual((r["pre"], r["located"], r.get("note")), ("ask", False, None))
+        r = annotate([E()], {"src/k.cu"}, set(), weak=True)[0]
+        self.assertEqual((r["pre"], r["located"]), ("open", True))
+
     def test_orphan_whose_file_left_the_pr_is_resolved(self):
         r = annotate([E(orphan=True)], set(), set())[0]
         # resolved with the file, so a `same_as` link must not swallow a finding for it

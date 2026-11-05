@@ -31,13 +31,17 @@ def _path_map(repo: str, prev: Optional[dict], head: str, pr_files: List[dict],
     return out
 
 
-def _advance(repo: str, head: str, prev: Optional[dict], issues: List[dict]):
+def _advance(repo: str, head: str, prev: Optional[dict], issues: List[dict],
+             names: Dict[str, str]):
     """The ledger issues moved to `head`: `(issues, weak)`. `weak` is True when the previous
-    head is not available locally, so the issues were located by anchor instead of by diff."""
+    head is not available locally, so the issues were located by anchor instead of by diff;
+    their files are first mapped through `names` (the renames of the PR itself)."""
     if prev is None:
         return [], False
     text = diff_u0(repo, prev["sha"], head)
     u0 = None if text is None else parse_u0(text)
+    if u0 is None:
+        issues = [dict(i, file=names.get(i["file"], i["file"])) for i in issues]
     pre = read_blobs(repo, head, sorted({i["file"] for i in issues})) if u0 is None else {}
     moved, weak = advance(issues, u0, pre)
     return moved, weak
@@ -61,7 +65,7 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
     rev = [f for f in pr_files if reviewable(f, cfg)]
     stored = (prev or {}).get("issues") or []
     names = _path_map(repo, prev, head, pr_files, stored)
-    moved, weak = _advance(repo, head, prev, stored)
+    moved, weak = _advance(repo, head, prev, stored, names)
     opened = [i for i in moved if i["status"] not in CLOSED]
     closed = [dict(i, orphan=True) if i["file"] not in live else i
               for i in moved if i["status"] in CLOSED]
@@ -91,7 +95,7 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
     tpaths = {t["path"] for t in targets}
     lost = {i["id"] for i in opened if weak and not i["orphan"]
             and _closest(blobs.get(i["file"], []), i.get("anchor") or "", i["line"]) is None}
-    previous = annotate(opened, live, tpaths, gone, lost)
+    previous = annotate(opened, live, tpaths, gone, lost, weak)
     changed = line_map(targets, "right_lines") if prev is None else {
         p: out["added"][p] | out["deleted"][p] for p in tpaths}
     targets += _recheck(previous, rev, tpaths, limit)
