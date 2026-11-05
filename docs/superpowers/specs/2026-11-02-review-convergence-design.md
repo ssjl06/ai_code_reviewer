@@ -1,6 +1,6 @@
 # Review Convergence: Issue Ledger
 
-Status: draft for review, rev 3 (after two Codex adversarial reviews). Extends
+Status: draft for review, rev 4 (after three Codex adversarial reviews). Extends
 `2026-10-18-ai-code-review-design.md` (state marker, sections 6 and 8).
 
 ## Problem
@@ -45,11 +45,18 @@ line shift lost the issue. Rev 2 tracks position through git instead.
   The mapped region is stored, so it is followed across any number of pushes.
 - Moves (rev 3): `-M` follows file renames only; code moved inside or across files shows up
   as a deletion hunk plus an insertion hunk elsewhere. When an issue's whole region falls in
-  deleted lines, before mapping it to the deletion point, compare the deleted lines with every
-  insertion hunk of the same diff (any file), after normalizing whitespace and identifiers. The
-  best insertion hunk with a similarity of at least 0.6 receives the issue (id kept, region
-  mapped to the corresponding lines). Without such a hunk the issue is an orphan: its code is
-  gone, so a `same_as` naming it is honored anywhere in the PR (see below).
+  deleted lines, before mapping it to the deletion point, compare the whole deletion hunk with
+  every insertion hunk of the same diff (any file), after normalizing whitespace and
+  identifiers. An insertion hunk receives the issue (id kept, region mapped to the
+  corresponding lines) only when all of these hold (rev 4):
+  - both hunks have at least 5 non-blank lines, because a single statement such as
+    `free(cache);` also matches an unrelated `free(shared);` once identifiers are normalized;
+  - the similarity is at least 0.6;
+  - at least 2 lines match with identifiers kept, so the hunks are not only the same shape;
+  - it is the only candidate: the next best is at least 0.1 lower.
+  Otherwise the move is uncertain and the status does not follow. The issue is an orphan: its
+  code is gone, so a `same_as` naming it is honored anywhere in the PR (see below). Only the
+  model's explicit link can attach a finding to an orphan, and the log lists each such link.
 - A new finding matches an issue when it is in the same file and its line is within 3 lines
   of the issue's region. A finding farther away is a separate issue, however similar its
   text or code (Codex finding 1).
@@ -80,6 +87,20 @@ line shift lost the issue. Rev 2 tracks position through git instead.
   - every chunk that holds the file is `ok` (as today in `aggregate._previous`);
   - the issue's region lies inside the lines shown to the model in one of those chunks.
   An issue whose file left the PR or was deleted is still resolved automatically, as today.
+- Recheck (rev 4): a fix can leave the flagged line untouched, for example a null check added
+  above it or a change in a caller. The incremental scope would then never show the region,
+  and the rule above would keep a fixed issue open forever. So on every run whose head differs
+  from the previous state's sha, every open issue is rechecked, whether or not its file has
+  new lines:
+  - the issue's file becomes a target, with the hunks nearest the region as `_recheck` does
+    today for lost findings, and the chunk's prompt carries the head lines of the region
+    with 20 lines on each side, marked as recheck context;
+  - these lines count as shown for closure, but they are not added to `changed`, so new
+    findings there are still dropped ("incremental reviews flag only newly changed lines");
+  - recheck context counts toward the chunk size. An issue left out because of size, or
+    whose chunk is not `ok`, goes into the state's `recheck_pending` list of ids. A state with
+    a non-empty list never stops early as `unchanged` on the same sha. The list does not
+    change the verdict: an open blocking issue still blocks.
 - A new finding that matches an open issue is merged into it (no new comment). One that
   matches a closed issue is dropped. The body shows "기존 이슈와 중복되어 생략 n건"; the
   log lists each one.
@@ -113,6 +134,7 @@ line shift lost the issue. Rev 2 tracks position through git instead.
 - Marker v3. Issue records are split into identity and display:
   - identity, which is always kept: id, file, region, status, severity, blocking, anchor.
     Closed issues are stored per file in a compact form, about 20 characters each.
+    `recheck_pending` is identity data too.
   - display, which can be dropped: title and description excerpt.
 - `fit_state` order when over budget: compact seen into hashes (as today), drop seen and
   seen hunks (costs a re-review, not correctness), drop display text of closed issues, then
@@ -161,8 +183,18 @@ Regression tests for the second Codex review (rev 3):
 - an orphan issue (code deleted, no similar insertion): `same_as` far from the old region is
   honored; a `same_as` beyond 15 lines for a non-orphan issue is not.
 
+Regression tests for the third Codex review (rev 4):
+
+- a null check added above an open issue, with the flagged line unchanged: the region is shown
+  as recheck context, `resolved` is accepted, and a new finding on a recheck line is dropped;
+- a fix in another file, with no new lines in the issue's file: the issue is still rechecked;
+- recheck context that does not fit: the id is in `recheck_pending`, the verdict still blocks,
+  and a same-sha re-run is not `unchanged`;
+- a waived `free(cache);` deleted and `free(shared);` added in another file: the waiver does not
+  move, and a new finding on the new line is kept;
+- two similar insertion hunks within 0.1 of each other: the status does not move.
+
 ## Order
 
-Land the pending branches first (`fix/korean-output`, `chore/max-chunks-ceiling`,
-`fix/budget-stop`). This work rewrites `aggregate.py`, `prompt.py` and the state code they
-also touch.
+PR #5 has landed the earlier pending branches. This work rewrites `aggregate.py`, `prompt.py`,
+`scope.py` and the state code.
