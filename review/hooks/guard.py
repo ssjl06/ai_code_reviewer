@@ -3,6 +3,7 @@
 Self-contained (stdlib only); run as `python3 -I review/hooks/guard.py` with hook JSON on stdin.
 """
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -54,6 +55,30 @@ def _operand_ok(tok):
     return ".." not in re.split(r"[/:]", tok)
 
 
+def _deny(what, hint):
+    """Rule-denial text for the model: not allowed, budget not charged, what to do instead."""
+    return ("%s 쓸 수 없다. 탐색 예산은 차감되지 않았다. %s 같은 호출은 다시 시도하지 마라." % (what, hint))
+
+
+_OUTSIDE_HINT = "저장소 밖의 파일은 읽을 수 없다. 저장소 안의 파일을 Read, Grep, Glob으로 보며 리뷰를 계속하라."
+_NO_RUN_HINT = ("빌드, 실행, 테스트는 할 수 없고 필요하지도 않다. Read, Grep, Glob과 읽기 전용 git으로 "
+                "코드를 읽고 판단하며 리뷰를 계속하라.")
+_TOOL_HINTS = (
+    ("cat head tail sed awk less more wc", "파일 읽기는 Read를 쓰고 리뷰를 계속하라."),
+    ("ls find tree", "파일 찾기는 Glob을 쓰고 리뷰를 계속하라."),
+    ("grep rg ag", "내용 검색은 Grep을 쓰고 리뷰를 계속하라."),
+)
+
+
+def _first_word_hint(command):
+    words = command.split()
+    first = words[0] if words else ""
+    for names, hint in _TOOL_HINTS:
+        if first in names.split():
+            return hint
+    return None
+
+
 def check_path(path, root):
     """Deny reason if `path` resolves (symlinks included) outside `root`, else None."""
     if path is None:
@@ -67,34 +92,46 @@ def check_path(path, root):
         inside = os.path.commonpath([real, real_root]) == real_root
     except ValueError:
         inside = False
-    return None if inside else "path outside repo: %s" % path
+    return None if inside else _deny("이 호출은", _OUTSIDE_HINT)
 
 
 def check_glob_pattern(pattern):
     if "{" in pattern or pattern.startswith(("/", "~")) or ".." in re.split(r"[\\/]", pattern):
-        return "glob pattern outside repo: %s" % pattern
+        return _deny("이 패턴은", _OUTSIDE_HINT)
     return None
 
 
 def check_bash(command):
+    words = command.split()
+    is_git = len(words) > 0 and words[0] == "git"
+    tool_hint = _first_word_hint(command)
     if any(c in _SHELL_META for c in command):
-        return "shell metacharacters not allowed"
+        if tool_hint:
+            return _deny("이 명령은", tool_hint)
+        if is_git:
+            return _deny("이 명령은", "명령은 한 번에 하나만, 파이프나 리다이렉트 없이 쓰고 리뷰를 계속하라.")
+        return _deny("이 명령은", _NO_RUN_HINT)
     try:
         tokens = shlex.split(command)
     except ValueError:
-        return "unparseable command"
+        if tool_hint:
+            return _deny("이 명령은", tool_hint)
+        return _deny("이 명령은", "따옴표를 맞춘 단순한 명령 하나로 쓰고 리뷰를 계속하라." if is_git else _NO_RUN_HINT)
     if len(tokens) < 2 or tokens[0] != "git" or tokens[1] not in GIT_SUBCOMMANDS:
-        return ("아무것도 실행할 수 없다. 이 리뷰는 코드를 읽기만 한다. 허용 도구는 Read, Grep, Glob과 "
-                "git %s뿐이다. 더 시도하지 말고 지금까지 읽은 내용으로 결론을 내라."
-                % "/".join(sorted(GIT_SUBCOMMANDS)))
+        if tool_hint:
+            return _deny("이 명령은", tool_hint)
+        if tokens[:1] == ["git"]:
+            return _deny("이 git 명령은", "git은 %s만 쓸 수 있다. 리뷰를 계속하라."
+                         % "/".join(sorted(GIT_SUBCOMMANDS)))
+        return _deny("이 명령은", _NO_RUN_HINT)
     for t in tokens[2:]:
         if t == "--":
             continue
         if t.startswith("-"):
             if not _option_ok(tokens[1], t):
-                return "git option not allowed: %s" % t
+                return _deny("git 옵션 %s은(는)" % t, "그 옵션을 빼고 리뷰를 계속하라.")
         elif not _operand_ok(t):
-            return "path outside repo: %s" % t
+            return _deny("이 명령은", _OUTSIDE_HINT)
     return None
 
 
@@ -117,10 +154,42 @@ def _bump(prefix, session_id, state_dir):
     return count
 
 
-def check_denials(reason, session_id, state_dir, limit):
-    """Count one rule denial for the session: `reason` up to `limit` denials, then
-    DENY_STOP_REASON (and DENY_STOP_FILE)."""
-    if _bump("denied", session_id, state_dir) <= limit:
+def _call_key(event):
+    """Short hash of the call's identity: tool name + tool input as canonical JSON, with the
+    whitespace of a Bash command collapsed."""
+    inp = event.get("tool_input")
+    if not isinstance(inp, dict):
+        inp = {}
+    if isinstance(inp.get("command"), str):
+        inp = dict(inp, command=" ".join(inp["command"].split()))
+    blob = json.dumps({"tool": event.get("tool_name"), "input": inp}, sort_keys=True,
+                      ensure_ascii=False, default=str)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def check_denials(reason, event, state_dir, repeat_limit, total_limit):
+    """Count one rule denial for the session: `reason` until the same call has been denied
+    `repeat_limit` times or `total_limit` denials of any kind have happened, then
+    DENY_STOP_REASON (and DENY_STOP_FILE) for that and every later denial."""
+    key = _call_key(event)
+    os.makedirs(state_dir, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", event.get("session_id") or "unknown")
+    with open(os.path.join(state_dir, "denied-%s.json" % safe), "a+") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.seek(0)
+        raw = f.read()
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+            total = int(data["count"])
+            seen = {str(k): int(v) for k, v in data["seen"].items()}
+        except (ValueError, KeyError, TypeError, AttributeError):
+            total, seen = 0, {}
+        total += 1
+        seen[key] = seen.get(key, 0) + 1
+        f.seek(0)
+        f.truncate()
+        f.write(json.dumps({"count": total, "seen": seen}))
+    if seen[key] < repeat_limit and total <= total_limit:
         return reason
     open(os.path.join(state_dir, DENY_STOP_FILE), "a").close()
     return DENY_STOP_REASON
@@ -173,8 +242,9 @@ def decide(event, env):
     else:
         reason = check_bash(inp.get("command") or "")
     if reason:
-        limit = int(env.get("AI_REVIEW_DENY_LIMIT", "5"))
-        return check_denials(reason, event.get("session_id", ""), env["AI_REVIEW_STATE_DIR"], limit)
+        repeat = int(env.get("AI_REVIEW_DENY_REPEAT_LIMIT", "3"))
+        total = int(env.get("AI_REVIEW_DENY_TOTAL_LIMIT", "20"))
+        return check_denials(reason, event, env["AI_REVIEW_STATE_DIR"], repeat, total)
     budget = int(env.get("AI_REVIEW_EXPLORE_BUDGET", "6"))
     return check_budget(event.get("session_id", ""), env["AI_REVIEW_STATE_DIR"], budget)
 

@@ -43,7 +43,7 @@ class RunnerTest(unittest.TestCase):
         d = tempfile.mkdtemp(dir=self.tmp.name)
         binp, self.log = make_wrapper(d, scn, resume)
         return {"claude_bin": binp, "chunk_timeout_s": 2, "fallback_timeout_s": 2, "max_turns": 10,
-                "llm_timeout_ms": 1000, "bash_timeout_ms": 1000, "explore_budget": 6, "deny_limit": 5,
+                "llm_timeout_ms": 1000, "bash_timeout_ms": 1000, "explore_budget": 6, "deny_repeat_limit": 3, "deny_total_limit": 20,
                 "model": "m", "concurrency": 1, "deadline_s": 1000}
 
     def run_scn(self, scn, resume="ok", deadline=None, out=None, timeout_s=None):

@@ -30,11 +30,13 @@ class TmpCase(unittest.TestCase):
         os.makedirs(self.state)
         os.symlink("/etc/hosts", os.path.join(self.root, "link"))
 
-    def env(self, budget=6, deny_limit=None):
+    def env(self, budget=6, deny_repeat=None, deny_total=None):
         env = {"AI_REVIEW_REPO_ROOT": self.root, "AI_REVIEW_STATE_DIR": self.state,
                "AI_REVIEW_EXPLORE_BUDGET": str(budget), "PATH": os.environ.get("PATH", "")}
-        if deny_limit is not None:
-            env["AI_REVIEW_DENY_LIMIT"] = str(deny_limit)
+        if deny_repeat is not None:
+            env["AI_REVIEW_DENY_REPEAT_LIMIT"] = str(deny_repeat)
+        if deny_total is not None:
+            env["AI_REVIEW_DENY_TOTAL_LIMIT"] = str(deny_total)
         return env
 
 
@@ -47,7 +49,7 @@ class PathTest(TmpCase):
     def test_outside_denied(self):
         for p in ["/etc/hosts", os.path.join(self.root, "../x"), "~/.ssh/id_rsa",
                   os.path.join(self.root, "link")]:
-            self.assertIn("outside repo", check_path(p, self.root))
+            self.assertIn("저장소 밖", check_path(p, self.root))
 
     def test_glob_pattern(self):
         self.assertIsNone(check_glob_pattern("src/**/*.cu"))
@@ -107,7 +109,7 @@ class DecideTest(TmpCase):
     def test_read_outside_denied_before_budget(self):
         r = decide({"session_id": "s", "tool_name": "Read",
                     "tool_input": {"file_path": "/etc/hosts"}}, self.env(budget=6))
-        self.assertIn("outside repo", r)
+        self.assertIn("저장소 밖", r)
         self.assertFalse(os.path.exists(os.path.join(self.state, "budget-s.json")))
 
     def test_dispatch_grep_glob_bash_and_budget(self):
@@ -121,49 +123,88 @@ class DecideTest(TmpCase):
         self.assertIsNone(decide(bash, env))
 
 
+def _bash(cmd, sid="s"):
+    return {"session_id": sid, "tool_name": "Bash", "tool_input": {"command": cmd}}
+
+
 class DenyLimitTest(TmpCase):
-    CAT = {"session_id": "s", "tool_name": "Bash", "tool_input": {"command": "cat a.c"}}
+    CAT = _bash("cat a.c")
 
     def marker(self):
         return os.path.exists(os.path.join(self.state, DENY_STOP_FILE))
 
-    def test_denials_within_limit_return_rule_reason(self):
-        env = self.env(deny_limit=2)
+    def test_two_identical_denials_are_not_a_stop_third_is(self):
+        env = self.env()
         for _ in range(2):
             self.assertEqual(decide(self.CAT, env), check_bash("cat a.c"))
         self.assertFalse(self.marker())
-
-    def test_denial_over_limit_stops(self):
-        env = self.env(deny_limit=2)
-        for _ in range(2):
-            decide(self.CAT, env)
         self.assertEqual(decide(self.CAT, env), DENY_STOP_REASON)
         self.assertEqual(decide(self.CAT, env), DENY_STOP_REASON)
         self.assertTrue(self.marker())
 
-    def test_default_limit_is_five(self):
+    def test_whitespace_variants_are_identical(self):
         env = self.env()
-        for _ in range(5):
-            self.assertNotEqual(decide(self.CAT, env), DENY_STOP_REASON)
-        self.assertEqual(decide(self.CAT, env), DENY_STOP_REASON)
+        for c in ["cat a.c", "cat   a.c"]:
+            self.assertNotEqual(decide(_bash(c), env), DENY_STOP_REASON)
+        self.assertEqual(decide(_bash(" cat a.c\t"), env), DENY_STOP_REASON)
 
-    def test_counted_per_session_and_answer_tool_exempt(self):
-        env = self.env(deny_limit=0)
-        answer = {"session_id": "s", "tool_name": "StructuredOutput", "tool_input": {}}
-        self.assertIsNone(decide(answer, env))
-        self.assertEqual(decide(self.CAT, env), DENY_STOP_REASON)
-        self.assertEqual(decide(dict(self.CAT, session_id="t"), env), DENY_STOP_REASON)
-        self.assertIsNone(decide(answer, env))
-
-    def test_allowed_calls_not_counted(self):
-        env = self.env(deny_limit=1)
-        ok = {"session_id": "s", "tool_name": "Read", "tool_input": {"file_path": "src/a.c"}}
-        for _ in range(3):
-            self.assertIsNone(decide(ok, env))
+    def test_different_inputs_and_tools_are_different_calls(self):
+        env = self.env()
+        read = {"session_id": "s", "tool_name": "Read", "tool_input": {"file_path": "/etc/passwd"}}
+        for call in [self.CAT, read, _bash("cat b.c")] * 2:
+            self.assertNotEqual(decide(call, env), DENY_STOP_REASON)
         self.assertFalse(self.marker())
 
+    def test_twenty_different_denials_do_not_stop_the_21st_does(self):
+        env = self.env()
+        for i in range(20):
+            self.assertNotEqual(decide(_bash("cat f%d.c" % i), env), DENY_STOP_REASON, i)
+        self.assertFalse(self.marker())
+        self.assertEqual(decide(_bash("cat f20.c"), env), DENY_STOP_REASON)
+        self.assertTrue(self.marker())
+
+    def test_limits_from_env(self):
+        env = self.env(deny_repeat=2)
+        self.assertNotEqual(decide(self.CAT, env), DENY_STOP_REASON)
+        self.assertEqual(decide(self.CAT, env), DENY_STOP_REASON)
+        env = self.env(deny_total=1)
+        decide(_bash("cat a", "u"), env)
+        self.assertEqual(decide(_bash("cat b", "u"), env), DENY_STOP_REASON)
+
+    def test_sessions_do_not_share_counters(self):
+        env = self.env()
+        for _ in range(2):
+            decide(self.CAT, env)
+        self.assertNotEqual(decide(dict(self.CAT, session_id="t"), env), DENY_STOP_REASON)
+        self.assertEqual(decide(self.CAT, env), DENY_STOP_REASON)
+
+    def test_answer_tool_exempt_and_allowed_calls_not_counted(self):
+        env = self.env(deny_total=0)
+        answer = {"session_id": "s", "tool_name": "StructuredOutput", "tool_input": {}}
+        ok = {"session_id": "s", "tool_name": "Read", "tool_input": {"file_path": "src/a.c"}}
+        self.assertIsNone(decide(answer, env))
+        self.assertIsNone(decide(ok, env))
+        self.assertFalse(self.marker())
+        self.assertEqual(decide(self.CAT, env), DENY_STOP_REASON)
+        self.assertIsNone(decide(answer, env))
+
+    def test_denials_do_not_charge_the_budget(self):
+        env = self.env(budget=3)
+        for i in range(10):
+            decide(_bash("cat f%d" % i), env)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "budget-s.json")))
+        ok = {"session_id": "s", "tool_name": "Read", "tool_input": {"file_path": "src/a.c"}}
+        self.assertEqual([decide(ok, env) for _ in range(3)], [None] * 3)
+        self.assertEqual(decide(ok, env), BUDGET_REASON)
+
+    def test_counter_file_stays_small(self):
+        env = self.env()
+        for i in range(20):
+            decide(_bash("cat " + "x" * 500 + str(i)), env)
+        self.assertLess(os.path.getsize(os.path.join(self.state, "denied-s.json")), 2000)
+
     def test_stop_output_and_audit(self):
-        env = dict(self.env(deny_limit=0), AI_REVIEW_STATE_DIR=self.state)
+        env = dict(self.env(deny_total=0), AI_REVIEW_STATE_DIR=self.state)
         p = subprocess.run([sys.executable, "-I", GUARD], input=json.dumps(self.CAT),
                            capture_output=True, text=True, env=env)
         out = json.loads(p.stdout)
@@ -172,13 +213,47 @@ class DenyLimitTest(TmpCase):
         with open(os.path.join(self.state, "guard-audit.jsonl")) as f:
             self.assertEqual(json.loads(f.readline())["decision"], "stop")
 
-    def test_denial_text_says_nothing_runs(self):
-        for c in ["cat a.c", "make", "git push", "ls"]:
-            r = check_bash(c)
-            self.assertIn("실행할 수 없", r)
-            self.assertIn("Read, Grep, Glob", r)
-            self.assertIn("결론", r)
-        self.assertIn("metacharacters", check_bash("git log | sh"))
+
+class DenialGuidanceTest(TmpCase):
+    def calls(self):
+        yield _bash("cat x"), ["Read"]
+        yield _bash("cat a | head"), ["Read"]
+        yield _bash("ls"), ["Glob"]
+        yield _bash("find . -name x"), ["Glob"]
+        yield _bash("rg foo"), ["Grep"]
+        yield _bash("make"), ["Read", "Grep", "Glob"]
+        yield _bash("python3 x.py"), ["Read", "Grep", "Glob"]
+        yield _bash("git log | head"), ["파이프"]
+        yield _bash("git push"), ["diff", "log", "ls-files"]
+        yield _bash("git log --badflag"), ["--badflag"]
+        yield {"session_id": "s", "tool_name": "Read",
+               "tool_input": {"file_path": "/etc/passwd"}}, ["Read", "저장소 밖"]
+        yield {"session_id": "s", "tool_name": "Glob", "tool_input": {"pattern": "../x"}}, ["Glob", "저장소 밖"]
+
+    def test_hints(self):
+        for call, words in self.calls():
+            r = decide(call, self.env())
+            self.assertIsNotNone(r, call)
+            self.assertNotEqual(r, DENY_STOP_REASON)
+            for w in words:
+                self.assertIn(w, r, call)
+            self.assertIn("예산", r, call)
+            self.assertIn("차감되지 않았다", r, call)
+            self.assertIn("다시 시도하지 마라", r, call)
+            self.assertIn("계속", r, call)
+            self.assertNotIn("결론", r, call)
+            self.assertNotIn("최종", r, call)
+
+    def test_outside_texts_do_not_suggest_reaching_out(self):
+        for r in [check_path("/etc/passwd", self.root), check_glob_pattern("../x"),
+                  check_bash("git show a:../x")]:
+            self.assertIn("저장소 밖", r)
+            self.assertNotIn("결론", r)
+
+    def test_all_samples_still_denied(self):
+        for call, _ in self.calls():
+            self.assertIsNotNone(decide(call, self.env(budget=100)), call)
+        self.assertIsNotNone(check_path("/etc/passwd", self.root))
 
 
 class TimeStopTest(TmpCase):
