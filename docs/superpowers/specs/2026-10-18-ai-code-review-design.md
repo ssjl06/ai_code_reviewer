@@ -181,12 +181,22 @@ The child process gets an explicitly built environment:
   creates `budget-stop` in the state dir so the runner can report the cause.
   The structured-output tool is never counted or blocked.
 - Denials: rule denials do not use the explore budget, so the guard counts them per
-  session (`deny_limit`, default 5, env `AI_REVIEW_DENY_LIMIT`; the structured-output
-  tool is exempt). The first `deny_limit` return the rule reason; the next one stops
-  the session the same way (`stopReason` "거부된 호출 반복 — 결론 단계로 전환", audit
-  decision `stop`, marker `deny-stop`, runner cause `denied`). The denial text for
-  non-git Bash says in Korean that nothing can be executed, that only Read, Grep, Glob
-  and read-only git are allowed, and that the model should conclude from what it read.
+  session (the structured-output tool is exempt). A call's identity is its tool name
+  and input as canonical JSON, with the whitespace of a Bash command collapsed; the
+  counter file keeps a short hash per identity. The 1st and 2nd denial of an identical
+  call return the rule reason; the 3rd (`deny_repeat_limit`, default 3, env
+  `AI_REVIEW_DENY_REPEAT_LIMIT`) stops the session, and so does the 21st denial of any
+  kind (`deny_total_limit`, default 20, env `AI_REVIEW_DENY_TOTAL_LIMIT`). Different
+  mistakes never stop the session below the total. A stop ends the session the same way
+  (`stopReason` "거부된 호출 반복 — 결론 단계로 전환", audit decision `stop`, marker
+  `deny-stop`, runner cause `denied`). The old `deny_limit` key is ignored with a warning.
+  Every rule denial text is Korean and short: the call is not allowed, the explore budget
+  was not charged, what to use instead (Read for cat/head/tail/sed/awk/less/more/wc, Glob
+  for ls/find/tree, Grep for grep/rg/ag, one git command at a time without pipe or
+  redirect, the allowed git subcommands, or "building, running and testing are not
+  available; judge by reading"; for paths outside the repo only that the file cannot be
+  read), not to repeat the call, and to continue the review. It never tells the model to
+  conclude because of an ordinary denial.
   After each chunk the runner reads `guard-audit.jsonl` and logs one line with the
   denied calls grouped by command or tool (a missing or broken file is ignored).
 - Time: the runner passes the exploring session an epoch time in `AI_REVIEW_STOP_AT`
