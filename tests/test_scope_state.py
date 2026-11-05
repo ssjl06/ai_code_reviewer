@@ -8,8 +8,8 @@ from review.aggregate import merge
 from review.fingerprint import decode_seen, fp_line
 from review.cli_util import parse_overrides, read_state_file
 from review.diff_split import build_chunks
-from review.ledger import assign_recheck, pending_after, shown_lines
-from review.scope import determine, next_state
+from review.ledger import apply_waivers, assign_recheck, pending_after, shown_lines
+from review.scope import determine, next_state, settle_state
 from review.validate import normalize_state
 from tests.test_scope import CFG, code, run, state_for
 
@@ -302,6 +302,51 @@ class RecheckScopeTest(unittest.TestCase):
         review = run_blocking_with_pending()
         self.assertEqual((review["event"], review["recheck_pending"]),
                          ("REQUEST_CHANGES", ["i1"]))
+
+
+class SettleTest(unittest.TestCase):
+    def settle_scope(self, waive=("i1",), **state_kw):
+        two = [issue_finding(id_="i1"), issue_finding("b.cc", 5, "i2")]
+        tmp, d, base, head, state = repo_with_review(two)
+        with tmp:
+            st = apply_waivers(dict(state, **state_kw), set(waive))
+            return st, determine(d, base, head, st, CFG)
+
+    def test_same_sha_complete_with_a_new_waiver_settles(self):
+        st, s = self.settle_scope()
+        self.assertEqual((s["mode"], s["targets"], s["prev"]["waived_now"]), ("settle", [], 1))
+        self.assertEqual([p["id"] for p in s["previous"]], ["i2"])
+        self.assertEqual([(c["id"], c["status"]) for c in s["closed"]], [("i1", "waived")])
+
+    def test_a_waiver_that_changes_nothing_is_still_unchanged(self):
+        self.assertEqual(self.settle_scope(waive=("zz",))[1]["mode"], "unchanged")
+
+    def test_pending_recheck_beats_settle(self):
+        st, s = self.settle_scope(waive=("i1",), recheck_pending=["i2"])
+        self.assertEqual(s["mode"], "incremental")
+        self.assertEqual([p["id"] for p in s["previous"] if p.get("recheck")], ["i2"])
+
+    def test_an_incomplete_state_does_not_settle(self):
+        self.assertEqual(self.settle_scope(complete=False, seen={}, seen_files={}, seen_hunks={})[1]["mode"], "incremental")
+
+    def test_settle_state_copies_the_seen_data_and_keeps_the_ledger(self):
+        st, s = self.settle_scope()
+        review = merge([], CFG, s["previous"], s["changed"], False, closed=s["closed"])
+        self.assertEqual(review["event"], "REQUEST_CHANGES")
+        out = settle_state("h2", review, s)
+        for k in ("seen", "seen_files", "seen_hunks"):
+            self.assertEqual(out[k], st[k], k)
+        self.assertEqual((out["v"], out["sha"], out["complete"], out["recheck_pending"]),
+                         (3, "h2", True, []))
+        self.assertNotIn("waived_now", out)
+        self.assertEqual([(i["id"], i["status"]) for i in out["issues"]],
+                         [("i2", "open"), ("i1", "waived")])
+        json.dumps(out)
+
+    def test_nothing_blocking_left_approves(self):
+        st, s = self.settle_scope(waive=("i1", "i2"))
+        review = merge([], CFG, s["previous"], s["changed"], False, closed=s["closed"])
+        self.assertEqual(review["event"], "APPROVE")
 
 
 if __name__ == "__main__":

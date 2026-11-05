@@ -210,3 +210,19 @@ def finish_orphans(prev_out: List[dict], links: List[dict], complete: bool) -> N
             e["orphan"] = False
         elif complete:
             e["status"] = "resolved"
+
+
+def apply_waivers(state: Optional[dict], ids: Set[str]) -> Optional[dict]:
+    """A copy of a normalized `state` in which every open issue named in `ids` is `waived`.
+    `waived_now` counts those changes, so applying the same ids again gives 0. A closed issue
+    stays as it is and ids that are not in the ledger are ignored."""
+    if state is None:
+        return None
+    n = 0
+    issues = []
+    for i in state.get("issues") or []:
+        if i["id"] in ids and i.get("status", "open") not in CLOSED:
+            i = dict(i, status="waived")
+            n += 1
+        issues.append(i)
+    return dict(state, issues=issues, waived_now=n)

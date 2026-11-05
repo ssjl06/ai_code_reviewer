@@ -56,20 +56,25 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
                            "targets": [], "pr_files": pr_files, "reviewable": 0, "changed": {},
                            "added": {}, "deleted": {}, "blobs": {}, "head_prints": {},
                            "prev_seen": {}, "previous": [], "hunk_keys": {}, "prior": {},
-                           "prev_hunks": {}, "closed": [], "weak_tracking": False,
+                           "prev_hunks": {}, "closed": [], "weak_tracking": False, "prev": prev,
                            "dropped_closed": int((prev or {}).get("dropped_closed") or 0)}
     pending = list((prev or {}).get("recheck_pending") or [])
-    if prev and prev["sha"] == head and prev["complete"] and not pending:
+    settle = bool(prev and prev["sha"] == head and prev["complete"] and not pending)
+    if settle and not prev.get("waived_now"):
         return out
     live = {f["path"] for f in pr_files if f["status"] != "D"}
     gone = {f["path"] for f in pr_files if f["status"] == "D"}
     rev = [f for f in pr_files if reviewable(f, cfg)]
     stored = (prev or {}).get("issues") or []
-    names = _path_map(repo, prev, head, pr_files, stored)
-    moved, weak = _advance(repo, head, prev, stored, names)
+    names = {} if settle else _path_map(repo, prev, head, pr_files, stored)
+    moved, weak = (stored, False) if settle else _advance(repo, head, prev, stored, names)
     opened = [i for i in moved if i["status"] not in CLOSED]
     closed = [dict(i, orphan=True) if i["file"] not in live else i
               for i in moved if i["status"] in CLOSED]
+    if settle:  # a new waiver on a head that was fully reviewed: only the verdict changes
+        out.update(mode="settle", reviewable=len(rev), closed=closed,
+                   previous=annotate(opened, live, set(), gone))
+        return out
     want = [f["path"] for f in rev]
     want += [p for p in dict.fromkeys(i["file"] for i in opened) if p not in want]
     blobs = read_blobs(repo, head, want)
@@ -171,6 +176,17 @@ def _relink(closed: List[dict], review: dict) -> List[dict]:
     return out
 
 
+def _issues(review: dict, scope: dict) -> List[dict]:
+    """Issues newest first: this run's new ones, the previous open ones (`unclear` is a per-run
+    outcome and is stored as `open`), the ones closed by this run, then the earlier closed ones."""
+    prev = review.get("previous", [])
+    keep = [dict(p, status="open") for p in prev if p.get("status") in ("open", "unclear")]
+    shut = [dict(p, orphan=p.get("orphan") or p.get("pre") == "resolved")
+            for p in prev if p.get("status") in CLOSED]
+    return [new_issue(f) for f in review["findings"]] + keep + shut \
+        + _relink(scope.get("closed") or [], review)
+
+
 def next_state(head: str, review: dict, scope: dict, chunks: List[dict],
                results: List[dict]) -> dict:
     """State v3 for the posted review: sha is always head; `complete` tells the next run
@@ -182,12 +198,7 @@ def next_state(head: str, review: dict, scope: dict, chunks: List[dict],
     hunks = update_hunks(scope, chunks, results, seen)
     full = {p for p, c in scope["head_prints"].items() if seen.get(p, Counter()) == c}
     seen_c, seen_files = encode_seen(seen, full=full)
-    prev = review.get("previous", [])
-    keep = [dict(p, status="open") for p in prev if p.get("status") in ("open", "unclear")]
-    shut = [dict(p, orphan=p.get("orphan") or p.get("pre") == "resolved")
-            for p in prev if p.get("status") in CLOSED]
-    issues = [new_issue(f) for f in review["findings"]] + keep + shut \
-        + _relink(scope.get("closed") or [], review)
+    issues = _issues(review, scope)
     state = {"v": 3, "sha": head, "complete": bool(review["complete"]), "seen": seen_c,
              "seen_files": seen_files,
              "seen_hunks": {p: pack(Counter(k)) for p, k in sorted(hunks.items())},
@@ -196,3 +207,17 @@ def next_state(head: str, review: dict, scope: dict, chunks: List[dict],
     if scope.get("dropped_closed"):
         state["dropped_closed"] = scope["dropped_closed"]
     return fit_state(state, partial=set(scope["head_prints"]) - full)
+
+
+def settle_state(head: str, review: dict, scope: dict) -> dict:
+    """State v3 for a settle run (no model call): the seen data and `recheck_pending` are those
+    of `scope["prev"]` (the state after the waivers), the issues are the ledger after them, and
+    the head counts as fully reviewed."""
+    prev = scope["prev"]
+    state = {"v": 3, "sha": head, "complete": True, "seen": dict(prev["seen"]),
+             "seen_files": dict(prev["seen_files"]), "seen_hunks": dict(prev["seen_hunks"]),
+             "issues": [_record(i) for i in _issues(review, scope)], "closed": {},
+             "recheck_pending": list(prev.get("recheck_pending") or [])}
+    if scope.get("dropped_closed"):
+        state["dropped_closed"] = scope["dropped_closed"]
+    return fit_state(state, partial=set())

@@ -120,6 +120,8 @@ def _sections(review: dict, body_only: list, meta: dict, state: dict = None) -> 
                                        p["title"] or "(제목 생략)", " — " + p["note"] if p.get("note") else "")
                  for p in prev]
         secs.append("### 이전 지적 처리 현황\n" + "\n".join(lines or ["- 없음"]))
+    if review.get("waived_now"):
+        secs.append("면제 %d건" % review["waived_now"])
     if review.get("duplicates"):
         secs.append("기존 이슈와 중복되어 생략 %d건" % len(review["duplicates"]))
     if (state or {}).get("dropped_closed"):

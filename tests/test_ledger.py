@@ -1,7 +1,7 @@
 import unittest
 
 from review.fingerprint import fp_line
-from review.ledger import CLOSED, advance, classify, finding_id, from_v2, new_issue, unique_id
+from review.ledger import CLOSED, advance, apply_waivers, classify, finding_id, from_v2, new_issue, unique_id
 
 V2 = {"id": "abc123", "file": "a.cc", "line": 7, "anchor": "ff", "title": "T",
       "severity": "major", "blocking": True}
@@ -85,6 +85,33 @@ class LedgerTest(unittest.TestCase):
                        "severity": "minor", "blocking": False, "detail": "d" * 300})
         self.assertEqual((n["lo"], n["hi"], len(n["excerpt"]), n["status"]), (3, 3, 200, "open"))
         self.assertEqual(CLOSED, ("resolved", "waived"))
+
+def state_with(*issues):
+    return {"v": 3, "sha": "h", "complete": True, "issues": list(issues), "recheck_pending": []}
+
+
+class WaiverTest(unittest.TestCase):
+    def test_applying_a_waiver_twice_is_a_noop(self):
+        st = apply_waivers(state_with(issue("a.cc", 3, id="i1")), {"i1"})
+        self.assertEqual((st["waived_now"], st["issues"][0]["status"]), (1, "waived"))
+        again = apply_waivers(st, {"i1"})
+        self.assertEqual(again["waived_now"], 0)
+        self.assertEqual(again["issues"], st["issues"])
+
+    def test_a_closed_issue_is_not_changed_by_a_waiver(self):
+        st = apply_waivers(state_with(issue("a.cc", 3, id="i1", status="resolved")), {"i1"})
+        self.assertEqual((st["issues"][0]["status"], st["waived_now"]), ("resolved", 0))
+
+    def test_an_open_orphan_is_waived_and_unknown_ids_are_ignored(self):
+        st = apply_waivers(state_with(issue("a.cc", 3, id="i1", orphan=True)), {"i1", "zz"})
+        self.assertEqual((st["issues"][0]["status"], st["waived_now"]), ("waived", 1))
+
+    def test_the_input_state_is_not_modified_and_none_passes(self):
+        src = state_with(issue("a.cc", 3, id="i1"))
+        apply_waivers(src, {"i1"})
+        self.assertEqual(src["issues"][0]["status"], "open")
+        self.assertIsNone(apply_waivers(None, {"i1"}))
+
 
 class ClassifyTest(unittest.TestCase):
     def test_reworded_finding_near_an_open_issue_is_merged(self):
