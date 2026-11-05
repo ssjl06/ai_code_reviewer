@@ -75,7 +75,14 @@ to the new head with `git diff -U0` and re-checked (resolved/open/unclear) inste
 re-raised.
 
 - Squash, rebase, force-push and "merge main into the PR" keep the same line content, so they cost
-  no LLM call. Moved code keeps its findings and their ids.
+  no LLM call as long as no issue is open. Issue ids stay across pushes. Code moved to another
+  file is not followed: its issue becomes an orphan that only the model's `same_as` can attach
+  to a finding (otherwise the defect is raised once more, as a new issue).
+- With open issues, a rebase, squash, merge of main or pure rename costs one model run per chunk,
+  because every open issue is rechecked on a new head: the lines around its region are shown to
+  the model, which reports whether it is still open. Issues that do not fit the recheck budget
+  (`recheck_max_chars`) are rechecked on the next run (log line `다시 확인할 이슈 n건을 이번 실행에
+  담지 못함`); until then the run is not skipped as unchanged on the same sha.
 - When there are no new lines the run logs `새로 리뷰할 변경 없음 — 리뷰를 건너뜀` and posts
   nothing. A previous blocking review stays as it is; dismissal happens only on `APPROVE`.
 - A run that cannot finish gives `COMMENT` (never `APPROVE`): a chunk without valid output
@@ -98,8 +105,25 @@ re-raised.
   is not reviewed in depth. A chunk with under 60 s left before the deadline is not started: it
   ends `incomplete` with `deadline`.
 - If the file with a previous blocking finding is dropped from the PR (reverted or deleted), the
-  finding is resolved and the review is approved without an LLM call, unless its line is found in
-  another PR file (code moved): then it follows the line. Renames across pushes are followed.
+  finding is resolved and the review is approved without an LLM call. Renames across pushes are
+  followed; code moved to another file is not (the issue becomes an orphan, see above).
+
+Reading the review and the log:
+- `기존 이슈와 중복되어 생략 n건` in the review body: n new findings matched an issue of the
+  ledger (within 3 lines of its region, or named by the model in `same_as`) and were dropped
+  instead of reported again. The log lists each one: `기존 이슈와 중복되어 생략: file:line (이슈 id)`.
+  `기존 이슈에 연결: file:line (이슈 id)` marks a `same_as` link to an open issue.
+- `면제 n건`: n open issues were waived because a person other than the bot dismissed the review
+  that listed them. A waived issue is closed for good. Such a run posts a new review even when
+  the head did not change, and approves when nothing blocking is left.
+- `dropped_closed` (state field; the body shows `오래된 종료 이슈 기록 n건 삭제`): the state marker
+  was over its size cap and the oldest closed issue records were dropped. Those issues can be
+  raised again. Open issues are never dropped.
+- `이전 커밋을 찾을 수 없어 위치 추적이 약해짐`: the previous reviewed commit is not in the
+  checkout (force-push to a commit that was never fetched), so issues were located by their
+  anchor line instead of by diff and may be lost; lost ones are asked of the model again.
+- `고아 이슈 n건은 프롬프트 목록에서 제외됨`: the orphan list of the prompt is capped at 4000
+  characters per chunk; the ids left out are named.
 
 Trade-offs:
 - A whole-file reformat (clang-format) changes every fingerprint, so the whole file is reviewed

@@ -330,7 +330,7 @@ class SettleTest(unittest.TestCase):
         self.assertEqual(self.settle_scope(complete=False, seen={}, seen_files={}, seen_hunks={})[1]["mode"], "incremental")
 
     def test_a_waiver_on_a_same_sha_incomplete_state_is_not_unchanged(self):
-        st, s = self.settle_scope(complete=True, recheck_pending=["gone"])
+        st, s = self.settle_scope(complete=False, recheck_pending=[])
         self.assertNotEqual(s["mode"], "unchanged")
 
     def test_settle_state_copies_the_seen_data_and_keeps_the_ledger(self):
