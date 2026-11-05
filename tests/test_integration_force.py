@@ -36,12 +36,12 @@ class ForcePushTest(IntegrationBase):
         self.assertIn("새로 리뷰할 변경 없음", self.stdout)
 
     def test_rebase_shift_keeps_block_same_id(self):
-        first_id = parse_state(self.first["body"])["findings"][0]["id"]
+        first_id = parse_state(self.first["body"])["issues"][0]["id"]
         self.force({"src/k.cu": "// pad\n" * 10 + BUGGY})
         self.assertEqual(self.review("silent"), 0)
         st = parse_state(self.gh.posted[-1]["body"])
         self.assertEqual(self.gh.posted[-1]["event"], "REQUEST_CHANGES")
-        self.assertEqual([(f["id"], f["line"]) for f in st["findings"]], [(first_id, 12)])
+        self.assertEqual([(f["id"], f["line"]) for f in st["issues"]], [(first_id, 12)])
 
     def test_fix_resolved_approves_and_dismisses(self):
         self.force({"src/k.cu": FIXED})
@@ -49,11 +49,14 @@ class ForcePushTest(IntegrationBase):
         self.assertEqual(self.gh.posted[-1]["event"], "APPROVE")
         self.assertEqual(self.gh.dismissed, [1])
 
-    def test_anchor_changed_model_silent_comment(self):
+    def test_rewritten_line_model_silent_keeps_change_request(self):
+        # was test_anchor_changed_model_silent_comment: the anchor no longer matched, so the
+        # issue was "unclear" (COMMENT). Now its region follows the rewritten line (the previous
+        # head is still local), and a silent model leaves a located issue open.
         self.force({"src/k.cu": BUGGY.replace("p[1]", "p[2]")})
         self.assertEqual(self.review("silent"), 0)
-        self.assertEqual(self.gh.posted[-1]["event"], "COMMENT")
-        self.assertIn("이전 차단 지적 확인 필요", self.gh.posted[-1]["body"])
+        self.assertEqual(self.gh.posted[-1]["event"], "REQUEST_CHANGES")
+        self.assertNotIn("이전 차단 지적 확인 필요", self.gh.posted[-1]["body"])
         self.assertEqual(self.gh.dismissed, [])
 
     def test_file_dropped_resolves_and_approves(self):

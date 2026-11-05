@@ -112,16 +112,18 @@ def _cause_label(error: str) -> str:
     return "%s → %s (%s)" % (_CAUSES.get(main, main), step, _CAUSES.get(fb, fb))
 
 
-def _sections(review: dict, body_only: list, meta: dict) -> list:
+def _sections(review: dict, body_only: list, meta: dict, state: dict = None) -> list:
     secs = []
     prev = review.get("previous") or []
     if prev:
         lines = ["- %s `%s:%s` %s%s" % (_PREV.get(p.get("status"), "❔ 불명확"), p["file"], p["line"],
-                                       p["title"], " — " + p["note"] if p.get("note") else "")
+                                       p["title"] or "(제목 생략)", " — " + p["note"] if p.get("note") else "")
                  for p in prev]
         secs.append("### 이전 지적 처리 현황\n" + "\n".join(lines or ["- 없음"]))
     if review.get("duplicates"):
         secs.append("기존 이슈와 중복되어 생략 %d건" % len(review["duplicates"]))
+    if (state or {}).get("dropped_closed"):
+        secs.append("오래된 종료 이슈 기록 %d건 삭제" % state["dropped_closed"])
     check = [f for f in review["findings"] if f.get("needs_check")]
     if check:
         secs.append("### 확인 필요 (confidence < 80)\n" + "\n".join(
@@ -151,7 +153,7 @@ def render_body(review: dict, body_only: list, meta: dict, state: dict) -> str:
     mins, secs = divmod(int(round(meta["duration_s"])), 60)
     footer = "<sub>%s · %s chunks · %dm%02ds · %s</sub>\n%s" % (
         meta["model"], meta["chunks"], mins, secs, meta["range"], state_marker(state))
-    parts = [_safe(p) for p in [_head(review)] + _sections(review, body_only, meta)]
+    parts = [_safe(p) for p in [_head(review)] + _sections(review, body_only, meta, state)]
     body = "\n\n".join(parts) + "\n\n" + footer
     if len(body) <= MAX_BODY:
         return body

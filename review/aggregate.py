@@ -78,7 +78,7 @@ def _dedupe(findings: List[dict]) -> List[dict]:
 
 
 def _resolve(prev: dict) -> str:
-    """Status of a previous finding the model did not report, from `previous.relocate`."""
+    """Status of a previous finding the model did not report, from `previous.annotate`."""
     pre = prev.get("pre")
     if pre == "resolved":
         return "resolved"
@@ -156,7 +156,7 @@ def merge(results, cfg, previous, changed, no_targets, skipped=None, anchor=None
             f["anchor"] = anchor(f["file"], f["line"])
         f["blocking"] = in_block and f["confidence"] >= cfg["block_confidence"]
         f["needs_check"] = in_block and not f["blocking"]
-    # previous entries come from previous.relocate, so their "file" is already the renamed path
+    # previous entries come from previous.annotate, so their "file" is already the renamed path
     known = list(previous) + list(closed or [])
     findings, duplicates, links = classify(findings, known)
     taken = {i["id"] for i in known}

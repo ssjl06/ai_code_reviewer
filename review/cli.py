@@ -116,7 +116,8 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
         results = run_all(chunks, prompts, cfg, paths, env, deadline)
     review = merge(results, cfg, previous, scope["changed"], scope["reviewable"] == 0,
                    skipped=skipped, anchor=anchor_of(scope["blobs"]), truncated=truncated,
-                   chunk_files={c["index"]: c["files"] for c in chunks})
+                   chunk_files={c["index"]: c["files"] for c in chunks},
+                   closed=scope["closed"])
     inline, body_only = split_inline(review["findings"],
                                      line_map(scope["pr_files"], "right_lines"))
     state = sc.next_state(head, review, scope, chunks, results)

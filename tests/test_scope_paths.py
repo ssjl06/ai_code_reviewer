@@ -32,7 +32,9 @@ class DeletedFileTest(unittest.TestCase):
 
 
 class MovedToExcludedFileTest(unittest.TestCase):
-    def test_finding_moved_into_excluded_file_stays_open(self):
+    def test_finding_moved_into_excluded_file_is_not_followed(self):
+        # was test_finding_moved_into_excluded_file_stays_open: moves are not followed, so the
+        # deleted file's issue is resolved (the spec's accepted cost)
         r = Repo(self)
         base = r.commit({"k.cu": K, "a.py": PY})
         head = r.commit({"k.cu": K.replace("int k5 = 5;", "int k5 = *null;"),
@@ -48,8 +50,8 @@ class MovedToExcludedFileTest(unittest.TestCase):
         self.assertIn("D\tk.cu", names)
         s, _, rv, _ = review(r, base, head, st)
         self.assertEqual([(p["file"], p["pre"], p["located"]) for p in s["previous"]],
-                         [("vendor/module.cu", "open", False)])
-        self.assertEqual(rv["event"], "REQUEST_CHANGES")
+                         [("k.cu", "resolved", False)])
+        self.assertEqual(rv["event"], "APPROVE")
 
     def test_moved_into_excluded_file_already_loaded_for_other_finding(self):
         r = Repo(self)
@@ -61,17 +63,16 @@ class MovedToExcludedFileTest(unittest.TestCase):
         _, _, rv, st = review(r, base, head, None, finds=[bad("k.cu", 6)])
         self.assertEqual(rv["event"], "REQUEST_CHANGES")
         lines = vend.split("\n")
-        other = dict(st["findings"][0], id="deadbeef", file="vendor/module.cu", line=6,
+        other = dict(st["issues"][0], id="deadbeef", file="vendor/module.cu", line=6, lo=6, hi=6,
                      anchor=anchor_of({"vendor/module.cu": lines[:-1]})("vendor/module.cu", 6))
-        st = dict(st, findings=st["findings"] + [other])
+        st = dict(st, issues=st["issues"] + [other])
         r.git("rm", "-q", "k.cu")
         pad = "".join("static int pad%d = %d;\n" % (i, i * 7) for i in range(200))
         head = r.commit({"vendor/module.cu": vend + K.replace("int k5 = 5;", "int k5 = *null;")
                          + pad, "a.py": PY + "w = 2\n"})
         s, _, rv, _ = review(r, base, head, st)
         self.assertEqual(sorted((p["file"], p["pre"], p["located"]) for p in s["previous"]),
-                         [("vendor/module.cu", "open", False),
-                          ("vendor/module.cu", "open", True)])
+                         [("k.cu", "resolved", False), ("vendor/module.cu", "open", True)])
         self.assertEqual(rv["event"], "REQUEST_CHANGES")
 
 
@@ -83,7 +84,7 @@ class RenameChainTest(unittest.TestCase):
         head = self.r.commit({"middle.py": PY.replace("v5 = 5", "v5 = eval(x)")})
         _, _, rv, self.st = review(self.r, self.base, head, None, finds=[bad("middle.py", 6)])
         self.assertEqual(rv["event"], "REQUEST_CHANGES")
-        self.assertEqual(self.st["findings"][0]["file"], "middle.py")
+        self.assertEqual(self.st["issues"][0]["file"], "middle.py")
         self.r.git("mv", "middle.py", "final.py")
 
     def _assert_open(self, previous, located=True):
@@ -102,16 +103,18 @@ class RenameChainTest(unittest.TestCase):
         s, _, rv, st = review(self.r, self.base, head, self.st)
         self._assert_open(s["previous"])
         self.assertEqual(rv["event"], "REQUEST_CHANGES")
-        self.assertEqual([f["file"] for f in st["findings"]], ["final.py"])
+        self.assertEqual([f["file"] for f in st["issues"]], ["final.py"])
 
-    def test_prev_sha_unavailable_uses_anchor(self):
+    def test_prev_sha_unavailable_cannot_follow_a_rename(self):
+        # was test_prev_sha_unavailable_uses_anchor: the anchor search used to find the code in
+        # final.py and ask the model. Without the previous head the fallback only looks in the
+        # issue's own file, so a renamed file's issue is resolved (weak tracking, said in the log)
         head = self.r.commit({})
         st = dict(self.st, sha="0" * 40)
         s, _, rv, nxt = review(self.r, self.base, head, st)
-        # found only by the anchor search: asked, unreported -> unclear (not trusted as open)
-        self._assert_open(s["previous"], located=False)
-        self.assertEqual((rv["event"], rv["unclear_blocking"]), ("COMMENT", True))
-        self.assertEqual([f["file"] for f in nxt["findings"]], ["final.py"])
+        self.assertTrue(s["weak_tracking"])
+        self.assertEqual([(p["file"], p["pre"]) for p in s["previous"]], [("middle.py", "resolved")])
+        self.assertEqual([i["status"] for i in nxt["issues"]], ["resolved"])
 
 
 if __name__ == "__main__":

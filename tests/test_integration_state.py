@@ -13,7 +13,7 @@ class IntegrationStateTest(IntegrationBase):
                                        self.BASE, "--head", self.C1, "--out-dir", out_dir), 0)
         with open(os.path.join(out_dir, "review.json"), encoding="utf-8") as f:
             state = parse_state(json.load(f)["body"])
-        self.assertEqual((state["v"], state["complete"]), (2, True))
+        self.assertEqual((state["v"], state["complete"]), (3, True))
         sf = os.path.join(self.tmp, "state.json")
         with open(sf, "w", encoding="utf-8") as f:
             json.dump(state, f)
@@ -68,11 +68,13 @@ class IntegrationStateTest(IntegrationBase):
         self.assertEqual(self.run_main("blocking", "--repo", self.R, "--pr", "1"), 0)
         self.gh.head = self.add_commit({"src/k.cu": FIXED})
         self.assertEqual(self.run_main("crash", "--repo", self.R, "--pr", "1"), 1)
-        self.assertEqual(self.gh.posted[-1]["event"], "COMMENT")
+        # was COMMENT: the fix rewrote the flagged line, so the anchor was lost and the issue
+        # "unclear". Now the issue is located, a failed run cannot confirm it, and it stays open.
+        self.assertEqual(self.gh.posted[-1]["event"], "REQUEST_CHANGES")
         self.assertEqual(self.gh.dismissed, [])
         self.assertEqual(self.gh.reviews[0]["state"], "CHANGES_REQUESTED")
         st = parse_state(self.gh.posted[-1]["body"])
-        self.assertEqual((st["complete"], len(st["findings"])), (False, 1))
+        self.assertEqual((st["complete"], [i["status"] for i in st["issues"]]), (False, ["open"]))
 
 
 if __name__ == "__main__":

@@ -70,8 +70,9 @@ Detection is content-based, not sha-based. The first run reviews the whole PR. T
 stores a "seen" set of line fingerprints (the changed line plus its neighbours). On each later run
 the kit diffs the PR against its base, and only hunks with lines whose fingerprint is not yet seen
 are sent to the model; the prompt lists them as "검토 대상 줄" (added lines) and "삭제 지점"
-(deletion anchors). Earlier findings are relocated to their current line and re-checked
-(resolved/open/unclear) instead of being re-raised.
+(deletion anchors). Earlier findings are issues in a ledger: each one's line region is moved
+to the new head with `git diff -U0` and re-checked (resolved/open/unclear) instead of being
+re-raised.
 
 - Squash, rebase, force-push and "merge main into the PR" keep the same line content, so they cost
   no LLM call. Moved code keeps its findings and their ids.
