@@ -91,3 +91,106 @@ class RereportAndTruncTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def issue(path, line, **kw):
+    base = dict(P(id="i1", file=path, line=line, blocking=True), lo=line, hi=line, orphan=False)
+    base.update(kw)
+    return base
+
+
+def orphan_prev(id_):
+    return issue("a.cu", 10, id=id_, orphan=True, pre="orphan")
+
+
+def run_merge(results, prev, shown=None, skipped=None, truncated=None, chunk_files=None):
+    changed = {"a.cu": {10, 50}, "b.cc": {500}}
+    return merge(results, CFG, [prev], changed, False, skipped=skipped, truncated=truncated,
+                 chunk_files=chunk_files, shown=shown)
+
+
+def resolved_report(id_):
+    return [res(0, [], prev=[(id_, "resolved")])]
+
+
+def link_report(id_, path, line):
+    return [res(0, [dict(F(file=path, line=line), same_as=id_)])]
+
+
+def failed_chunk():
+    return [res(0, [], status="failed")]
+
+
+all_failed = failed_chunk
+
+
+def entry(out, id_):
+    return next(p for p in out["previous"] if p["id"] == id_)
+
+
+def status(out, id_):
+    return entry(out, id_)["status"]
+
+
+def run_two_chunks(ok_status, other_status):
+    results = [res(0, [], status=ok_status, prev=[("i1", "resolved")]),
+               res(1, [], status=other_status)]
+    return run_merge(results, issue("a.cu", 50), chunk_files={0: ["a.cu"], 1: ["a.cu"]},
+                     shown={0: {"a.cu": {50}}, 1: {"a.cu": {50}}})
+
+
+class ClosureRulesTest(unittest.TestCase):
+    def test_resolved_needs_the_region_in_shown_lines(self):
+        out = run_merge(resolved_report("i1"), issue("a.cu", 50, id="i1"),
+                        shown={0: {"a.cu": {1, 2, 3}}})
+        self.assertEqual(status(out, "i1"), "open")
+
+    def test_resolved_is_accepted_when_the_region_was_shown(self):
+        out = run_merge(resolved_report("i1"), issue("a.cu", 50, id="i1"),
+                        shown={0: {"a.cu": {49, 50, 51}}})
+        self.assertEqual(status(out, "i1"), "resolved")
+
+    def test_resolved_needs_the_whole_region(self):
+        out = run_merge(resolved_report("i1"), issue("a.cu", 50, id="i1", lo=48, hi=52),
+                        shown={0: {"a.cu": {49, 50, 51}}})
+        self.assertEqual(status(out, "i1"), "open")
+
+    def test_resolved_is_rejected_for_a_skipped_file(self):
+        out = run_merge(resolved_report("i1"), issue("a.cu", 50, id="i1"), skipped=["a.cu"],
+                        shown={0: {"a.cu": {50}}})
+        self.assertEqual(status(out, "i1"), "open")
+
+    def test_resolved_is_rejected_for_a_truncated_file(self):
+        out = run_merge(resolved_report("i1"), issue("a.cu", 50, id="i1"), truncated=["a.cu"],
+                        shown={0: {"a.cu": {50}}})
+        self.assertEqual(status(out, "i1"), "open")
+
+    def test_resolved_needs_every_chunk_holding_the_file_ok(self):
+        out = run_two_chunks(ok_status="ok", other_status="partial")
+        self.assertEqual(status(out, "i1"), "open")
+
+    def test_open_orphan_resolves_on_a_complete_run(self):
+        self.assertEqual(status(run_merge([], orphan_prev("i1")), "i1"), "resolved")
+
+    def test_open_orphan_stays_open_on_an_incomplete_run(self):
+        self.assertEqual(status(run_merge(failed_chunk(), orphan_prev("i1")), "i1"), "open")
+
+    def test_linked_orphan_stays_open_at_the_finding(self):
+        out = run_merge(link_report("i1", "b.cc", 500), orphan_prev("i1"))
+        p = entry(out, "i1")
+        self.assertEqual((p["status"], p["file"], p["line"], p.get("orphan")),
+                         ("open", "b.cc", 500, False))
+
+    def test_link_to_a_non_orphan_changes_nothing(self):
+        out = run_merge(link_report("i1", "a.cu", 55), issue("a.cu", 50))
+        p = entry(out, "i1")
+        self.assertEqual((p["file"], p["line"], p["status"]), ("a.cu", 50, "open"))
+
+    def test_all_chunks_failed_closes_nothing(self):
+        out = run_merge(all_failed(), issue("a.cu", 50, id="i1"), shown={})
+        self.assertEqual(status(out, "i1"), "open")
+        self.assertEqual(out["event"], "REQUEST_CHANGES")
+
+    def test_resolved_orphan_does_not_block(self):
+        out = run_merge([], orphan_prev("i1"))
+        self.assertEqual(out["event"], "APPROVE")

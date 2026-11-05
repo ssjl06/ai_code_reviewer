@@ -165,3 +165,27 @@ class UniqueIdTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShownLinesTest(unittest.TestCase):
+    DIFF = ("diff --git a/a.cc b/a.cc\n--- a/a.cc\n+++ b/a.cc\n@@ -1,2 +1,3 @@\n x\n+y\n z\n")
+
+    def test_right_lines_of_each_chunk(self):
+        from review.ledger import shown_lines
+        out = shown_lines([{"index": 0, "diff": self.DIFF}, {"index": 1, "diff": ""}], {})
+        self.assertEqual(out, {0: {"a.cc": {1, 2, 3}}, 1: {}})
+
+    def test_recheck_lines_are_numbered_from_start(self):
+        from review.ledger import shown_lines
+        item = {"id": "i1", "file": "a.cc", "lo": 40, "hi": 42, "start": 40, "text": "p\nq\nr"}
+        out = shown_lines([{"index": 0, "diff": self.DIFF}], {0: [item]})
+        self.assertEqual(out[0]["a.cc"], {1, 2, 3, 40, 41, 42})
+
+
+class FinishOrphansTest(unittest.TestCase):
+    def test_only_open_orphans_change(self):
+        from review.ledger import finish_orphans
+        a = dict(issue("a.cc", 5, id="o", pre="orphan", orphan=True))
+        b = dict(issue("a.cc", 6, id="n"))
+        finish_orphans([a, b], [{"id": "n", "file": "z", "line": 1}], True)
+        self.assertEqual((a["status"], b["status"], b["file"]), ("resolved", "open", "a.cc"))

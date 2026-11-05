@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 from typing import Dict, List, Optional, Set, Tuple
 
+from review.diff_split import parse_unified_diff
 from review.previous import _closest
 from review.regions import map_region
 
@@ -120,3 +121,37 @@ def classify(findings: List[dict], issues: List[dict]) -> Tuple[List[dict], List
         else:
             dups.append(dict(f, dup_of=target["id"]))
     return new, dups, links
+
+
+def shown_lines(chunks: List[dict], recheck: Dict[int, List[dict]]) -> Dict[int, Dict[str, Set[int]]]:
+    """Per chunk index and file, the line numbers the model saw: the right-side lines of the
+    chunk diff plus the numbered lines of its recheck items (`start` is the first line of
+    `text`)."""
+    out: Dict[int, Dict[str, Set[int]]] = {}
+    for c in chunks:
+        files = out.setdefault(c["index"], {})
+        for f in parse_unified_diff(c.get("diff") or ""):
+            files.setdefault(f["path"], set()).update(f["right_lines"])
+        for item in recheck.get(c["index"], ()):
+            n = len(item["text"].split("\n"))
+            files.setdefault(item["file"], set()).update(range(item["start"], item["start"] + n))
+    return out
+
+
+def finish_orphans(prev_out: List[dict], links: List[dict], complete: bool) -> None:
+    """Settle open orphans in place. A link moves an orphan to the finding's place and
+    reopens it there (it wins over auto-resolution); a link to any other entry changes
+    nothing. An orphan nothing linked is resolved when the run was complete."""
+    by_id: Dict[str, dict] = {}
+    for link in links:
+        by_id.setdefault(link["id"], link)
+    for e in prev_out:
+        if e.get("pre") != "orphan" or e.get("status") != "open":
+            continue
+        link = by_id.get(e["id"])
+        if link is not None:
+            e["file"], e["line"], e["lo"], e["hi"] = (link["file"], link["line"],
+                                                      link["line"], link["line"])
+            e["orphan"] = False
+        elif complete:
+            e["status"] = "resolved"
