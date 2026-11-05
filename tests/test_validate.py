@@ -66,6 +66,12 @@ class NormalizeOutputTest(unittest.TestCase):
         self.assertNotIn("suggestion", f)
         self.assertNotIn("end_line", f)
 
+    def test_same_as_kept_only_as_a_string(self):
+        f = normalize_output(out(dict(GOOD, same_as="i1")))["findings"][0]
+        self.assertEqual(f["same_as"], "i1")
+        f = normalize_output(out(dict(GOOD, same_as=3)))["findings"][0]
+        self.assertNotIn("same_as", f)
+
     def test_previous_and_reason(self):
         prev = [{"id": "a", "status": "open"}, {"id": 1, "status": "open"},
                 {"id": "b", "status": "gone"}, "x", {"id": "c", "status": "resolved", "note": "n"}]

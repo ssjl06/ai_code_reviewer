@@ -1,20 +1,16 @@
 """Merge chunk findings and compute the deterministic review verdict."""
 from __future__ import annotations
 
-import hashlib
 import re
 from typing import Dict, List, Optional, Set, Tuple
+
+from review.ledger import classify, finding_id, unique_id  # noqa: F401  (finding_id re-exported)
 
 SEV_RANK = {"critical": 0, "major": 1, "minor": 2, "info": 3}
 OK_STATUSES = ("ok", "partial")  # chunks whose output is used; only "ok" counts as reviewed
 STATUS_RANK = {"open": 0, "unclear": 1, "resolved": 2}
 _ROOT = re.compile(r"^(?:\./|/)+")
 _DIFF_PREFIX = re.compile(r"^[ab]/")
-
-
-def finding_id(f: dict) -> str:
-    key = "%s:%s:%s" % (f.get("file"), f.get("anchor") or f.get("line"), f.get("title"))
-    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
 
 
 def normalize_path(p: str, known: Optional[Set[str]] = None) -> str:
@@ -137,22 +133,23 @@ def _summaries(results: List[dict]) -> List[str]:
 
 
 def merge(results, cfg, previous, changed, no_targets, skipped=None, anchor=None,
-          chunk_files: Optional[Dict[int, List[str]]] = None, truncated=None):
+          chunk_files: Optional[Dict[int, List[str]]] = None, truncated=None,
+          closed: Optional[List[dict]] = None):
     kept, dropped = _collect(results, cfg, changed, chunk_files)
     findings = _dedupe(kept)
     for f in findings:
         in_block = f.get("severity") in cfg["block_severities"]
         if anchor is not None:
             f["anchor"] = anchor(f["file"], f["line"])
-        f["id"] = finding_id(f)
         f["blocking"] = in_block and f["confidence"] >= cfg["block_confidence"]
         f["needs_check"] = in_block and not f["blocking"]
-    prev_ids = {p["id"] for p in previous}
     # previous entries come from previous.relocate, so their "file" is already the renamed path
-    prev_keys = {(p["file"], p["anchor"]): p.get("blocking") for p in previous if p.get("anchor")}
-    findings = [f for f in findings if f["id"] not in prev_ids and not (
-        (f["file"], f.get("anchor")) in prev_keys
-        and not (f["blocking"] and not prev_keys[(f["file"], f["anchor"])]))]
+    known = list(previous) + list(closed or [])
+    findings, duplicates, links = classify(findings, known)
+    taken = {i["id"] for i in known}
+    for f in findings:
+        f["id"] = unique_id(f, taken)
+        taken.add(f["id"])
     prev_out = _previous(results, previous, chunk_files)
     incomplete = sorted(r["index"] for r in results if r.get("status") != "ok")
     errors = [[r["index"], str(r.get("error") or r.get("status"))[:200]]
@@ -170,6 +167,7 @@ def merge(results, cfg, previous, changed, no_targets, skipped=None, anchor=None
         event = "APPROVE"
     findings.sort(key=lambda f: (_sev(f), -f["confidence"], f["file"], f["line"]))
     return {"event": event, "findings": findings, "previous": prev_out,
+            "duplicates": duplicates, "links": links,
             "incomplete": incomplete, "errors": errors, "failed_all": failed_all,
             "no_targets": no_targets, "summaries": _summaries(results),
             "dropped": dropped, "skipped": skipped, "unclear_blocking": unclear_blocking,

@@ -1,12 +1,35 @@
 """Issue ledger: review issues tracked as line regions that follow the code across pushes."""
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+import hashlib
+from typing import Dict, List, Optional, Set, Tuple
 
 from review.previous import _closest
 from review.regions import map_region
 
 CLOSED = ("resolved", "waived")
+NEAR = 3       # a finding this close to an issue's region is the same issue
+SAME_AS = 15   # how far from the region a `same_as` may point
+
+
+def finding_id(f: dict) -> str:
+    """Moved here from `aggregate` so that `unique_id` needs no import of it (aggregate
+    imports ledger, not the other way round)."""
+    key = "%s:%s:%s" % (f.get("file"), f.get("anchor") or f.get("line"), f.get("title"))
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
+
+
+def unique_id(f: dict, taken: Set[str]) -> str:
+    """`finding_id(f)`, rehashed with a counter suffix while it is taken."""
+    base = finding_id(f)
+    if base not in taken:
+        return base
+    n = 1
+    while True:
+        cand = hashlib.sha1(("%s#%d" % (base, n)).encode("utf-8")).hexdigest()[:8]
+        if cand not in taken:
+            return cand
+        n += 1
 
 
 def new_issue(f: dict) -> dict:
@@ -60,3 +83,40 @@ def advance(issues: List[dict], u0: Optional[Dict[str, dict]],
         else:
             i["line"], i["lo"], i["hi"] = mapped
     return out, u0 is None
+
+
+def _dist(i: dict, line: int) -> int:
+    lo, hi = i.get("lo", i["line"]), i.get("hi", i["line"])
+    return lo - line if line < lo else max(0, line - hi)
+
+
+def _closed(i: dict) -> bool:
+    return i.get("status", "open") in CLOSED
+
+
+def classify(findings: List[dict], issues: List[dict]) -> Tuple[List[dict], List[dict], List[dict]]:
+    """Split `findings` into `(new, duplicates, links)`. A finding naming an issue in `same_as`
+    (an orphan anywhere, any other issue in its file within SAME_AS lines) or lying within NEAR
+    lines of a non-orphan issue's region is not new. A closed issue swallows it as a duplicate
+    (`dup_of` set); an open one swallows it as a duplicate by position or as a link by `same_as`.
+    Position never matches an orphan; an open issue wins over a closed one."""
+    by_id = {i["id"]: i for i in issues}
+    new, dups, links = [], [], []
+    for f in findings:
+        target, as_link = None, False
+        ref = by_id.get(f.get("same_as"))
+        if ref is not None and (ref.get("orphan") or (
+                ref["file"] == f["file"] and _dist(ref, f["line"]) <= SAME_AS)):
+            target, as_link = ref, not _closed(ref)
+        else:
+            near = [i for i in issues if not i.get("orphan") and i["file"] == f["file"]
+                    and _dist(i, f["line"]) <= NEAR]
+            if near:
+                target = min(near, key=lambda i: (_closed(i), _dist(i, f["line"])))
+        if target is None:
+            new.append(f)
+        elif as_link:
+            links.append({"id": target["id"], "file": f["file"], "line": f["line"]})
+        else:
+            dups.append(dict(f, dup_of=target["id"]))
+    return new, dups, links

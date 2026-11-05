@@ -4,9 +4,9 @@ from review.aggregate import merge
 from tests.test_aggregate import CFG, F, P, res
 
 
-def run(results, prev=(), chunk_files=None, truncated=None, anchor=None):
+def run(results, prev=(), chunk_files=None, truncated=None, anchor=None, closed=None):
     return merge(results, CFG, list(prev), {"a.cu": {10}}, False, anchor=anchor,
-                 chunk_files=chunk_files, truncated=truncated)
+                 chunk_files=chunk_files, truncated=truncated, closed=closed)
 
 
 class ResolvedTrustTest(unittest.TestCase):
@@ -55,17 +55,33 @@ class RereportAndTruncTest(unittest.TestCase):
     def prev(self, blocking):
         return dict(P(id="p1", blocking=blocking), anchor="aaaa0000", pre="ask", located=True)
 
-    def test_more_blocking_rereport_kept(self):
+    def test_more_blocking_rereport_is_merged_not_kept(self):
         r = run([res(0, [F(title="other", sev="critical", conf=95)])], [self.prev(False)],
                 anchor=lambda p, l: "aaaa0000")
-        self.assertEqual(([f["title"] for f in r["findings"]], r["event"]),
-                         (["other"], "REQUEST_CHANGES"))
+        self.assertEqual(r["findings"], [])
+        self.assertEqual(len(r["duplicates"]), 1)
+        self.assertEqual(r["duplicates"][0]["dup_of"], "p1")
+        self.assertFalse(r["previous"][0]["blocking"])  # the issue keeps its severity
+        self.assertEqual(r["event"], "APPROVE")
 
     def test_not_more_blocking_rereport_dropped(self):
         for prev_blocking, sev in ((True, "critical"), (False, "minor")):
             r = run([res(0, [F(title="other", sev=sev, conf=95)])], [self.prev(prev_blocking)],
                     anchor=lambda p, l: "aaaa0000")
             self.assertEqual(r["findings"], [])
+
+    def test_new_ids_never_collide_with_known_ids(self):
+        from review.ledger import finding_id
+        taken = finding_id(F(line=10, title="t"))
+        closed = [dict(P(id=taken, line=300), status="resolved")]
+        r = run([res(0, [F(line=10)])], [], closed=closed)
+        self.assertEqual(len(r["findings"]), 1)
+        self.assertNotEqual(r["findings"][0]["id"], taken)
+
+    def test_closed_issue_swallows_a_critical_reraise(self):
+        closed = [dict(P(id="c1"), status="resolved")]
+        r = run([res(0, [F(sev="critical", conf=95)])], [], closed=closed)
+        self.assertEqual((r["findings"], len(r["duplicates"]), r["event"]), ([], 1, "APPROVE"))
 
     def test_truncated_makes_incomplete_comment(self):
         r = run([res(0, [])], truncated=["big.py"])

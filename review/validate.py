@@ -44,6 +44,8 @@ def _finding(raw: Any) -> Optional[dict]:
          "title": _str(raw.get("title"))[:TITLE_MAX], "detail": _str(raw.get("detail"))}
     if isinstance(raw.get("suggestion"), str):
         f["suggestion"] = raw["suggestion"]
+    if isinstance(raw.get("same_as"), str):
+        f["same_as"] = raw["same_as"]
     end = _int(raw.get("end_line"))
     if end is not None and end >= line:
         f["end_line"] = end

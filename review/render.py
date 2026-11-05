@@ -120,6 +120,8 @@ def _sections(review: dict, body_only: list, meta: dict) -> list:
                                        p["title"], " — " + p["note"] if p.get("note") else "")
                  for p in prev]
         secs.append("### 이전 지적 처리 현황\n" + "\n".join(lines or ["- 없음"]))
+    if review.get("duplicates"):
+        secs.append("기존 이슈와 중복되어 생략 %d건" % len(review["duplicates"]))
     check = [f for f in review["findings"] if f.get("needs_check")]
     if check:
         secs.append("### 확인 필요 (confidence < 80)\n" + "\n".join(
