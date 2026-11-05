@@ -53,11 +53,19 @@ def _deleted(hunks: List[Hunk], line: int) -> bool:
     return any(ol > 0 and nl == 0 and os_ <= line < os_ + ol for os_, ol, _, nl in hunks)
 
 
+def _rewrite(hunks: List[Hunk], line: int) -> Optional[Hunk]:
+    """The hunk that replaces `line` with other lines, if any."""
+    return next((h for h in hunks if h[3] > 0 and h[0] <= line < h[0] + h[1]), None)
+
+
 def map_region(hunks: List[Hunk], line: int, lo: int, hi: int) -> Optional[Tuple[int, int, int]]:
-    """Map (line, lo, hi); None when every line of [lo, hi] was deleted."""
+    """Map (line, lo, hi); None when every line of [lo, hi] was deleted. An end inside a
+    rewritten hunk takes that hunk's new start or end, and the region is then cut to RADIUS
+    lines around the mapped line. A pure insertion (no old lines) never widens a region."""
     if hi >= lo and all(_deleted(hunks, n) for n in range(lo, hi + 1)):
         return None
     new_line = map_line(hunks, line)
-    new_lo = max(map_line(hunks, lo), new_line - RADIUS)
-    new_hi = min(map_line(hunks, hi), new_line + RADIUS)
-    return new_line, new_lo, new_hi
+    first, last = _rewrite(hunks, lo), _rewrite(hunks, hi)
+    new_lo = first[2] if first else map_line(hunks, lo)
+    new_hi = last[2] + last[3] - 1 if last else map_line(hunks, hi)
+    return new_line, max(new_lo, new_line - RADIUS), min(new_hi, new_line + RADIUS)

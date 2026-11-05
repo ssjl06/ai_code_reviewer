@@ -53,6 +53,22 @@ class MapTest(unittest.TestCase):
     def test_insertion_inside_a_region_does_not_widen_it(self):
         self.assertEqual(map_region([(100, 0, 101, 1000)], 100, 95, 105), (100, 95, 105))
 
+    def test_a_rewritten_line_takes_the_new_range_of_its_hunk_up_to_the_radius(self):
+        self.assertEqual(map_region([(10, 1, 10, 11)], 10, 10, 10), (10, 10, 15))
+
+    def test_a_rewrite_into_a_few_lines_takes_all_of_them(self):
+        self.assertEqual(map_region([(10, 2, 10, 3)], 11, 11, 11), (11, 10, 12))
+
+    def test_only_the_end_inside_a_rewrite_is_widened(self):
+        self.assertEqual(map_region([(10, 2, 10, 4)], 8, 8, 10), (8, 8, 13))
+        self.assertEqual(map_region([(10, 2, 10, 4)], 14, 11, 14), (16, 11, 16))
+
+    def test_a_rewrite_keeps_the_shift_of_the_hunks_above(self):
+        self.assertEqual(map_region([(1, 0, 2, 3), (10, 1, 13, 2)], 10, 10, 10), (13, 13, 14))
+
+    def test_a_pure_deletion_inside_the_region_does_not_widen_it(self):
+        self.assertEqual(map_region([(10, 2, 9, 0)], 12, 11, 12), (10, 9, 10))
+
     def test_no_hunks_is_identity(self):
         self.assertEqual(map_region([], 7, 5, 9), (7, 5, 9))
 

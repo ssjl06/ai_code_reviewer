@@ -85,15 +85,24 @@ class Scenario(IntegrationBase):
         r = self.go([rule("- src/k.cu\n", [find("src/k.cu", 2)])])
         self.dismiss_all()  # waived
         self.push({"src/k.cu": "int k(int *p) {\n" + "".join("  int w%d;\n" % n for n in range(11))
-                   + "}\n"})  # line 2 is rewritten into 11 lines: the region gets a width
-        self.assertEqual(self.go().issue("i1")["status"], "waived")
+                   + "}\n"})
+        widened = self.go().issue("i1")  # line 2 is rewritten into 11 lines: 5 of them count
+        self.assertEqual((widened["status"], widened["lo"], widened["hi"]), ("waived", 2, 7))
         lines = BUGGY.split("\n")[:1] + ["  int w%d;" % n for n in range(11)] + ["}", ""]
         body = lines[:5] + ["int a%d;" % n for n in range(1000)] + lines[5:]
         self.push({"src/k.cu": "\n".join(body)})
         last = self.go([rule("- src/k.cu\n", [find("src/k.cu", 600, "New in inserted code")])])
         self.assertEqual(last.new_findings, 1)
         i1 = last.issue("i1")
-        self.assertLessEqual(i1["hi"] - i1["lo"], 10)
+        self.assertEqual((i1["lo"], i1["hi"]), (2, 7))  # the inserted code did not widen it
+
+    def test_reworded_reraise_on_a_rewritten_block_is_the_same_issue(self):
+        self.go([rule("- src/k.cu\n", [find("src/k.cu", 2)])])
+        body = "".join("  int w%d = p[%d];\n" % (n, n) for n in range(11))
+        self.push({"src/k.cu": "int k(int *p) {\n" + body + "}\n"})
+        r = self.go([rule("- src/k.cu\n", [find("src/k.cu", 9, "Same defect, reworded")])])
+        self.assertEqual(r.new_findings, 0)
+        self.assertEqual((r.issue("i1")["lo"], r.issue("i1")["hi"]), (2, 7))
 
     def test_waiver_does_not_cross_to_another_variable(self):
         """A waived 5-line block is deleted; the same block on another variable lands in another file."""
