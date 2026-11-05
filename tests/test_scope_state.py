@@ -288,6 +288,16 @@ class RecheckScopeTest(unittest.TestCase):
                    chunk_files={c["index"]: c["files"] for c in chunks}, shown=shown)
         self.assertEqual([p["status"] for p in rv["previous"]], ["resolved"])
 
+    def test_ids_pending_from_the_last_run_are_marked_on_a_new_head(self):
+        two = [issue_finding(id_="i1"), issue_finding("b.cc", 5, "i2")]
+        tmp, d, base, head, state = repo_with_review(two)
+        with tmp:
+            s = determine(d, base, commit(d, {"b.cc": code("b").replace("_3 = 3", "_3 = 33")}),
+                          dict(state, recheck_pending=["i2"]), CFG)
+        self.assertEqual([(p["id"], p.get("pending", False)) for p in s["previous"]],
+                         [("i1", False), ("i2", True)])
+        self.assertEqual(self.ids(s), ["i1", "i2"])  # all open issues are still rechecked
+
     def test_pending_does_not_change_the_verdict(self):
         review = run_blocking_with_pending()
         self.assertEqual((review["event"], review["recheck_pending"]),

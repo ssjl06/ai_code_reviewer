@@ -101,6 +101,8 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
         p: out["added"][p] | out["deleted"][p] for p in tpaths}
     ask = {i["id"] for i in previous} if prev and prev["sha"] != head else set(pending)
     targets += _recheck(previous, rev, tpaths, limit, ask)
+    for p in previous:  # left out by the last run: first in line for the recheck budget
+        p["pending"] = p["id"] in pending
     if prev is None:
         mode = "full"
     elif not targets and not pending and not any(

@@ -229,6 +229,22 @@ class AssignRecheckTest(unittest.TestCase):
         self.assertEqual((by, left), ({}, []))  # gone.cc has no blob: nothing to show
 
 
+    def test_a_pending_id_gets_the_slot_before_the_others(self):
+        blobs = {"a.cc": ["x" * 100] * 100}
+        cfg = {"recheck_max_chars": 5000}  # room for one item
+        previous = [prev("i1", "a.cc", 50, 50), prev("i2", "a.cc", 50, 50, pending=True)]
+        by, left = self.assign([chunk("a.cc")], previous, blobs, cfg)
+        self.assertEqual(([i["id"] for i in by[0]], left), (["i2"], ["i1"]))
+
+    def test_the_order_of_the_rest_stays_stable(self):
+        blobs = {"a.cc": ["x" * 100] * 100}
+        cfg = {"recheck_max_chars": 9000}  # room for two items
+        previous = [prev("i1", "a.cc", 50, 50), prev("i2", "a.cc", 50, 50),
+                    prev("i3", "a.cc", 50, 50, pending=True), prev("i4", "a.cc", 50, 50)]
+        by, left = self.assign([chunk("a.cc")], previous, blobs, cfg)
+        self.assertEqual(([i["id"] for i in by[0]], left), (["i3", "i1"], ["i2", "i4"]))
+
+
 class PendingAfterTest(unittest.TestCase):
     def test_recheck_in_a_failed_chunk_is_pending(self):
         from review.ledger import pending_after

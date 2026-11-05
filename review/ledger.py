@@ -147,12 +147,13 @@ def assign_recheck(chunks: List[dict], previous: List[dict], blobs: Dict[str, Li
     `start == lo`, `text` has no trailing newline). Each chunk has its own budget of
     `recheck_max_chars` on top of its diff; an item that does not fit, or whose file is in no
     chunk, is left out: the second value lists those ids. An issue whose file has no blob
-    cannot be shown and is neither."""
+    cannot be shown and is neither. Issues marked `pending` (left out by the previous run) are
+    served first, the others keep their order, so a left-out issue gets a slot on the next head."""
     budget = int(cfg["recheck_max_chars"])
     used: Dict[int, int] = {}
     by_chunk: Dict[int, List[dict]] = {}
     left: List[str] = []
-    for p in previous:
+    for p in sorted(previous, key=lambda p: not p.get("pending")):
         lines = blobs.get(p["file"])
         if (not p.get("recheck") or p.get("pre") != "ask" or p.get("orphan")
                 or lines is None):
