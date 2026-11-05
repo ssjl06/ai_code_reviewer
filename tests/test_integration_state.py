@@ -238,6 +238,22 @@ class WaiverFlowTest(IntegrationBase):
         self.assertEqual(len(self.gh.posted), posts)  # the bot's own dismissal is no waiver
         self.assertIn("새로 리뷰할 변경 없음", self.stdout)
 
+    def test_a_waiver_with_a_push_of_only_excluded_files_still_posts(self):
+        prev = self.first_review()
+        self.gh.add_dismissal(1, "alice")
+        self.gh.head = self.add_commit({"vendor/lib.c": "int v;\n"})
+        before, posts = self.calls(), len(self.gh.posted)
+        self.assertEqual(self.run_main("crash", "--repo", self.R, "--pr", "1",
+                                       "--set", 'exclude_globs=["vendor/**"]'), 0)
+        self.assertEqual((self.calls() - before, len(self.gh.posted)), (0, posts + 1))
+        r = Outcome(self, prev=prev)
+        self.assertEqual(r.posted_event, "APPROVE")
+        self.assertEqual(r.issue(prev["issues"][0]["id"])["status"], "waived")
+        self.assertEqual(self.run_main("crash", "--repo", self.R, "--pr", "1",
+                                       "--set", 'exclude_globs=["vendor/**"]'), 0)
+        self.assertEqual(len(self.gh.posted), posts + 1)
+        self.assertIn("새로 리뷰할 변경 없음", self.stdout)
+
     def test_waived_issue_stays_waived_after_a_push(self):
         r = self.run_cli_with_push(dismissed=[1])
         self.assertEqual(r.issue(r.prev["issues"][0]["id"])["status"], "waived")

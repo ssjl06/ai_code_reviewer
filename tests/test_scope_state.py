@@ -329,6 +329,10 @@ class SettleTest(unittest.TestCase):
     def test_an_incomplete_state_does_not_settle(self):
         self.assertEqual(self.settle_scope(complete=False, seen={}, seen_files={}, seen_hunks={})[1]["mode"], "incremental")
 
+    def test_a_waiver_on_a_same_sha_incomplete_state_is_not_unchanged(self):
+        st, s = self.settle_scope(complete=True, recheck_pending=["gone"])
+        self.assertNotEqual(s["mode"], "unchanged")
+
     def test_settle_state_copies_the_seen_data_and_keeps_the_ledger(self):
         st, s = self.settle_scope()
         review = merge([], CFG, s["previous"], s["changed"], False, closed=s["closed"])

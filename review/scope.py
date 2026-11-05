@@ -110,7 +110,7 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
         p["pending"] = p["id"] in pending
     if prev is None:
         mode = "full"
-    elif not targets and not pending and not any(
+    elif not targets and not pending and not (prev or {}).get("waived_now") and not any(
             p["pre"] in ("resolved", "orphan") for p in previous):
         mode = "unchanged"
     else:
