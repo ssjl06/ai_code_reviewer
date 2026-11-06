@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from typing import Iterator, Optional
 
-KOREAN_MIN_RATIO = 0.3   # Hangul share of the letters required to count as Korean
+KOREAN_MIN_HANGUL = 2    # Hangul characters that make an item Korean, however many English words
 KOREAN_MIN_LETTERS = 12  # fewer letters than this (e.g. "LGTM") is too short to judge
 _CODE = re.compile(r"`+[^`]*`+")
 _FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,}).*?(?:^[ \t]*\1[`~]*[ \t]*$|\Z)", re.M | re.S)
@@ -50,7 +50,7 @@ def _item_korean(text: str) -> bool:
     text = _CODE.sub(" ", text)
     hangul, ascii_ = len(_HANGUL.findall(text)), len(_ASCII.findall(text))
     letters = hangul + ascii_
-    return letters < KOREAN_MIN_LETTERS or hangul >= KOREAN_MIN_RATIO * letters
+    return letters < KOREAN_MIN_LETTERS or hangul >= KOREAN_MIN_HANGUL
 
 
 def is_korean(output: dict) -> bool:

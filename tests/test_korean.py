@@ -1,6 +1,6 @@
 import unittest
 
-from review.korean import KOREAN_MIN_RATIO, _suggestion_prose, is_korean, merge_korean
+from review.korean import KOREAN_MIN_HANGUL, _item_korean, _suggestion_prose, is_korean, merge_korean
 
 
 def F(line=3, title="범위를 벗어난 읽기", detail="`p[1]`은 버퍼 밖을 읽는다.", **kw):
@@ -22,7 +22,7 @@ EN = OUT(F(title="Out-of-bounds read", detail="`p[1]` reads past the end of the 
 
 class IsKoreanTest(unittest.TestCase):
     def test_threshold_constant(self):
-        self.assertEqual(KOREAN_MIN_RATIO, 0.3)
+        self.assertEqual(KOREAN_MIN_HANGUL, 2)
 
     def test_korean_output(self):
         self.assertTrue(is_korean(OUT(F(suggestion="`len`을 먼저 확인한다."))))
@@ -38,12 +38,34 @@ class IsKoreanTest(unittest.TestCase):
     def test_inline_code_is_ignored(self):
         code = "`std::vector<int> buffer_with_a_long_identifier_name`"
         self.assertTrue(is_korean(OUT(F(detail=code + " 해제 후 사용"), summary="")))
-        self.assertFalse(is_korean(OUT(F(detail="use after free 해제", title=""), summary="")))
+        self.assertFalse(is_korean(OUT(F(detail="use after free 해", title=""), summary="")))
 
-    def test_mixed_ratio(self):
-        # 6 Hangul vs 14 ASCII letters -> exactly 30% counts as Korean
-        self.assertTrue(is_korean(OUT(F(detail="한국어입니다 abcdefg hijklmn"), summary="")))
-        self.assertFalse(is_korean(OUT(F(detail="한국어입니 abcdefg hijklmn"), summary="")))
+    def test_mixed_text_needs_two_hangul(self):
+        self.assertTrue(is_korean(OUT(F(detail="한국어 abcdefg hijklmn"), summary="")))
+        self.assertFalse(is_korean(OUT(F(detail="한 abcdefg hijklmn"), summary="")))
+
+    MIXED = (
+        "`std::vector<int>::push_back`가 realloc을 일으키면 iterator invalidation이 발생한다.",
+        "mutex lock 없이 shared_ptr use_count를 읽으면 data race가 된다.",
+        "CUDA kernel의 __device__ function에서 host pointer를 dereference한다.",
+        "nullptr check 없이 cudaMalloc 결과를 cudaMemcpy에 넘긴다.",
+    )
+
+    def test_identifier_heavy_korean_sentences_pass(self):
+        for t in self.MIXED:
+            with self.subTest(t=t):
+                self.assertTrue(_item_korean(t))
+                self.assertTrue(is_korean(OUT(F(detail=t), summary="")))
+
+    def test_fully_english_sentence_still_fails(self):
+        t = "The pointer is read after it was freed."
+        self.assertFalse(_item_korean(t))
+        self.assertFalse(is_korean(OUT(F(detail=t), summary="")))
+
+    def test_one_english_detail_in_korean_output_fails(self):
+        out = OUT(F(detail="The pointer is read after it was freed."),
+                  summary="해제된 포인터를 읽는 버그가 있다.")
+        self.assertFalse(is_korean(out))
 
     def test_each_item_is_judged_alone(self):
         ko = [F(detail="`p[1]`은 길이 1 버퍼의 끝을 넘어서 읽기 때문에 범위 오류가 된다.")] * 5
@@ -120,8 +142,8 @@ class IsKoreanTest(unittest.TestCase):
 
     def test_suggestion_uses_the_same_thresholds(self):
         self.assertTrue(is_korean(OUT(F(suggestion="Fix bounds"))))  # too short to judge
-        self.assertTrue(is_korean(OUT(F(suggestion="한국어입니다 abcdefg hijklmn"))))
-        self.assertFalse(is_korean(OUT(F(suggestion="한국어입니 abcdefg hijklmn"))))
+        self.assertTrue(is_korean(OUT(F(suggestion="한국어 abcdefg hijklmn"))))
+        self.assertFalse(is_korean(OUT(F(suggestion="한 abcdefg hijklmn"))))
 
     def test_previous_note_checked(self):
         prev = [{"id": "f1", "status": "unclear", "note": "Cannot tell whether the lock is held."}]

@@ -494,7 +494,7 @@ Hidden in the bot review body; the latest bot review with a parsable marker
    that field say so.
 7. Korean re-ask: when a chunk's valid output is not Korean (`review/korean.py`:
    per item, namely summary, each title, detail, suggestion, note and incomplete_reason; an
-   item fails when, outside backtick code, Hangul is under 30% of its letters;
+   item fails when, outside backtick code, it has fewer than 2 Hangul characters (identifiers are not force-translated);
    an item with fewer than 12 letters passes; `suggestion` is judged after removing fenced
    blocks, inline code and lines that look like code as a whole (ending with `;`, `{` or `}`,
    starting with `#include`, `//`, `#!` or a statement keyword, or an assignment or single call;
