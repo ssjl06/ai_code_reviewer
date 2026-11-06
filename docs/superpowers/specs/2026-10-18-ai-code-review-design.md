@@ -492,18 +492,18 @@ Hidden in the bot review body; the latest bot review with a parsable marker
    body, closes its output rules, and is the last line of the chunk prompt and
    the fallback prompt. `incomplete_reason` must be Korean too; the rules for
    that field say so.
-7. Korean re-ask: when a chunk's valid output is not Korean (`review/korean.py`:
-   per item, namely summary, each title, detail, suggestion, note and incomplete_reason; an
-   item fails when, outside backtick code, it has fewer than 2 Hangul characters (identifiers are not force-translated);
-   an item with fewer than 12 letters passes; `suggestion` is judged after removing fenced
-   blocks, inline code and lines that look like code as a whole (ending with `;`, `{` or `}`,
-   starting with `#include`, `//`, `#!` or a statement keyword, or an assignment or single call;
-   prose that merely contains `;`, `(` or `=` is judged), the runner resumes the session once, also after a conclusion
+7. Korean re-ask: when a chunk's valid output has no Korean at all (`review/korean.py`:
+   the whole output is judged once, over summary, each title, detail, suggestion, note and
+   incomplete_reason, each after removing fenced blocks and inline code; a single Hangul
+   character in any of them makes the output Korean, so mixed output with English
+   identifiers or an English sentence is not re-asked and nothing is force-translated;
+   output with fewer than 12 ASCII letters in total, such as "LGTM" or empty, is too short to judge),
+   the runner resumes the session once, also after a conclusion
    fallback, with a prompt to translate only the prose fields. This is a second pass
    in `run_all` after every chunk has finished, on a pool of `concurrency`, so a
    translation never delays a later chunk. Each re-ask is limited by `fallback_timeout_s`
    and the time left until 300 s past the deadline; past that it is skipped. The answer
-   is used only if it is valid, Korean and keeps the same findings (file, line, severity,
+   is used only if it is valid, has some Korean and keeps the same findings (file, line, severity,
    category, in order) and previous statuses; only its prose is taken. Otherwise the
    original output is kept, and the log says so. A re-ask never changes a chunk's status.
 
