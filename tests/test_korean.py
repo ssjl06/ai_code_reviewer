@@ -1,6 +1,6 @@
 import unittest
 
-from review.korean import KOREAN_MIN_HANGUL, _item_korean, _suggestion_prose, is_korean, merge_korean
+from review.korean import KOREAN_MIN_LETTERS, is_korean, merge_korean
 
 
 def F(line=3, title="범위를 벗어난 읽기", detail="`p[1]`은 버퍼 밖을 읽는다.", **kw):
@@ -22,27 +22,51 @@ EN = OUT(F(title="Out-of-bounds read", detail="`p[1]` reads past the end of the 
 
 class IsKoreanTest(unittest.TestCase):
     def test_threshold_constant(self):
-        self.assertEqual(KOREAN_MIN_HANGUL, 2)
+        self.assertEqual(KOREAN_MIN_LETTERS, 12)
 
     def test_korean_output(self):
         self.assertTrue(is_korean(OUT(F(suggestion="`len`을 먼저 확인한다."))))
 
-    def test_english_output(self):
+    def test_fully_english_output_fails(self):
         self.assertFalse(is_korean(EN))
+
+    def test_english_summary_without_findings_fails(self):
+        self.assertFalse(is_korean(OUT(summary="No problems were found in this change.")))
+
+    def test_korean_summary_with_english_detail_passes(self):
+        out = OUT(F(detail="The pointer is read after it was freed."),
+                  summary="해제된 포인터를 읽는 버그가 있다.")
+        self.assertTrue(is_korean(out))
+
+    def test_one_hangul_character_is_enough(self):
+        self.assertTrue(is_korean(OUT(F(detail="The pointer is read after it was freed 해."),
+                                      summary="Found one bug in the kernel.")))
+
+    def test_hangul_only_in_code_fails(self):
+        self.assertFalse(is_korean(OUT(F(detail="Reads past the end of the buffer `한글`.",
+                                         title="Out-of-bounds read"),
+                                       summary="Found one bug in the kernel.")))
+        fenced = "Check the length first.\n```cpp\n// 한글 주석\nx = 1;\n```"
+        self.assertFalse(is_korean(OUT(F(detail="Reads past the end.", title="Out of bounds",
+                                         suggestion=fenced), summary="")))
+
+    def test_unclosed_fence_does_not_hide_other_items(self):
+        out = OUT(F(suggestion="```cpp\nx = 1;\n"), summary="커널에서 오류를 찾았다.")
+        self.assertTrue(is_korean(out))
 
     def test_empty_and_short_prose_counts_as_korean(self):
         self.assertTrue(is_korean(OUT(summary="")))
         self.assertTrue(is_korean(OUT(summary="LGTM")))
         self.assertTrue(is_korean({"summary": "", "findings": [], "previous_findings": []}))
 
+    def test_letters_are_counted_across_items(self):
+        out = OUT(F(title="Bounds", detail="Off by one", suggestion=""), summary="Short one")
+        self.assertFalse(is_korean(out))  # 8 + 9 + 8 letters in total
+
     def test_inline_code_is_ignored(self):
         code = "`std::vector<int> buffer_with_a_long_identifier_name`"
-        self.assertTrue(is_korean(OUT(F(detail=code + " 해제 후 사용"), summary="")))
-        self.assertFalse(is_korean(OUT(F(detail="use after free 해", title=""), summary="")))
-
-    def test_mixed_text_needs_two_hangul(self):
-        self.assertTrue(is_korean(OUT(F(detail="한국어 abcdefg hijklmn"), summary="")))
-        self.assertFalse(is_korean(OUT(F(detail="한 abcdefg hijklmn"), summary="")))
+        self.assertTrue(is_korean(OUT(F(detail=code, title=""), summary="")))
+        self.assertFalse(is_korean(OUT(F(detail="use after free of the buffer", title=""), summary="")))
 
     MIXED = (
         "`std::vector<int>::push_back`가 realloc을 일으키면 iterator invalidation이 발생한다.",
@@ -54,102 +78,17 @@ class IsKoreanTest(unittest.TestCase):
     def test_identifier_heavy_korean_sentences_pass(self):
         for t in self.MIXED:
             with self.subTest(t=t):
-                self.assertTrue(_item_korean(t))
                 self.assertTrue(is_korean(OUT(F(detail=t), summary="")))
 
-    def test_fully_english_sentence_still_fails(self):
-        t = "The pointer is read after it was freed."
-        self.assertFalse(_item_korean(t))
-        self.assertFalse(is_korean(OUT(F(detail=t), summary="")))
+    def test_incomplete_reason_counts_as_prose(self):
+        self.assertTrue(is_korean(OUT(F(title="", detail=""), summary="", reason="호출부를 확인하지 못했다.")))
+        self.assertFalse(is_korean(OUT(summary="", reason="Tool budget was exhausted before callers.")))
 
-    def test_one_english_detail_in_korean_output_fails(self):
-        out = OUT(F(detail="The pointer is read after it was freed."),
-                  summary="해제된 포인터를 읽는 버그가 있다.")
-        self.assertFalse(is_korean(out))
-
-    def test_each_item_is_judged_alone(self):
-        ko = [F(detail="`p[1]`은 길이 1 버퍼의 끝을 넘어서 읽기 때문에 범위 오류가 된다.")] * 5
-        for bad in (dict(title="Out-of-bounds read"),
-                    dict(detail="`p[1]` reads past the end of the buffer.")):
-            with self.subTest(bad=bad):
-                self.assertFalse(is_korean(OUT(*ko, F(**bad))))
-        self.assertTrue(is_korean(OUT(*ko, F(title="Fix bounds"))))  # too short to judge
-
-    def test_english_incomplete_reason_fails(self):
-        self.assertFalse(is_korean(OUT(F(), reason="Tool budget was exhausted before callers.")))
-        self.assertTrue(is_korean(OUT(F(), reason="호출부를 확인하지 못했다.")))
-
-    def test_code_suggestion_is_not_judged(self):
-        code = "if (index < buffer_length) { value = buffer[index]; }"
-        self.assertTrue(is_korean(OUT(F(suggestion=code))))
-
-    def test_prose_with_four_plain_words_is_kept(self):
-        for text in ("if the buffer is empty, skip the copy and return early.",
-                     "return an error when the size is zero instead of crashing.",
-                     "Use a lock around this block;",
-                     "Check the length (in bytes) before indexing the buffer.",
-                     "Check the length; then index the buffer."):
-            self.assertEqual(_suggestion_prose(text), text)
-            self.assertFalse(is_korean(OUT(F(suggestion=text))), text)
-
-    def test_code_lines_are_still_removed(self):
-        for text in ("return foo(bar);", "for (int i = 0; i < n; ++i) {", "auto x = compute();",
-                     "#include <vector>", "}"):
-            self.assertEqual(_suggestion_prose(text), "", text)
-
-    def test_english_prose_suggestion_fails(self):
-        self.assertFalse(is_korean(OUT(F(suggestion="Check the length before indexing the buffer."))))
-
-    def test_prose_with_code_characters_is_judged(self):
-        for text in ("Check the length (in bytes) before indexing the buffer.",
-                     "Use a lock here; the map is shared between threads.",
-                     "Set the limit = 5 for this path."):
-            with self.subTest(text=text):
-                self.assertFalse(is_korean(OUT(F(suggestion=text))))
-
-    def test_code_lines_as_a_whole_are_not_judged(self):
-        for code in ("std::lock_guard<std::mutex> lock(mu);", "x = compute(y)", "foo(a, b)",
-                     "total += compute_the_total_value(items)", "#include <mutex_and_condition>",
-                     "// guard the shared map with a mutex", "#!/usr/bin/env python_interpreter",
-                     "return checked_lookup_of_the_buffer_value", "while (retry_budget_remaining) do_it",
-                     "import concurrent_futures_thread_pool", "const auto& entry_in_the_map = m[k]",
-                     "struct Entry { int key_of_the_entry; int value_of_the_entry; }"):
-            with self.subTest(code=code):
-                self.assertTrue(is_korean(OUT(F(suggestion=code))))
-
-    def test_code_only_suggestion_passes(self):
-        for code in ("```cpp\nif (index < length) {\n  value = buffer[index];\n}\n```",
-                     "```\nreturn checked_lookup_of_the_buffer_value\n```",
-                     "~~~\nreturn checked_lookup_of_the_buffer_value\n~~~",
-                     "```python\nwith_open_file_and_a_long_identifier\n",  # never closed
-                     "if (index < buffer_length) {\n  value = buffer[index];\n}\n",
-                     "`checked_lookup_of_the_buffer_value`"):
-            with self.subTest(code=code):
-                self.assertTrue(is_korean(OUT(F(suggestion=code))))
-
-    def test_korean_sentence_with_code_block_passes(self):
-        code = "```cpp\nreturn checked_lookup_of_the_buffer_value\n```"
-        self.assertTrue(is_korean(OUT(F(suggestion="인덱싱 전에 길이를 확인한다.\n" + code))))
-
-    def test_english_sentence_with_code_block_fails(self):
-        code = "```cpp\nvalue = buffer[index];\n```"
-        self.assertFalse(is_korean(OUT(F(suggestion="Check the length first, then index it.\n" + code))))
-
-    def test_inline_code_goes_before_the_code_line_check(self):
-        s = "Replace `lookup(index)` with the checked variant of this helper."
-        self.assertFalse(is_korean(OUT(F(suggestion=s))))
-        self.assertTrue(is_korean(OUT(F(suggestion="`lookup(index) = checked_value`로 바꾼다."))))
-
-    def test_suggestion_uses_the_same_thresholds(self):
-        self.assertTrue(is_korean(OUT(F(suggestion="Fix bounds"))))  # too short to judge
-        self.assertTrue(is_korean(OUT(F(suggestion="한국어 abcdefg hijklmn"))))
-        self.assertFalse(is_korean(OUT(F(suggestion="한 abcdefg hijklmn"))))
-
-    def test_previous_note_checked(self):
-        prev = [{"id": "f1", "status": "unclear", "note": "Cannot tell whether the lock is held."}]
-        self.assertFalse(is_korean(OUT(summary="", prev=prev)))
+    def test_previous_note_counts_as_prose(self):
         prev = [{"id": "f1", "status": "unclear", "note": "락을 잡았는지 알 수 없다."}]
         self.assertTrue(is_korean(OUT(summary="", prev=prev)))
+        prev = [{"id": "f1", "status": "unclear", "note": "Cannot tell whether the lock is held."}]
+        self.assertFalse(is_korean(OUT(summary="", prev=prev)))
 
 
 class MergeKoreanTest(unittest.TestCase):
@@ -175,8 +114,10 @@ class MergeKoreanTest(unittest.TestCase):
         ko = dict(OUT(F(suggestion="길이를 확인한다.")), diff_reviewed=True)
         self.assertIs(merge_korean(en, ko)["diff_reviewed"], False)
 
-    def test_rejects_an_answer_that_leaves_the_suggestion_in_english(self):
-        self.assertIsNone(merge_korean(EN, OUT(F())))  # no suggestion: the English one would stay
+    def test_accepts_a_korean_answer_that_leaves_the_suggestion_in_english(self):
+        merged = merge_korean(EN, OUT(F()))  # no suggestion: the English one stays
+        self.assertIsNotNone(merged)
+        self.assertEqual(merged["findings"][0]["suggestion"], "Check the length before indexing.")
 
     def test_rejects_changed_findings(self):
         self.assertIsNone(merge_korean(EN, OUT(F(line=4, suggestion="확인"))))

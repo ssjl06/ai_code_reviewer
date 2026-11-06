@@ -1,37 +1,19 @@
-"""Detect non-Korean review prose and merge a Korean re-ask into the original chunk output."""
+"""Detect review output with no Korean at all and merge a Korean re-ask into the original chunk output."""
 from __future__ import annotations
 
 import re
 from typing import Iterator, Optional
 
-KOREAN_MIN_HANGUL = 2    # Hangul characters that make an item Korean, however many English words
-KOREAN_MIN_LETTERS = 12  # fewer letters than this (e.g. "LGTM") is too short to judge
+KOREAN_MIN_LETTERS = 12  # fewer ASCII letters than this in the whole output (e.g. "LGTM") is too short to judge
 _CODE = re.compile(r"`+[^`]*`+")
 _FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,}).*?(?:^[ \t]*\1[`~]*[ \t]*$|\Z)", re.M | re.S)
-# A line is code only as a whole: it ends like a statement or block, starts like one, or is an
-# assignment or a call. Prose that merely contains `;`, `(` or `=` is still judged.
-_CODE_END = (";", "{", "}")
-_CODE_START = re.compile(r"^\s*(?:#include|//|#!|(?:if|for|while|return|auto|int|void|const|def|"
-                         r"class|import|from)[ (])")
-_CODE_WHOLE = re.compile(r"^\s*[\w.:<>\[\]*&]+\s*(?:=|\+=|-=)\s*\S"
-                         r"|^\s*[\w.:]+\([^)]*\)\s*;?\s*$")
-# A line opening with 4+ plain words (letters only, optional trailing , . ; :) is prose.
-_PROSE_RUN = re.compile(r"^\s*[A-Za-z]+[,.;:]?(?:\s+[A-Za-z]+[,.;:]?){3}(?=\s|$)")
 _HANGUL = re.compile(r"[ᄀ-ᇿ㄰-㆏가-힣]")
 _ASCII = re.compile(r"[A-Za-z]")
 
 
-def _looks_like_code(line: str) -> bool:
-    if _PROSE_RUN.search(line):
-        return False
-    return (line.rstrip().endswith(_CODE_END) or bool(_CODE_START.match(line))
-            or bool(_CODE_WHOLE.match(line)))
-
-
-def _suggestion_prose(text: str) -> str:
-    """`suggestion` without fenced blocks, inline code and lines that look like code."""
-    text = _CODE.sub(" ", _FENCE.sub("", text))
-    return "\n".join(line for line in text.split("\n") if not _looks_like_code(line))
+def _strip_code(text: str) -> str:
+    """`text` without fenced blocks and inline code. Per item: an unclosed fence runs to its end."""
+    return _CODE.sub(" ", _FENCE.sub("", text))
 
 
 def _prose(output: dict) -> Iterator[str]:
@@ -41,21 +23,23 @@ def _prose(output: dict) -> Iterator[str]:
     for f in output.get("findings") or []:
         yield f.get("title") or ""
         yield f.get("detail") or ""
-        yield _suggestion_prose(f.get("suggestion") or "")
+        yield f.get("suggestion") or ""
     for p in output.get("previous_findings") or []:
         yield p.get("note") or ""
 
 
-def _item_korean(text: str) -> bool:
-    text = _CODE.sub(" ", text)
-    hangul, ascii_ = len(_HANGUL.findall(text)), len(_ASCII.findall(text))
-    letters = hangul + ascii_
-    return letters < KOREAN_MIN_LETTERS or hangul >= KOREAN_MIN_HANGUL
-
-
 def is_korean(output: dict) -> bool:
-    """True when every prose item, outside code, is Korean or too short to judge."""
-    return all(_item_korean(t) for t in _prose(output))
+    """False only when the prose, outside code, has no Hangul at all and enough English to judge.
+
+    One Hangul character anywhere counts as Korean; mixed output is not re-asked. Output with
+    fewer than KOREAN_MIN_LETTERS ASCII letters in total ("LGTM", empty) is too short to judge."""
+    letters = 0
+    for item in _prose(output):
+        text = _strip_code(item)
+        if _HANGUL.search(text):
+            return True
+        letters += len(_ASCII.findall(text))
+    return letters < KOREAN_MIN_LETTERS
 
 
 def _key(f: dict) -> tuple:

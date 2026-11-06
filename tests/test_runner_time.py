@@ -238,12 +238,16 @@ class KoreanPassTest(SimBase):
         self.assertEqual(rs[0]["output"]["summary"], KO["summary"])
         self.assertIs(rs[0]["output"]["diff_reviewed"], False)
 
-    def test_english_suggestion_alone_triggers_the_reask(self):
+    def test_english_suggestion_is_replaced_by_the_reask(self):
         finding = {"file": "a.c", "line": 1, "severity": "major", "confidence": 90,
                    "category": "bug", "title": "범위를 벗어난 읽기",
                    "detail": "버퍼 끝을 넘어 읽는다."}
-        en = dict(KO, findings=[dict(finding, suggestion="Check the length before indexing.")])
-        ko = dict(KO, findings=[dict(finding, suggestion="인덱싱 전에 길이를 확인한다.")])
+        en = dict(EN, findings=[dict(finding, title="Out-of-bounds read",
+                                     detail="It reads past the end of the buffer.",
+                                     suggestion="Check the length before indexing.")])
+        ko = dict(KO, findings=[dict(finding, title="Out-of-bounds read",
+                                     detail="It reads past the end of the buffer.",
+                                     suggestion="인덱싱 전에 길이를 확인한다.")])
         self.answers({"P0": (100, en)})
         self.resume = lambda text, sid: (50, ko, sid)
         rs = self.review(1)

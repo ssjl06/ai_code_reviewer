@@ -275,11 +275,11 @@ python3 -E -s -m review --dry-run --repo <checkout> --base <sha> --head <sha> \
   then reads `diff_reviewed missing` (PR cause "diff_reviewed 필드 누락 또는 불리언 아님").
 
 **Korean prose.** The prose fields (`summary`, `title`, `detail`, `suggestion`, `note`,
-`incomplete_reason`) must be Korean. Each item is judged on its own, `suggestion` after removing
-fenced blocks, inline code and lines that look like code as a whole (ending with `;`, `{` or `}`; starting with `#include`, `//`,
-`#!` or a statement keyword such as `if`, `return`, `int`; or an assignment or a single call).
-Prose that merely contains `;`, `(` or `=` is judged.
-After every chunk has finished, a chunk with an English item is re-asked once on
+`incomplete_reason`) must be Korean. The output is judged once as a whole, after removing fenced blocks and inline
+code: one Hangul character anywhere counts as Korean, so English identifiers or a stray English
+sentence in otherwise Korean text are not re-asked. Output with fewer than 12 ASCII letters in
+total (such as `LGTM`) is too short to judge.
+After every chunk has finished, a chunk with no Korean at all is re-asked once on
 its session (log line `한국어로 다시 받음` or `한국어 재요청 실패 — 원문 유지`). A chunk that gets no
 re-ask (`한국어 재요청 생략` in the log) or fails it keeps its output and status. The PR shows
 severity and category as Korean labels (`치명`/`중대`/`경미`/`참고`, `버그`, `보안`, ...).
