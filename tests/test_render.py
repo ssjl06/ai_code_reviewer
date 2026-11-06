@@ -76,6 +76,11 @@ class RenderTest(unittest.TestCase):
                          ("COMMENT", "💬 코멘트")]:
             self.assertIn(head, render_body(REVIEW(event=ev), [], META, ST))
 
+    def test_duplicates_are_counted(self):
+        body = render_body(REVIEW(duplicates=[FIND(), FIND()]), [], META, ST)
+        self.assertIn("기존 이슈와 중복되어 생략 2건", body)
+        self.assertNotIn("중복되어", render_body(REVIEW(), [], META, ST))
+
     def test_reason_precedence(self):
         f = [FIND(sev="critical"), FIND(sev="major")]
         prev = [{"id": "p", "file": "x", "line": 1, "title": "t", "severity": "major",

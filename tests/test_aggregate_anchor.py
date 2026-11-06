@@ -34,9 +34,12 @@ class AnchorMergeTest(unittest.TestCase):
                 anchor=lambda p, l: "aaaa0000")
         self.assertEqual(r["findings"], [])
 
-    def test_empty_anchor_does_not_drop(self):
-        r = run([res(0, [F(title="other")])], [P(anchor="")], anchor=lambda p, l: "")
-        self.assertEqual(len(r["findings"]), 1)
+    def test_empty_anchor_matches_by_position_only(self):
+        # an empty anchor no longer decides anything: the region does
+        near = run([res(0, [F(title="other")])], [P(anchor="")], anchor=lambda p, l: "")
+        self.assertEqual((near["findings"], len(near["duplicates"])), ([], 1))
+        far = run([res(0, [F(title="other", line=30)])], [P(anchor="")], anchor=lambda p, l: "")
+        self.assertEqual(len(far["findings"]), 1)
 
     def test_pre_resolved_without_report(self):
         r = run([], [P(blocking=True, pre="resolved")])

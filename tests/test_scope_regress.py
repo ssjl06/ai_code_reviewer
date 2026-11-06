@@ -48,7 +48,7 @@ def review(repo, base, head, prev, cfg=CFG, finds=(), reports=()):
     results = [{"index": c["index"], "status": "ok", "output": out} for c in chunks]
     rv = merge(results, cfg, s["previous"], s["changed"], s["reviewable"] == 0,
                skipped=skipped, anchor=anchor_of(s["blobs"]), truncated=cut,
-               chunk_files={c["index"]: c["files"] for c in chunks})
+               chunk_files={c["index"]: c["files"] for c in chunks}, closed=s["closed"])
     st = next_state(head, rv, s, chunks, results)
     return s, chunks, rv, normalize_state(json.loads(json.dumps(st)))
 
@@ -94,7 +94,7 @@ class FirstReviewScopeTest(unittest.TestCase):
         s, _, rv, st = review(r, base, head, None, finds=[bad, dict(bad, file="lib.py", line=1)])
         self.assertEqual(s["changed"], {"lib.py": {1, 2}})
         self.assertEqual([f["file"] for f in rv["findings"]], ["lib.py"])
-        self.assertEqual([f["file"] for f in st["findings"]], ["lib.py"])
+        self.assertEqual([f["file"] for f in st["issues"]], ["lib.py"])
 
 
 class PureDeletionFixTest(unittest.TestCase):
@@ -110,18 +110,24 @@ class PureDeletionFixTest(unittest.TestCase):
         self.assertEqual(rv["event"], "REQUEST_CHANGES")
         self.head = self.write(lines[:5] + ["good = 1"] + lines[5:])
 
-    def test_unreported_is_unclear_comment(self):
-        s, chunks, rv, _ = review(self.r, self.base, self.head, self.st)
+    def test_deleted_flagged_line_is_an_orphan_resolved_on_a_complete_run(self):
+        # was test_unreported_is_unclear_comment: the deleted line used to be searched by anchor
+        # and left "unclear"; now its region is gone, so the orphan is resolved when the run
+        # was complete
+        s, chunks, rv, st = review(self.r, self.base, self.head, self.st)
         self.assertEqual(s["mode"], "incremental")
-        self.assertEqual([(p["pre"], p["located"]) for p in s["previous"]], [("ask", False)])
-        self.assertEqual((s["changed"], len(chunks)), ({}, 1))
-        self.assertEqual((rv["event"], rv["unclear_blocking"]), ("COMMENT", True))
-        self.assertIn("이전 차단 지적 확인 필요", render_body(rv, [], META, self.st))
+        self.assertEqual([(p["pre"], p["located"]) for p in s["previous"]], [("orphan", True)])
+        self.assertEqual((s["changed"], len(chunks)), ({}, 0))
+        self.assertEqual((rv["event"], rv["unclear_blocking"]), ("APPROVE", False))
+        self.assertEqual([p["status"] for p in rv["previous"]], ["resolved"])
+        self.assertEqual([(i["status"], i.get("orphan")) for i in st["issues"]],
+                         [("resolved", True)])
 
     def test_reported_resolved_approves(self):
-        fid = self.st["findings"][0]["id"]
+        fid = self.st["issues"][0]["id"]
         _, _, rv, st = review(self.r, self.base, self.head, self.st, reports=[(fid, "resolved")])
-        self.assertEqual((rv["event"], st["findings"]), ("APPROVE", []))
+        self.assertEqual(rv["event"], "APPROVE")
+        self.assertEqual([i["status"] for i in st["issues"]], ["resolved"])
 
 
 if __name__ == "__main__":

@@ -27,21 +27,23 @@ class ForcePushTest(IntegrationBase):
     def review(self, scenario):
         return self.run_main(scenario, "--repo", self.R, "--pr", "1")
 
-    def test_squash_no_llm_call_nothing_posted(self):
+    def test_squash_rechecks_the_open_issue(self):
+        # no new lines, but the head moved: the open issue is shown to the model again
         new = self.force({})
         self.assertNotEqual(new, self.C1)
         calls = len(self.fake_calls())
         self.assertEqual(self.review("silent"), 0)
-        self.assertEqual((len(self.fake_calls()), len(self.gh.posted)), (calls, 1))
-        self.assertIn("새로 리뷰할 변경 없음", self.stdout)
+        self.assertEqual((len(self.fake_calls()), len(self.gh.posted)), (calls + 1, 2))
+        self.assertIn("다시 확인하기 위한 현재 코드", self.fake_calls()[-1]["stdin"])
+        self.assertEqual(self.gh.posted[-1]["event"], "REQUEST_CHANGES")  # silent: still open
 
     def test_rebase_shift_keeps_block_same_id(self):
-        first_id = parse_state(self.first["body"])["findings"][0]["id"]
+        first_id = parse_state(self.first["body"])["issues"][0]["id"]
         self.force({"src/k.cu": "// pad\n" * 10 + BUGGY})
         self.assertEqual(self.review("silent"), 0)
         st = parse_state(self.gh.posted[-1]["body"])
         self.assertEqual(self.gh.posted[-1]["event"], "REQUEST_CHANGES")
-        self.assertEqual([(f["id"], f["line"]) for f in st["findings"]], [(first_id, 12)])
+        self.assertEqual([(f["id"], f["line"]) for f in st["issues"]], [(first_id, 12)])
 
     def test_fix_resolved_approves_and_dismisses(self):
         self.force({"src/k.cu": FIXED})
@@ -49,11 +51,14 @@ class ForcePushTest(IntegrationBase):
         self.assertEqual(self.gh.posted[-1]["event"], "APPROVE")
         self.assertEqual(self.gh.dismissed, [1])
 
-    def test_anchor_changed_model_silent_comment(self):
+    def test_rewritten_line_model_silent_keeps_change_request(self):
+        # was test_anchor_changed_model_silent_comment: the anchor no longer matched, so the
+        # issue was "unclear" (COMMENT). Now its region follows the rewritten line (the previous
+        # head is still local), and a silent model leaves a located issue open.
         self.force({"src/k.cu": BUGGY.replace("p[1]", "p[2]")})
         self.assertEqual(self.review("silent"), 0)
-        self.assertEqual(self.gh.posted[-1]["event"], "COMMENT")
-        self.assertIn("이전 차단 지적 확인 필요", self.gh.posted[-1]["body"])
+        self.assertEqual(self.gh.posted[-1]["event"], "REQUEST_CHANGES")
+        self.assertNotIn("이전 차단 지적 확인 필요", self.gh.posted[-1]["body"])
         self.assertEqual(self.gh.dismissed, [])
 
     def test_file_dropped_resolves_and_approves(self):
@@ -64,7 +69,7 @@ class ForcePushTest(IntegrationBase):
         self.assertEqual(self.gh.posted[-1]["event"], "APPROVE")
         self.assertEqual(self.gh.dismissed, [1])
 
-    def test_merge_main_no_review(self):
+    def test_merge_main_rechecks_the_open_issue(self):
         pr_branch = git(self.R, "rev-parse", "--abbrev-ref", "HEAD")
         git(self.R, "checkout", "-q", "-b", "newmain", self.BASE)
         main_tip = self.add_commit({"m.py": "m = 1\n"})
@@ -74,8 +79,8 @@ class ForcePushTest(IntegrationBase):
         self.gh.base = main_tip
         calls = len(self.fake_calls())
         self.assertEqual(self.review("silent"), 0)
-        self.assertEqual((len(self.fake_calls()), len(self.gh.posted)), (calls, 1))
-        self.assertIn("새로 리뷰할 변경 없음", self.stdout)
+        self.assertEqual((len(self.fake_calls()), len(self.gh.posted)), (calls + 1, 2))
+        self.assertNotIn("새로 리뷰할 변경 없음", self.stdout)  # the open issue is rechecked
 
     def test_deletion_reviewed(self):
         self.gh.head = self.add_commit({"README.md": "kept\n"})  # C2 deletes base line "r"

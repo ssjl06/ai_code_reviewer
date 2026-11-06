@@ -96,6 +96,12 @@ class MergeKoreanTest(unittest.TestCase):
         ko = OUT(F(suggestion="인덱싱 전에 길이를 확인한다."))
         self.assertEqual(merge_korean(EN, ko), ko)
 
+    def test_keeps_same_as(self):
+        en = OUT(F(title="Out-of-bounds read", detail="`p[1]` reads past the buffer.",
+                   same_as="i1"), summary="Found one bug.")
+        ko = OUT(F())
+        self.assertEqual(merge_korean(en, ko)["findings"][0]["same_as"], "i1")
+
     def test_keeps_original_non_prose_fields(self):
         ko = OUT(F(confidence=50, suggestion="길이를 확인한다."))
         self.assertEqual(merge_korean(EN, ko)["findings"][0]["confidence"], 90)

@@ -18,8 +18,9 @@ from review.diff_split import build_chunks, line_map
 from review.failure import log, post, report_failure
 from review.github_api import GitHub, GitHubError
 from review.gitutil import GitError
+from review.ledger import apply_waivers, assign_recheck, pending_after, prompt_lists, shown_lines
 from review.previous import anchor_of
-from review.prompt import build_prompt
+from review.prompt import build_prompt, orphan_split
 from review.render import render_body, render_inline
 from review.validate import normalize_state
 
@@ -62,8 +63,9 @@ def _inputs(args, env):
     gh = GitHub(env["GITHUB_API_URL"], env["AI_REVIEW_BOT_PAT"], env["GITHUB_REPOSITORY"], args.pr)
     pr = gh.get_pr()
     base, head = args.base or pr["base"]["sha"], args.head or pr["head"]["sha"]
-    return gh, base, head, pr.get("title") or "", normalize_state(
-        gh.latest_state(env["AI_REVIEW_BOT_NAME"]))
+    bot = env["AI_REVIEW_BOT_NAME"]
+    prev = normalize_state(gh.latest_state(bot))
+    return gh, base, head, pr.get("title") or "", apply_waivers(prev, gh.dismissed_ids(bot))
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -95,31 +97,70 @@ def main(argv: Optional[List[str]] = None) -> int:
         return report_failure(gh, head, e)
 
 
+def _pending(review: dict, ids: List[str]) -> List[str]:
+    """Pending ids of issues that are still open after this run (a closed one needs no recheck)."""
+    live = {p["id"] for p in review["previous"] if p["status"] in ("open", "unclear")}
+    return [i for i in ids if i in live]
+
+
+WEAK_MSG = "이전 커밋을 찾을 수 없어 위치 추적이 약해짐"
+
+
+def _log_left_out(orphan_ids: List[str], recheck_ids: List[str]) -> None:
+    """Orphans the prompt leaves out (list cap) and rechecks that did not fit."""
+    if orphan_ids:
+        log("고아 이슈 %d건은 프롬프트 목록에서 제외됨: %s" % (len(orphan_ids), ", ".join(orphan_ids)))
+    if recheck_ids:
+        log("다시 확인할 이슈 %d건을 이번 실행에 담지 못함 (크기 제한 또는 조각 제한, 다음 실행에서 다시 확인): %s"
+            % (len(recheck_ids), ", ".join(recheck_ids)))
+
+
+def _log_matches(review: dict) -> None:
+    """Each finding swallowed by the ledger, and each link the model made."""
+    for d in review.get("duplicates") or []:
+        log("기존 이슈와 중복되어 생략: %s:%s (이슈 %s)" % (d["file"], d["line"], d["dup_of"]))
+    for x in review.get("links") or []:
+        log("기존 이슈에 연결: %s:%s (이슈 %s)" % (x["file"], x["line"], x["id"]))
+
+
 def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope) -> int:
     if scope["mode"] == "unchanged":
         log("새로 리뷰할 변경 없음 — 리뷰를 건너뜀")
         return 0
-    mode_ko = {"full": "전체 리뷰", "incremental": "증분 리뷰"}[scope["mode"]]
+    settle = scope["mode"] == "settle"  # a new waiver on a fully reviewed head: no model call
+    mode_ko = {"full": "전체 리뷰", "incremental": "증분 리뷰", "settle": "면제 반영"}[scope["mode"]]
     log("리뷰 범위: %s (%s, 대상 파일 %d개)" % (mode_ko, scope["range"], len(scope["targets"])))
     os.makedirs(out_dir, exist_ok=True)
     chunks, skipped, truncated = build_chunks(scope["targets"], cfg)
     log("조각 %d개 · 생략 파일 %d개 · 잘린 파일 %d개" % (len(chunks), len(skipped), len(truncated)))
+    if scope["weak_tracking"]:
+        log(WEAK_MSG)
     previous = scope["previous"]
+    recheck, left_out = assign_recheck(chunks, previous, scope["blobs"], cfg)
+    ledger, orphans = prompt_lists(previous, scope["closed"])
+    _log_left_out(orphan_split(orphans)[1], left_out)
     results: List[dict] = []
     if chunks:
         ctx = {"chunk_total": len(chunks), "mode": scope["mode"], "range": scope["range"],
-               "pr_title": title, "previous": previous,
+               "pr_title": title, "previous": previous, "ledger": ledger, "orphans": orphans,
+               "recheck": recheck,
                "added": scope["added"], "deleted": scope["deleted"], "explore_budget": cfg["explore_budget"]}
         prompts = [build_prompt(c, ctx) for c in chunks]
         paths = {"repo": repo, "work": out_dir,
                  "agents_file": write_agents_file(AGENT_MD, out_dir)}
         results = run_all(chunks, prompts, cfg, paths, env, deadline)
-    review = merge(results, cfg, previous, scope["changed"], scope["reviewable"] == 0,
+    review = merge(results, cfg, previous, scope["changed"],
+                   scope["reviewable"] == 0 and not settle,
                    skipped=skipped, anchor=anchor_of(scope["blobs"]), truncated=truncated,
-                   chunk_files={c["index"]: c["files"] for c in chunks})
+                   chunk_files={c["index"]: c["files"] for c in chunks},
+                   closed=scope["closed"], shown=shown_lines(chunks, recheck))
+    review["recheck_pending"] = _pending(review, pending_after(recheck, left_out, results, chunks))
+    review["waived_now"] = int((scope["prev"] or {}).get("waived_now") or 0)
+    _log_matches(review)
     inline, body_only = split_inline(review["findings"],
                                      line_map(scope["pr_files"], "right_lines"))
-    state = sc.next_state(head, review, scope, chunks, results)
+    state = (sc.settle_state(head, review, scope) if settle
+             else sc.next_state(head, review, scope, chunks, results))
     meta = {"model": env.get("AI_REVIEW_MODEL") or cfg["model"], "chunks": len(chunks),
             "duration_s": time.monotonic() - t0, "range": scope["range"], "mode": scope["mode"],
             "reviewed": cu.reviewed_files(chunks), "skipped": skipped}
