@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import subprocess
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 class GitError(RuntimeError):
@@ -66,14 +66,25 @@ def read_blobs(repo: str, rev: str, paths: List[str]) -> Dict[str, List[str]]:
     return blobs
 
 
+def _is_local_commit(repo: str, rev: str) -> bool:
+    if not re.fullmatch(r"[0-9a-f]{7,64}", rev or ""):
+        return False
+    ok = subprocess.run(["git", "cat-file", "-e", rev + "^{commit}"], cwd=repo,
+                        capture_output=True, timeout=60)
+    return ok.returncode == 0
+
+
+def diff_u0(repo: str, old: str, new: str) -> Optional[str]:
+    """`git diff -U0 -M` from `old` to `new`; None when `old` is not a local commit."""
+    if not _is_local_commit(repo, old):
+        return None
+    return git(repo, "diff", "-U0", "-M", "--no-color", old, new, timeout=120)
+
+
 def renames_between(repo: str, old_rev: str, new_rev: str) -> Dict[str, str]:
     """Renames old path -> new path from `old_rev` to `new_rev`; {} when `old_rev` is not a
     commit sha available locally (e.g. a force-pushed head that was never fetched)."""
-    if not re.fullmatch(r"[0-9a-f]{7,64}", old_rev or ""):
-        return {}
-    ok = subprocess.run(["git", "cat-file", "-e", old_rev + "^{commit}"], cwd=repo,
-                        capture_output=True, timeout=60)
-    if ok.returncode != 0:
+    if not _is_local_commit(repo, old_rev):
         return {}
     parts = git(repo, "diff", "--name-status", "-M", "-z", old_rev, new_rev,
                 timeout=120).split("\0")

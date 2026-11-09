@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+from review.ledger import SEV_RANK
+
 MARKER = "ai-review-state"
 MAX_BODY = 60000
 _OPEN = "<!-- " + MARKER + " "
@@ -10,6 +12,11 @@ _HEADS = {"APPROVE": "✅ 승인", "REQUEST_CHANGES": "❌ 변경 요청", "COMM
 _PREV = {"resolved": "✅ 해결", "open": "⏳ 미해결", "unclear": "❔ 불명확"}
 _SEVS = ["critical", "major", "minor", "info"]
 _CUT = "\n\n(본문 길이 제한으로 일부 생략)"
+FOLDED_MAX = 20     # entries of the folded section
+FOLDED_DETAIL = 200  # characters of detail shown per entry
+_PREV_HEAD = "### 이전 지적 처리 현황"
+_FOLDED_HEAD = "### 기존 이슈에 합쳐진 지적"
+_LATE_HEADS = ("### 조각별 요약", "### 미완료/실패 원인", "### 리뷰 범위")
 _SEV_KO = {"critical": "치명", "major": "중대", "minor": "경미", "info": "참고"}
 _CAT_KO = {"bug": "버그", "security": "보안", "concurrency": "동시성", "memory": "메모리",
            "performance": "성능", "api-misuse": "API 오용", "maintainability": "유지보수",
@@ -64,10 +71,17 @@ def render_inline(f: dict) -> str:
                                           category_label(f["category"]), f["title"])
     if f.get("needs_check"):
         head += " ⚠️ 확인 필요"
-    out = head + "\n\n" + f["detail"]
+    out = head + "\n\n"
+    if f.get("near_closed"):
+        out += "(해결/면제된 이슈 %s 근처의 새 지적)\n\n" % f["near_closed"]
+    out += f["detail"]
     if f.get("suggestion"):
         out += "\n\n**제안**\n" + f["suggestion"]
     return _safe(out)
+
+
+def _paths(paths) -> str:
+    return ", ".join("`%s`" % p for p in paths)
 
 
 def _reason(review: dict) -> str:
@@ -87,10 +101,14 @@ def _reason(review: dict) -> str:
         return "이전 차단 지적 확인 필요"
     if review.get("incomplete"):
         return "리뷰 미완료 조각 있음"
-    if review.get("skipped"):
+    # only the gaps that count (`aggregate.merge`): a recheck-only file does not
+    gaps = review.get("gaps")
+    if any(gaps is None or p in gaps for p in review.get("skipped") or ()):
         return "생략된 파일 있음 (조각 수 한도)"
-    if review.get("truncated"):
+    if any(gaps is None or p in gaps for p in review.get("truncated") or ()):
         return "잘린 변경 있음 (조각 크기 한도)"
+    if review.get("cut"):
+        return "줄이 너무 길어 일부만 검토한 파일: " + _paths(review["cut"])
     return "차단 사유 없음"
 
 
@@ -112,18 +130,51 @@ def _cause_label(error: str) -> str:
     return "%s → %s (%s)" % (_CAUSES.get(main, main), step, _CAUSES.get(fb, fb))
 
 
-def _sections(review: dict, body_only: list, meta: dict) -> list:
+def _folded_section(folded: list, shown: int = FOLDED_MAX) -> str:
+    """The folded findings, most severe first: `shown` entries (at most FOLDED_MAX, at least
+    one) and a line for the rest."""
+    ordered = sorted(folded, key=lambda f: (SEV_RANK.get(f.get("severity"), len(SEV_RANK)),
+                                            -f.get("confidence", 0), f["file"], f["line"]))
+    shown = max(1, min(shown, FOLDED_MAX))
+    lines = []
+    for f in ordered[:shown]:
+        dup = f["dup_of"]
+        where = dup if dup.startswith("이번 실행") else "이슈 " + dup
+        detail = " ".join((f.get("detail") or "").split())[:FOLDED_DETAIL]
+        lines.append("- `%s:%s` %s %s → %s: %s" % (f["file"], f["line"],
+                                                  severity_label(f.get("severity")),
+                                                  f.get("title") or "(제목 생략)", where, detail))
+    if len(ordered) > shown:
+        lines.append("외 %d건 (로그 참조)" % (len(ordered) - shown))
+    return "%s (%d건)\n%s" % (_FOLDED_HEAD, len(ordered), "\n".join(lines))
+
+
+def _sections(review: dict, body_only: list, meta: dict, state: dict = None,
+              short_prev: bool = False, folded_shown: int = FOLDED_MAX) -> list:
     secs = []
     prev = review.get("previous") or []
     if prev:
         lines = ["- %s `%s:%s` %s%s" % (_PREV.get(p.get("status"), "❔ 불명확"), p["file"], p["line"],
-                                       p["title"], " — " + p["note"] if p.get("note") else "")
+                                       p["title"] or "(제목 생략)", " — " + p["note"] if p.get("note") else "")
                  for p in prev]
-        secs.append("### 이전 지적 처리 현황\n" + "\n".join(lines or ["- 없음"]))
+        if short_prev:
+            lines = ["외 %d건" % len(prev)]
+        secs.append(_PREV_HEAD + "\n" + "\n".join(lines or ["- 없음"]))
+    if review.get("waived_now"):
+        secs.append("면제 %d건" % review["waived_now"])
+    plain = [d for d in review.get("duplicates") or [] if not d.get("folded")]
+    if plain:
+        secs.append("기존 이슈와 중복되어 생략 %d건" % len(plain))
+    if review.get("folded"):
+        secs.append(_folded_section(review["folded"], folded_shown))
+    if (state or {}).get("dropped_closed"):
+        secs.append("오래된 종료 이슈 기록 %d건 삭제" % state["dropped_closed"])
     check = [f for f in review["findings"] if f.get("needs_check")]
     if check:
         secs.append("### 확인 필요 (confidence < 80)\n" + "\n".join(
-            "- `%s:%s` %s" % (f["file"], f["line"], f["title"]) for f in check))
+            "- `%s:%s` %s%s" % (f["file"], f["line"], f["title"],
+                                " (이슈 %s 근처)" % f["near_closed"] if f.get("near_closed") else "")
+            for f in check))
     if body_only:
         secs.append("### inline으로 달 수 없는 지적\n" + "\n\n".join(
             "`%s:%s`\n%s" % (f["file"], f["line"], render_inline(f)) for f in body_only))
@@ -139,6 +190,8 @@ def _sections(review: dict, body_only: list, meta: dict) -> list:
     if review.get("truncated"):
         scope += " · 잘림 %d files (%s)" % (len(review["truncated"]), ", ".join(
             "`%s`" % p for p in review["truncated"]))
+    if review.get("cut"):
+        scope += " · 줄 잘림 %d files (%s)" % (len(review["cut"]), _paths(review["cut"]))
     if review.get("incomplete"):
         scope += " · 미완료 조각 " + ", ".join(str(i + 1) for i in review["incomplete"])
     secs.append("### 리뷰 범위\n" + scope)
@@ -149,22 +202,58 @@ def render_body(review: dict, body_only: list, meta: dict, state: dict) -> str:
     mins, secs = divmod(int(round(meta["duration_s"])), 60)
     footer = "<sub>%s · %s chunks · %dm%02ds · %s</sub>\n%s" % (
         meta["model"], meta["chunks"], mins, secs, meta["range"], state_marker(state))
-    parts = [_safe(p) for p in [_head(review)] + _sections(review, body_only, meta)]
+
+    def build(**kw):
+        return [_safe(p) for p in [_head(review)] + _sections(review, body_only, meta, state, **kw)]
+    parts = build()
     body = "\n\n".join(parts) + "\n\n" + footer
     if len(body) <= MAX_BODY:
         return body
+    # over the limit: the previous-status section goes first, the folded section last
+    parts = build(short_prev=True)
+    body = "\n\n".join(parts) + "\n\n" + footer
+    if len(body) <= MAX_BODY:
+        return body
+    # Space priority: (a) everything before the folded section's extras that is not "late"
+    # (new findings without an inline comment included), (b) the folded minimum, (c) more
+    # folded entries, (d) the late sections (summaries, errors, scope).
     budget = MAX_BODY - len(footer) - len(_CUT) - 2
-    kept, used = [], 0
-    for p in parts:
-        room = budget - used - (2 if kept else 0)
-        if len(p) <= room:
-            kept.append(p)
-            used += len(p) + (2 if len(kept) > 1 else 0)
+    fi = next((i for i, p in enumerate(parts) if p.startswith(_FOLDED_HEAD)), None)
+    late = {i for i, p in enumerate(parts) if p.startswith(_LATE_HEADS)}
+    reserve = len(build(short_prev=True, folded_shown=1)[fi]) + 2 if fi is not None else 0
+    kept: dict = {}
+
+    def room() -> int:
+        return budget - sum(len(t) for t in kept.values()) - 2 * len(kept)
+    cut = False
+    for i, p in enumerate(parts):
+        if i == fi or i in late or cut:
             continue
-        if room > 100:
-            kept.append(p[:room])
-        break
-    return "\n\n".join(kept) + _CUT + "\n\n" + footer
+        r = room() - (reserve if fi is not None else 0)
+        if len(p) <= r:
+            kept[i] = p
+        else:
+            if r > 100:
+                kept[i] = p[:r]
+            cut = True
+    if fi is not None:
+        r = room()
+        for k in range(FOLDED_MAX, 0, -1):
+            kept[fi] = build(short_prev=True, folded_shown=k)[fi]
+            if len(kept[fi]) <= r:
+                break  # k == 1 is kept even over budget: header, one entry and the rest line
+    cut = False
+    for i in sorted(late):
+        if cut:
+            break
+        r = room()
+        if len(parts[i]) <= r:
+            kept[i] = parts[i]
+        else:
+            if r > 100:
+                kept[i] = parts[i][:r]
+            cut = True
+    return "\n\n".join(kept[i] for i in sorted(kept)) + _CUT + "\n\n" + footer
 
 
 def _cell(text) -> str:

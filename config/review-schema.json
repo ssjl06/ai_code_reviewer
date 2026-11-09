@@ -22,7 +22,8 @@
                        "performance", "api-misuse", "maintainability", "docs"]},
           "title": {"type": "string", "maxLength": 80},
           "detail": {"type": "string"},
-          "suggestion": {"type": "string"}
+          "suggestion": {"type": "string"},
+          "same_as": {"type": "string"}
         }
       }
     },

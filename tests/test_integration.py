@@ -80,7 +80,7 @@ class IntegrationTest(IntegrationBase):
         self.assertEqual(first["commit_id"], self.C1)
         state = parse_state(first["body"])
         self.assertEqual(state["sha"], self.C1)
-        fid = state["findings"][0]["id"]
+        fid = state["issues"][0]["id"]
         self.assertEqual(first["comments"][0]["path"], "src/k.cu")
         self.assertEqual((first["comments"][0]["line"], first["comments"][0]["side"]), (2, "RIGHT"))
         self.assertIn("전체 리뷰", self.fake_calls()[0]["stdin"])
@@ -94,7 +94,8 @@ class IntegrationTest(IntegrationBase):
         second = self.gh.posted[-1]
         self.assertEqual(second["event"], "APPROVE")
         st = parse_state(second["body"])
-        self.assertEqual((st["v"], st["sha"], st["complete"], st["findings"]), (2, C2, True, []))
+        self.assertEqual((st["v"], st["sha"], st["complete"]), (3, C2, True))
+        self.assertEqual([(i["id"], i["status"]) for i in st["issues"]], [(fid, "resolved")])
         self.assertIn("✅ 해결", second["body"])
         self.assertEqual(self.gh.dismissed, [1])
         order = [r["method"] for r in self.gh.requests if r["method"] in ("POST", "PUT")]

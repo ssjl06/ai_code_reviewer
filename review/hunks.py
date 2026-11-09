@@ -147,3 +147,19 @@ def diff_hunk_keys(diff: str, blobs: Dict[str, List[str]]) -> Dict[str, Set[byte
             if HUNK_RE.match(h) and MARKER not in h:
                 out.setdefault(f["path"], set()).add(_key(h, scan_hunk(h, blobs[f["path"]])))
     return out
+
+
+def cut_prints(chunk: dict, blobs: Dict[str, List[str]]) -> Dict[str, Counter]:
+    """Prints of the changed rows a chunk holds cut (`diff_split.build_chunks`): the hunks of
+    `full_diff` that differ from those of `diff`, scanned whole."""
+    if not chunk.get("cut"):
+        return {}
+    out: Dict[str, Counter] = {}
+    for f, w in zip(parse_unified_diff(chunk["diff"]), parse_unified_diff(chunk["full_diff"])):
+        if w["path"] not in blobs:
+            continue
+        for h, hw in zip(split_hunks(f["text"])[1], split_hunks(w["text"])[1]):
+            if h != hw:
+                out.setdefault(w["path"], Counter()).update(
+                    c["fp"] for c in scan_hunk(hw, blobs[w["path"]]))
+    return {p: c for p, c in out.items() if c}

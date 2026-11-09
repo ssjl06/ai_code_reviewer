@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 
+from review.aggregate import merge
 from review.config import load_config
 from review.diff_split import build_chunks
 from review.fingerprint import fp_line
@@ -23,7 +24,7 @@ def run(repo, *args):
 
 
 def state_for(scope, head, findings=(), complete=True):
-    """StateV2 after a review in which every chunk was ok."""
+    """State v3 after a review in which every chunk was ok."""
     chunks, _, _ = build_chunks(scope["targets"], CFG)
     results = [{"index": c["index"], "status": "ok"} for c in chunks]
     prev = [dict(p, status="open") for p in scope["previous"] if p["pre"] != "resolved"]
@@ -163,6 +164,76 @@ class ScopeTest(unittest.TestCase):
         s = determine(self.R, self.BASE, self.branch({"a.py": "top = 0\n" + code("a")}), st, CFG)
         self.assertEqual([(p["pre"], p["located"], p["line"]) for p in s["previous"]],
                          [("ask", True, 9)])
+
+
+    def test_issue_follows_a_rename_and_shift(self):
+        h1 = self.branch({"a.py": code("a", 30)})
+        lines = code("a", 30).splitlines()
+        f = {"id": "f1", "file": "a.py", "line": 20, "anchor": fp_line(lines, 20).hex(),
+             "title": "t", "severity": "major", "blocking": True}
+        st = self.reviewed(h1, [f])
+        run(self.R, "mv", "a.py", "b.py")
+        h2 = self.branch({"b.py": "top = 0\ntop = 1\ntop = 2\n" + code("a", 30)})
+        s = determine(self.R, self.BASE, h2, st, CFG)
+        self.assertFalse(s["weak_tracking"])
+        self.assertEqual([(p["id"], p["file"], p["line"], p["lo"], p["hi"], p["located"])
+                          for p in s["previous"]], [("f1", "b.py", 23, 23, 23, True)])
+
+    def test_v2_state_gets_no_duplicate_comment(self):
+        h = self.branch({"a.py": code("a")})
+        lines = code("a").splitlines()
+        v2 = {"v": 2, "sha": h, "complete": False, "seen": {}, "seen_files": {},
+              "findings": [{"id": "f1", "file": "a.py", "line": 8,
+                            "anchor": fp_line(lines, 8).hex(), "title": "old",
+                            "severity": "major", "blocking": True}]}
+        s = determine(self.R, self.BASE, h, normalize_state(v2), CFG)
+        chunks, _, _ = build_chunks(s["targets"], CFG)
+        again = {"file": "a.py", "line": 8, "severity": "minor", "confidence": 90,
+                 "category": "bug", "title": "reworded", "detail": "d"}
+        out = {"summary": "", "findings": [again], "incomplete_reason": None,
+               "previous_findings": []}
+        results = [{"index": c["index"], "status": "ok", "output": out} for c in chunks]
+        rv = merge(results, CFG, s["previous"], s["changed"], False, closed=s["closed"],
+                   chunk_files={c["index"]: c["files"] for c in chunks})
+        self.assertEqual(rv["findings"], [])
+        self.assertEqual([d["dup_of"] for d in rv["duplicates"]], ["f1"])
+        self.assertEqual((rv["event"], [p["id"] for p in rv["previous"]]),
+                         ("REQUEST_CHANGES", ["f1"]))
+
+    def test_missing_previous_sha_does_not_fail(self):
+        h = self.branch({"a.py": code("a")})
+        lines = code("a").splitlines()
+        f = {"id": "f1", "file": "a.py", "line": 8, "anchor": fp_line(lines, 8).hex(),
+             "title": "t", "severity": "major", "blocking": True}
+        st = dict(self.reviewed(h, [f]), sha="0" * 40)
+        h2 = self.branch({"a.py": "top = 0\n" + code("a")})
+        s = determine(self.R, self.BASE, h2, st, CFG)
+        self.assertTrue(s["weak_tracking"])
+        self.assertEqual([(p["id"], p["line"], p["located"]) for p in s["previous"]],
+                         [("f1", 9, True)])  # found by its anchor
+        st["issues"][0]["anchor"] = fp_line(["other"], 1).hex()  # an anchor that matches nothing
+        s = determine(self.R, self.BASE, h2, st, CFG)
+        self.assertEqual([(p["line"], p["located"]) for p in s["previous"]], [(8, False)])
+
+    def test_known_previous_sha_is_not_weak(self):
+        h = self.branch({"a.py": code("a")})
+        s = determine(self.R, self.BASE, self.branch({"b.py": code("b")}), self.reviewed(h), CFG)
+        self.assertFalse(s["weak_tracking"])
+
+    def test_closed_issues_move_with_the_code_and_leave_with_the_file(self):
+        h1 = self.branch({"a.py": code("a", 30), "b.py": code("b")})
+        closed = [dict(i, status="waived") for i in [
+            {"id": "w1", "file": "a.py", "line": 20, "lo": 19, "hi": 21, "severity": "major",
+             "blocking": False, "anchor": "", "title": "", "excerpt": "", "orphan": False},
+            {"id": "w2", "file": "b.py", "line": 3, "lo": 3, "hi": 3, "severity": "major",
+             "blocking": False, "anchor": "", "title": "", "excerpt": "", "orphan": False}]]
+        st = dict(self.reviewed(h1), issues=closed)
+        h2 = self.branch({"a.py": "top = 0\n" + code("a", 30)}, rm=["b.py"])
+        s = determine(self.R, self.BASE, h2, st, CFG)
+        self.assertEqual(s["previous"], [])
+        self.assertEqual([(c["id"], c["status"], c["line"], c["lo"], c["hi"], c["orphan"])
+                          for c in s["closed"]],
+                         [("w1", "waived", 21, 20, 22, False), ("w2", "waived", 3, 3, 3, True)])
 
 
 if __name__ == "__main__":

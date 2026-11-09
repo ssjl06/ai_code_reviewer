@@ -12,6 +12,8 @@ class FakeGitHub:
     def __init__(self, base, head, title="PR 제목", login="ai-bot"):
         self.base, self.head, self.title, self.login = base, head, title, login
         self.reviews, self.posted, self.dismissed, self.requests = [], [], [], []
+        self.events = []  # issue events; a dismissal adds a `review_dismissed` one
+        self.before_post = None  # called with the body just before a review is stored
         self._lock = threading.Lock()
         fake = self
 
@@ -53,7 +55,11 @@ class FakeGitHub:
                          "base": {"sha": self.base}, "head": {"sha": self.head}}
         if method == "GET" and path == PR + "/reviews":
             return 200, self.reviews
+        if method == "GET" and path == "/repos/o/r/issues/1/events":
+            return 200, self.events
         if method == "POST" and path == PR + "/reviews":
+            if self.before_post:
+                self.before_post(body)
             review = {"id": len(self.reviews) + 1, "user": {"login": self.login},
                       "state": STATES[body["event"]], "body": body["body"],
                       "commit_id": body["commit_id"]}
@@ -65,8 +71,15 @@ class FakeGitHub:
             review = self.reviews[int(m.group(1)) - 1]
             review["state"] = "DISMISSED"
             self.dismissed.append(int(m.group(1)))
+            self.add_dismissal(int(m.group(1)), self.login)
             return 200, review
         return 404, {"message": "Not Found"}
+
+    def add_dismissal(self, review_id, login):
+        """`login` dismisses review `review_id` (the PUT endpoint does it for the bot)."""
+        self.reviews[review_id - 1]["state"] = "DISMISSED"
+        self.events.append({"event": "review_dismissed", "actor": {"login": login},
+                            "dismissed_review": {"review_id": review_id, "state": "dismissed"}})
 
     def close(self):
         self.server.shutdown()

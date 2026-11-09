@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from typing import Any, Optional
+from typing import Any, Optional, Set
 
 from review.render import parse_state
 
@@ -100,6 +100,46 @@ class GitHub:
             if state is not None:
                 return state
         return None
+
+    def _events(self) -> list:
+        out: list = []
+        page = 1
+        while True:
+            chunk = self.request("GET", "/repos/%s/issues/%d/events?per_page=%d&page=%d"
+                                 % (self.repo, self.pr, PER_PAGE, page))
+            out.extend(chunk)
+            if len(chunk) < PER_PAGE:
+                return out
+            page += 1
+
+    def dismissed_ids(self, bot_login: str) -> Set[str]:
+        """Issue ids that are open in the marker of a bot review someone else dismissed. The
+        bot's own dismissals (`failure.post`) are not waivers. A v3 marker lists its open
+        `issues`; a v2 marker lists every finding. A review without a readable marker is skipped."""
+        want = bot_login.lower()
+        gone = set()
+        for e in self._events():
+            actor = e.get("actor") or {}
+            review = e.get("dismissed_review") or {}
+            if (e.get("event") == "review_dismissed" and review.get("review_id") is not None
+                    and str(actor.get("login", "")).lower() != want):
+                gone.add(str(review["review_id"]))
+        if not gone:
+            return set()
+        out: Set[str] = set()
+        for r in self._bot_reviews(bot_login):
+            state = parse_state(r.get("body"))
+            if str(r.get("id")) not in gone or state is None:
+                continue
+            if state.get("v") == 3:
+                entries = [i for i in state.get("issues") or [] if isinstance(i, dict)
+                           and i.get("status") == "open"]
+            elif state.get("v") == 2:
+                entries = [f for f in state.get("findings") or [] if isinstance(f, dict)]
+            else:
+                continue
+            out.update(e["id"] for e in entries if isinstance(e.get("id"), str))
+        return out
 
     def dismiss_change_requests(self, bot_login: str, message: str) -> int:
         count = 0

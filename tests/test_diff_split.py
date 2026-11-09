@@ -2,7 +2,7 @@ import os
 import unittest
 
 from review.config import load_config
-from review.diff_split import (build_chunks, estimate_tokens, line_map,
+from review.diff_split import (MARKER, ROW_CUT, build_chunks, estimate_tokens, line_map,
                                parse_unified_diff, priority)
 
 CFG = load_config()
@@ -97,6 +97,49 @@ class DiffSplitTest(unittest.TestCase):
     def test_related_files_grouped(self):
         chunks, _, _ = build_chunks(make_named(["a/foo.cu", "b/bar.py", "a/foo.cuh"]), CFG)
         self.assertEqual(chunks[0]["files"][:2], ["a/foo.cu", "a/foo.cuh"])
+
+
+def long_row(row, start=7, tail=""):
+    text = ("diff --git a/gen.js b/gen.js\n--- a/gen.js\n+++ b/gen.js\n"
+            "@@ -%d,0 +%d,1 @@\n%s\n%s" % (start - 1, start, row, tail))
+    return parse_unified_diff(text)[0]
+
+
+class LongRowTest(unittest.TestCase):
+    """A unit whose hunk is one row over the chunk limit keeps the row, cut to fit."""
+    CFG = dict(CFG, chunk_max_tokens=100)
+
+    def test_one_long_row_is_cut_not_dropped(self):
+        row = "+" + "x" * 4000
+        chunks, skipped, truncated = build_chunks([long_row(row)], self.CFG)
+        self.assertEqual((len(chunks), skipped, truncated), (1, [], []))
+        c = chunks[0]
+        self.assertLessEqual(c["est_tokens"], 100)
+        self.assertNotIn(MARKER, c["diff"])
+        self.assertIn("\n+xxx", c["diff"])
+        self.assertIn(ROW_CUT + "\n", c["diff"])
+        self.assertEqual(c["cut"], {"gen.js": [7]})
+        self.assertEqual(parse_unified_diff(c["diff"])[0]["right_lines"], [7])
+        self.assertIn(row + "\n", c["full_diff"])  # prints come from the uncut row
+
+    def test_no_newline_row_stays(self):
+        chunks, _, truncated = build_chunks(
+            [long_row(" " + "y" * 4000, tail="\\ No newline at end of file\n")], self.CFG)
+        self.assertEqual(truncated, [])
+        self.assertIn(ROW_CUT + "\n\\ No newline at end of file\n", chunks[0]["diff"])
+        self.assertLessEqual(chunks[0]["est_tokens"], 100)
+
+    def test_chunks_without_cut_rows_have_an_empty_cut(self):
+        chunks, _, _ = build_chunks(make_named(["a.cu", "b.cu"]), CFG)
+        self.assertEqual([c["cut"] for c in chunks], [{}] * len(chunks))
+        self.assertNotIn("full_diff", chunks[0])
+
+    def test_a_multi_row_oversize_unit_is_still_truncated(self):
+        chunks, _, truncated = build_chunks([make_file(hunks=1, tokens_each_hunk=5000)],
+                                            dict(CFG, chunk_max_tokens=1000))
+        self.assertEqual(truncated, ["src/big.cu"])
+        self.assertIn(MARKER, chunks[0]["diff"])
+        self.assertEqual(chunks[0]["cut"], {})
 
 
 if __name__ == "__main__":
