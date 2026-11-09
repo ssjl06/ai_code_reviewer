@@ -1,6 +1,6 @@
 import unittest
 
-from review.render import (MAX_BODY, parse_state, render_body, render_inline,
+from review.render import (MAX_BODY, _folded_section, parse_state, render_body, render_inline,
                            render_step_summary, state_marker)
 
 ST = {"sha": "abc", "findings": []}
@@ -51,6 +51,11 @@ class RenderTest(unittest.TestCase):
         self.assertIn("**제안**\nS", s)
         self.assertIn("⚠️ 확인 필요", render_inline(FIND(nc=True)).split("\n")[0])
 
+    def test_a_finding_near_a_closed_issue_says_so(self):
+        s = render_inline(dict(FIND(), near_closed="c1"))
+        self.assertEqual(s.split("\n\n")[1], "(해결/면제된 이슈 c1 근처의 새 지적)")
+        self.assertNotIn("근처의 새 지적", render_inline(FIND()))
+
     def test_korean_labels(self):
         from review.render import category_label, severity_label
         self.assertEqual([severity_label(x) for x in ("critical", "major", "minor", "info", "zzz")],
@@ -75,6 +80,74 @@ class RenderTest(unittest.TestCase):
         for ev, head in [("APPROVE", "✅ 승인"), ("REQUEST_CHANGES", "❌ 변경 요청"),
                          ("COMMENT", "💬 코멘트")]:
             self.assertIn(head, render_body(REVIEW(event=ev), [], META, ST))
+
+    def test_the_folded_list_is_capped(self):
+        folded = [dict(FIND(title="F%d" % n), line=n + 1, dup_of="i1", folded=True)
+                  for n in range(30)]
+        body = render_body(REVIEW(duplicates=folded, folded=folded), [], META, ST)
+        self.assertIn("### 기존 이슈에 합쳐진 지적 (30건)", body)
+        self.assertEqual(body.count("→ 이슈 i1: D"), 20)
+        self.assertIn("외 10건 (로그 참조)", body)
+        self.assertNotIn("중복되어 생략", body)  # folded ones are not counted as omitted
+
+    def test_folded_entry_format_and_order(self):
+        a = dict(FIND(sev="minor", title="Low"), dup_of="이번 실행 a.cu:9", folded=True)
+        b = dict(FIND(sev="major", title="High"), dup_of="i1", folded=True)
+        b["detail"] = "x" * 300
+        body = render_body(REVIEW(folded=[a, b]), [], META, ST)
+        self.assertLess(body.index("High"), body.index("Low"))
+        self.assertIn("- `a.cu:3` 중대 High → 이슈 i1: " + "x" * 200 + "\n", body)
+        self.assertIn("→ 이번 실행 a.cu:9: D", body)
+
+    def test_folded_section_survives_a_full_body(self):
+        prev = [{"file": "a.cu", "line": n + 1, "title": "t" * 80, "status": "open",
+                 "note": "n" * 100} for n in range(160)]
+        folded = [dict(FIND(title="F%d" % n), dup_of="i1", folded=True) for n in range(5)]
+        st = {"sha": "abc", "pad": "p" * 39900}
+        body = render_body(REVIEW(previous=prev, folded=folded), [], META, st)
+        self.assertLessEqual(len(body), MAX_BODY)
+        self.assertIn("### 기존 이슈에 합쳐진 지적 (5건)", body)
+        self.assertIn("외 160건", body)
+        self.assertIn("→ 이슈 i1: D", body)
+        # a state marker that leaves room for little: the folded section keeps its minimum
+        folded = [dict(FIND(title="F%d" % n), detail="y" * 300, dup_of="i1", folded=True)
+                  for n in range(20)]
+        st = {"sha": "abc", "pad": "p" * 59000}
+        body = render_body(REVIEW(previous=prev, folded=folded), [], META, st)
+        self.assertIn("### 기존 이슈에 합쳐진 지적 (20건)", body)
+        self.assertIn("F0", body)
+        self.assertNotIn("F19", body)
+        self.assertRegex(body, r"외 \d+건 \(로그 참조\)")
+        # The minimum is kept even when over budget; that happens only when the marker alone
+        # is near MAX_BODY, so the excess is at most the minimum section's length.
+        minimum = len(_folded_section(folded, 1)) + 2
+        self.assertLessEqual(len(body), MAX_BODY + minimum)
+
+    def test_body_only_findings_come_before_more_folded_entries(self):
+        folded = [dict(FIND(title="F%d" % n), detail="y" * 300, dup_of="i1", folded=True)
+                  for n in range(20)]
+        new = [dict(FIND(sev="critical", title="N%d" % n), detail="z" * 400, line=n + 1)
+               for n in range(10)]
+        for pad in (45000, 53000, 55000):
+            st = {"sha": "abc", "pad": "p" * pad}
+            body = render_body(REVIEW(folded=folded), new, META, st)
+            for n in range(10):
+                self.assertIn("N%d" % n, body, pad)
+            self.assertIn("### 기존 이슈에 합쳐진 지적 (20건)", body)
+            self.assertIn("F0", body)
+            if pad >= 53000:  # not every folded entry fits any more
+                self.assertRegex(body, r"외 \d+건 \(로그 참조\)")
+
+    def test_a_folded_finding_without_a_title_has_a_fallback(self):
+        f = dict(FIND(title=None), dup_of="i1", folded=True)
+        body = render_body(REVIEW(folded=[f]), [], META, ST)
+        self.assertIn("(제목 생략)", body)
+        self.assertNotIn("None", body)
+
+    def test_duplicates_are_counted(self):
+        body = render_body(REVIEW(duplicates=[FIND(), FIND()]), [], META, ST)
+        self.assertIn("기존 이슈와 중복되어 생략 2건", body)
+        self.assertNotIn("중복되어", render_body(REVIEW(), [], META, ST))
 
     def test_reason_precedence(self):
         f = [FIND(sev="critical"), FIND(sev="major")]
@@ -107,6 +180,14 @@ class RenderTest(unittest.TestCase):
         self.assertIn("잘린 변경 있음 (조각 크기 한도)", b)
         self.assertIn("잘림 1 files (`big.py`)", b)
 
+    def test_reason_and_scope_cut(self):
+        b = render_body(REVIEW("COMMENT", cut=["a.js", "b.js"]), [], META, ST)
+        self.assertIn("**판정 근거:** 줄이 너무 길어 일부만 검토한 파일: `a.js`, `b.js`", b)
+        self.assertIn("줄 잘림 2 files (`a.js`, `b.js`)", b)
+        b = render_body(REVIEW("COMMENT", cut=["a.js"], truncated=["big.py"]), [], META, ST)
+        self.assertIn("잘린 변경 있음 (조각 크기 한도)", b)  # the gap that counts goes first
+        self.assertIn("잘림 1 files (`big.py`) · 줄 잘림 1 files (`a.js`)", b)
+
     def test_body_no_targets_reason(self):
         self.assertIn("리뷰 대상 변경 없음", render_body(REVIEW(no_targets=True), [], META, ST))
 
@@ -133,6 +214,14 @@ class RenderTest(unittest.TestCase):
         self.assertIn("미완료 조각 1, 3", b)
         self.assertIn("2m05s", b)
         self.assertNotIn("### 확인 필요", render_body(REVIEW(), [], META, ST))
+
+    def test_a_check_near_a_closed_issue_names_the_issue(self):
+        """Rev 9: a closed issue nearby never makes a check, it only names the issue."""
+        f = dict(FIND(conf=70, nc=True, blocking=False), near_closed="c1")
+        b = render_body(REVIEW(findings=[f]), [], META, ST)
+        self.assertIn("### 확인 필요 (confidence < 80)\n", b)
+        self.assertNotIn("또는 해결/면제된 이슈 근처", b)
+        self.assertIn("- `a.cu:3` T (이슈 c1 근처)", b)
 
     def test_body_truncated_keeps_marker(self):
         b = render_body(REVIEW(summaries=["x" * 70000]), [], META, ST)

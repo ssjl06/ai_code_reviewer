@@ -5,9 +5,10 @@ import fnmatch
 import math
 import os
 import re
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 MARKER = "\n[truncated by ai-review]\n"
+ROW_CUT = " …[ai-review: 줄이 너무 길어 잘림]"  # a row cut to fit a chunk (`_units`)
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 SRC_EXT = {".c", ".cc", ".cpp", ".cu", ".cuh", ".h", ".hpp", ".py", ".go", ".rs",
            ".java", ".js", ".ts", ".tsx", ".jsx", ".sh", ".cs", ".kt", ".swift"}
@@ -122,21 +123,45 @@ def split_hunks(text: str) -> Tuple[str, List[str]]:
     return pieces[0], pieces[1:]
 
 
-def _units(f: dict, limit: int) -> List[Tuple[str, str]]:
+def _cut_row(header: str, h: str, limit: int) -> Optional[Tuple[str, int]]:
+    """A hunk of one content row (plus an optional `\\ No newline` row) over the limit, with
+    the row cut to fit (its prefix kept, ROW_CUT marks the cut): `(hunk, new-side line)`.
+    None for any other hunk."""
+    rows = h.split("\n")
+    body = rows[1:-1] if rows[-1] == "" else rows[1:]
+    content = [i for i, r in enumerate(body) if not r.startswith("\\")]
+    m = HUNK_RE.match(rows[0])
+    if not m or len(content) != 1:
+        return None
+    k = content[0]
+    rest = sum(len(r) + 1 for i, r in enumerate(body) if i != k)
+    room = int(limit * 3.5) - len(header) - len(rows[0]) - 1 - rest - len(ROW_CUT) - 1
+    body[k] = body[k][:max(room, 1)] + ROW_CUT
+    return rows[0] + "\n" + "".join(r + "\n" for r in body), int(m.group(1))
+
+
+def _units(f: dict, limit: int) -> List[Tuple[str, str, str, Optional[int]]]:
+    """`(path, unit, full unit, cut line)`: a hunk over the limit with one row is kept with
+    the row cut (`full unit` holds it whole, `cut line` is its new-side line); any other
+    hunk over the limit is cut at a row boundary and ends with MARKER."""
     text = f["text"] if f["text"].endswith("\n") else f["text"] + "\n"
     if estimate_tokens(text) <= limit:
-        return [(f["path"], text)]
+        return [(f["path"], text, text, None)]
     header, hunks = split_hunks(text)
     out = []
     for h in hunks or [""]:
-        unit = header + h
+        unit, full, line = header + h, header + h, None
         if estimate_tokens(unit) > limit:
-            room = int(limit * 3.5) - len(header) - len(MARKER)
-            cut = h[:max(room, 0)]
-            if "\n" in cut:
-                cut = cut[:cut.rindex("\n")]
-            unit = header + cut + MARKER
-        out.append((f["path"], unit))
+            row = _cut_row(header, h, limit)
+            if row is not None:
+                unit, line = header + row[0], row[1]
+            else:
+                room = int(limit * 3.5) - len(header) - len(MARKER)
+                cut = h[:max(room, 0)]
+                if "\n" in cut:
+                    cut = cut[:cut.rindex("\n")]
+                unit = full = header + cut + MARKER
+        out.append((f["path"], unit, full, line))
     return out
 
 
@@ -147,28 +172,37 @@ def reviewable(f: dict, cfg: dict) -> bool:
 
 
 def build_chunks(files: List[dict], cfg: dict) -> Tuple[List[dict], List[str], List[str]]:
-    """(chunks, skipped paths, truncated paths: cut as a last resort -> review incomplete)."""
+    """(chunks, skipped paths, truncated paths: cut as a last resort -> review incomplete).
+    Each chunk has `cut`, `{path: [new-side lines of rows cut to fit]}` (`_units`), and, when
+    that is not empty, `full_diff`: the diff with those rows whole, for fingerprints."""
     limit = cfg["chunk_max_tokens"]
     targets = [f for f in files if reviewable(f, cfg)]
     targets.sort(key=lambda f: (priority(f["path"]), os.path.dirname(f["path"]),
                                 os.path.splitext(os.path.basename(f["path"]))[0], f["path"]))
-    packed: List[Tuple[List[str], str]] = []
+    packed: List[dict] = []
     truncated: List[str] = []
     for f in targets:
-        for path, unit in _units(f, limit):
+        for path, unit, full, line in _units(f, limit):
             truncated += [path] if MARKER in unit and path not in truncated else []
-            if packed and estimate_tokens(packed[-1][1] + unit) <= limit:
-                if path not in packed[-1][0]:
-                    packed[-1][0].append(path)
-                packed[-1] = (packed[-1][0], packed[-1][1] + unit)
-            else:
-                packed.append(([path], unit))
+            if not (packed and estimate_tokens(packed[-1]["diff"] + unit) <= limit):
+                packed.append({"files": [], "diff": "", "full": "", "cut": {}})
+            p = packed[-1]
+            if path not in p["files"]:
+                p["files"].append(path)
+            p["diff"], p["full"] = p["diff"] + unit, p["full"] + full
+            if line is not None:
+                p["cut"].setdefault(path, []).append(line)
     keep = packed[:cfg["max_chunks"]]
     skipped: List[str] = []
-    for paths, _ in packed[cfg["max_chunks"]:]:
-        skipped.extend(p for p in paths if p not in skipped)
-    chunks = [{"index": i, "files": p, "diff": d, "est_tokens": estimate_tokens(d)}
-              for i, (p, d) in enumerate(keep)]
+    for p in packed[cfg["max_chunks"]:]:
+        skipped.extend(x for x in p["files"] if x not in skipped)
+    chunks = []
+    for i, p in enumerate(keep):
+        c = {"index": i, "files": p["files"], "diff": p["diff"],
+             "est_tokens": estimate_tokens(p["diff"]), "cut": p["cut"]}
+        if p["cut"]:
+            c["full_diff"] = p["full"]
+        chunks.append(c)
     return chunks, skipped, truncated
 
 

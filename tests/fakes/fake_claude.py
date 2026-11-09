@@ -41,6 +41,22 @@ def scenario_output(scn, stdin):
             "incomplete_reason": None, "diff_reviewed": True}
 
 
+def scripted_output(stdin, log):
+    """Scenario "script": `script.json` next to the call log holds a JSON list of rules `{"when": substring or
+    null, "findings": [...], "resolve": [ids], "resolve_rechecked": bool}`. The first rule whose
+    `when` occurs in the prompt answers; a prompt no rule matches gets an empty answer. A rule with
+    `"unreviewed": true` answers `diff_reviewed: false`, which makes the chunk `partial`."""
+    with open(os.path.join(os.path.dirname(log), "script.json"), encoding="utf-8") as f:
+        rules = json.load(f)
+    rule = next((r for r in rules if not r.get("when") or r["when"] in stdin), {})
+    ids = list(rule.get("resolve", []))
+    if rule.get("resolve_rechecked"):  # the ids of the recheck sections of the prompt
+        ids += re.findall(r"^이슈 (\w+), ", stdin, re.M)
+    return {"summary": "s", "findings": rule.get("findings", []),
+            "previous_findings": [{"id": i, "status": "resolved"} for i in ids],
+            "incomplete_reason": None, "diff_reviewed": not rule.get("unreviewed")}
+
+
 def emit(ev):
     print(json.dumps(ev), flush=True)
 
@@ -105,6 +121,8 @@ def main():
                                        "diff_reviewed": True})
     elif scn in ("blocking", "resolved"):
         result(sid, structured_output=scenario_output(scn, stdin))
+    elif scn == "script":
+        result(sid, structured_output=scripted_output(stdin, opts["--log"]))
     elif scn == "english":
         result(sid, structured_output=ENGLISH)
     elif scn == "english_then_korean":  # the fallback answer is English, the re-ask is Korean

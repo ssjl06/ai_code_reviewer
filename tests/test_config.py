@@ -13,6 +13,7 @@ class ConfigTest(unittest.TestCase):
         c = load_config()
         self.assertEqual(c["chunk_max_tokens"], 20000)
         self.assertEqual(c["max_chunks"], 40)
+        self.assertEqual(c["recheck_max_chars"], 8000)
         self.assertEqual(c["concurrency"], 3)
         self.assertEqual(c["max_turns"], 60)
         self.assertEqual(c["explore_budget"], 50)

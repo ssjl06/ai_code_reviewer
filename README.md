@@ -60,7 +60,7 @@ pull_request event (target repo)
              ├─ claude_runner  one `claude -p` per chunk (≤ concurrency in parallel)
              │     agent/pr-reviewer.md, config/settings.json, hooks/guard.py,
              │     --json-schema config/review-schema.json, stream-json → Actions log
-             ├─ aggregate    merge, dedupe, relocate previous findings, verdict
+             ├─ aggregate    merge, dedupe, match the issue ledger, verdict
              └─ github_api   post one review (+ state marker); dismiss the old
                              REQUEST_CHANGES only when the new verdict is APPROVE
         3. upload stream.jsonl, guard-audit.jsonl, review.json as artifacts
@@ -186,9 +186,9 @@ Steps for migrating a repository from another review bot or workflow:
 1. **Disable the old workflow** in the same PR that installs the kit, so two bots never
    review the same PR.
 2. **Use a separate bot account, or reuse the old one.** The kit only reads reviews whose author
-   is `AI_REVIEW_BOT_NAME` and whose body has a valid `<!-- ai-review-state {"v": 2 ...} -->`
-   marker. Other reviews, including the old bot's, are ignored. So the first run on an open PR
-   is a full review.
+   is `AI_REVIEW_BOT_NAME` and whose body has a valid `<!-- ai-review-state {"v": 3 ...} -->`
+   marker (a v2 marker is migrated on first read). Other reviews, including the old bot's, are
+   ignored. So the first run on an open PR is a full review.
 3. **Old blocking reviews.** The kit dismisses only its own `REQUEST_CHANGES` reviews. Dismiss the
    old bot's change requests by hand, or let authors re-request review.
 4. **Rules and language.**
@@ -218,6 +218,7 @@ ways:
 | `model` | `deepseek-v4-flash` | model name sent to LiteLLM |
 | `chunk_max_tokens` | 20000 | chunk size (estimated as characters / 3.5) |
 | `max_chunks` | 40 | ceiling on chunks per run, so a large PR is not cut off; in practice `deadline_s` limits how many run, and chunks past it stay unreviewed for the next run |
+| `recheck_max_chars` | 8000 | characters of recheck context per chunk, on top of its diff: the lines around each open issue shown again on every new head. The first issue of a chunk is always shown, with less context if needed; a later one that does not fit is rechecked on the next run |
 | `concurrency` | 3 | parallel `claude` sessions |
 | `max_turns` | 60 | turns per session; raised (with a warning) to at least `explore_budget + 4` |
 | `explore_budget` | 50 | Read/Grep/Glob/Bash calls per session; the first call over it is denied, the next one stops the session and the runner asks for the conclusion |
@@ -286,10 +287,19 @@ severity and category as Korean labels (`치명`/`중대`/`경미`/`참고`, `�
 
 **State marker.** The kit's state lives in an HTML comment inside the bot review body:
 ```
-<!-- ai-review-state {"v": 2, "sha", "complete", "seen", "seen_files", "seen_hunks", "findings"} -->
+<!-- ai-review-state {"v": 3, "sha", "complete", "seen", "seen_files", "seen_hunks",
+                       "issues", "closed", "recheck_pending"} -->
 ```
-It holds line fingerprints of what was reviewed, plus the open findings with content anchors.
-Its size is capped at 40,000 characters. Do not edit or strip it. Spec section 6.2 defines it.
+It holds line fingerprints of what was reviewed, plus the issue ledger (state v3): every issue with its
+file, a line region that is moved across pushes with `git diff -U0`, status and severity. Closed
+issues may be kept in the compact `closed` map (about 20 characters each). Its size is capped at
+40,000 characters: over that, seen data becomes whole-file hashes and closed issues go compact,
+then the display text of open issues goes (non-blocking first), then the seen data, and only
+then the oldest closed records (the body says how many). Open issues are never dropped.
+A person other than the bot who dismisses a bot review waives that review's open issues: they
+become closed and are not raised again (a different defect next to a closed issue still is).
+Do not edit or strip the marker. Spec section 6.2 and
+`docs/superpowers/specs/2026-11-02-review-convergence-design.md` define it.
 
 ## 8. Verification
 
@@ -341,7 +351,7 @@ verdict:
 3. The verdict is computed in `review/aggregate.py`, never by the model. Never let a run that
    did not review everything return `APPROVE`. That covers incomplete, failed or truncated chunks,
    skipped files, and an unconfirmed previous blocker.
-4. The state marker format (v2) is shared between runs. Changing it means the next run on every
+4. The state marker format (v3) is shared between runs. Changing it means the next run on every
    open PR does a full review again. Bump `"v"` if you change its meaning.
 5. Workflow permissions stay `contents: read`. Posting uses the bot PAT. Keep the plain
    `pull_request` trigger; do not switch to `pull_request_target`, which would run with

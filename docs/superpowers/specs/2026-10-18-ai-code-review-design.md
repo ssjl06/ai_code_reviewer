@@ -287,6 +287,10 @@ based on line **content**, not on commit ancestry. A rewritten history does not
 cause a full re-review, and code arriving from a merge of the base branch is never
 reviewed as part of the PR.
 
+Issue tracking, the state marker v3 and recheck are specified in
+`2026-11-02-review-convergence-design.md`, which supersedes the issue and marker parts of
+sections 6.2 and 6.4 where they differ.
+
 ### 6.1 Line Fingerprints
 
 - Fingerprint of line `n` of a file at head = first 4 bytes of
@@ -546,6 +550,9 @@ Hidden in the bot review body; the latest bot review with a parsable marker
 `id`, `anchor` and `blocking` are assigned by `aggregate.py` (section 6.4).
 
 ## 8. Verdict
+
+The verdict also depends on the issue ledger (closed, waived and open issues); see
+`2026-11-02-review-convergence-design.md`.
 
 - blocking = `severity in {critical, major}` and `confidence >= 80`.
 - Findings with confidence < 50 are dropped; 50–79 are shown as "확인 필요" and

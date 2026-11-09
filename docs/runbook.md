@@ -63,6 +63,8 @@ team. Still recommended:
 - Critical/major with confidence 50-79: shown as "확인 필요" (needs check), not blocking.
   Minor/info findings with confidence >= 50 are reported as usual. Confidence < 50: dropped.
 - Incomplete chunks (not fully reviewed) give `COMMENT`, never `APPROVE`.
+- A changed line longer than a chunk is cut to fit and gives `COMMENT`, never `APPROVE`,
+  while it is in the head (`줄이 너무 길어 일부만 검토한 파일`).
 - No blocking findings and all chunks complete: `APPROVE`.
 
 ## Incremental review
@@ -70,11 +72,32 @@ Detection is content-based, not sha-based. The first run reviews the whole PR. T
 stores a "seen" set of line fingerprints (the changed line plus its neighbours). On each later run
 the kit diffs the PR against its base, and only hunks with lines whose fingerprint is not yet seen
 are sent to the model; the prompt lists them as "검토 대상 줄" (added lines) and "삭제 지점"
-(deletion anchors). Earlier findings are relocated to their current line and re-checked
-(resolved/open/unclear) instead of being re-raised.
+(deletion anchors). Earlier findings are issues in a ledger: each one's line region is moved
+to the new head with `git diff -U0` and re-checked (resolved/open/unclear) instead of being
+re-raised.
 
 - Squash, rebase, force-push and "merge main into the PR" keep the same line content, so they cost
-  no LLM call. Moved code keeps its findings and their ids.
+  no LLM call as long as no issue is open. Issue ids stay across pushes. Code moved to another
+  file is not followed: its issue becomes an orphan that only the model's `same_as` can attach
+  to a finding (otherwise the defect is raised once more, as a new issue).
+- Code moved inside one file is not reviewed again: its lines keep their fingerprints, so they
+  are seen. An open issue on such code follows it when the same lines are found in the head
+  file (nearest copy, trailing whitespace ignored; failing that, the nearest copy of the three
+  lines around the flagged line), stays open and is rechecked there. If the lines are not found the issue
+  becomes an orphan, and an orphan is resolved on a complete run. A closed issue is never
+  followed this way, so a waiver does not transfer.
+- With open issues, a rebase, squash, merge of main or pure rename costs one model run per chunk,
+  because every open issue is rechecked on a new head: the lines around its region are shown to
+  the model, which reports whether it is still open. Issues that do not fit the recheck budget
+  (`recheck_max_chars`) are rechecked on the next run (log line `다시 확인할 이슈 n건을 이번 실행에
+  담지 못함`); until then the run is not skipped as unchanged on the same sha. The first issue of a
+  chunk is always shown, with less context when it is too large. An issue whose file is in a
+  chunk that did not finish, or is skipped or truncated, stays pending the same way, even if a
+  chunk reported it resolved. An issue in a file with no hunks in the PR diff (a pure rename, or
+  a change the PR reverted) is resolved automatically with the note `PR 변경이 되돌려짐`: the PR
+  no longer changes that file. A file that is only rechecked (no new lines) can be skipped or
+  truncated by the chunk limit without blocking `resolved` or completeness: only the shown
+  lines of each issue decide, unless an item was left out.
 - When there are no new lines the run logs `새로 리뷰할 변경 없음 — 리뷰를 건너뜀` and posts
   nothing. A previous blocking review stays as it is; dismissal happens only on `APPROVE`.
 - A run that cannot finish gives `COMMENT` (never `APPROVE`): a chunk without valid output
@@ -97,8 +120,75 @@ are sent to the model; the prompt lists them as "검토 대상 줄" (added lines
   is not reviewed in depth. A chunk with under 60 s left before the deadline is not started: it
   ends `incomplete` with `deadline`.
 - If the file with a previous blocking finding is dropped from the PR (reverted or deleted), the
-  finding is resolved and the review is approved without an LLM call, unless its line is found in
-  another PR file (code moved): then it follows the line. Renames across pushes are followed.
+  finding is resolved and the review is approved without an LLM call. Renames across pushes are
+  followed; code moved to another file is not (the issue becomes an orphan, see above), and
+  code moved inside a file is followed only for open issues.
+
+Reading the review and the log:
+- `기존 이슈와 중복되어 생략 n건` in the review body: n new findings matched an issue of the
+  ledger (named by the model in `same_as`) and were dropped instead of reported again. The log lists
+  each one: `기존 이슈와 중복되어 생략: file:line (이슈 id)`. This counts only drops the model
+  asked for with `same_as`; a finding merged by position is listed in the next section instead.
+  `기존 이슈에 연결: file:line (이슈 id)` marks a `same_as` link to an open issue. A link is
+  evidence that the issue is still there: if the model also reported that issue resolved in
+  the same run, the issue stays open and the log adds
+  `같은 문제가 다시 지적되어 해결 보고를 무시: file:line (이슈 id)` (also when the finding was
+  merged into a neighbor of this run, or its `same_as` was ignored for being more severe); a blocking finding linked to a
+  non-blocking issue makes the issue blocking.
+- `### 기존 이슈에 합쳐진 지적 (n건)` in the review body: n non-blocking findings were merged by
+  position into an open issue (within 3 lines, not more severe), or removed by the dedupe of
+  one run as a near duplicate of another finding, and the model did not say they are the same
+  problem. A blocking finding is never merged by position: only `same_as` merges it (a
+  blocking finding is removed by the dedupe only as an exact copy, same line, title and
+  `same_as`). They
+  are listed so a person sees them: ``file:line``, severity, title, `→ 이슈 <id>` (or
+  `→ 이번 실행 file:line`) and the first 200 characters of the detail. At most 20, most severe
+  first, then `외 m건 (로그 참조)`. They have no inline comment and do not block. The log has
+  every one with its full detail: `기존 이슈에 합쳐진 지적: file:line severity (id) title — detail`.
+  A body over its size limit keeps this section's header, first entry and `로그 참조` line, and
+  cuts the previous-status list (`외 n건`) first. The same finding on the same line and title
+  from overlapping chunks is not listed; the log says `겹치는 조각의 같은 지적 생략`. A
+  reworded re-raise is listed again on each push that changes those lines; that is expected.
+- `same_as 무시: 지정한 이슈보다 심각함 — file:line (이슈 id)` in the log: the model named an
+  issue in `same_as`, but the finding is more severe than every issue of that issue's family
+  within reach, so the link was ignored and the finding was judged by position. If it becomes
+  a new issue it is remembered as part of that family, so later reports naming the family do
+  not create a new issue each push.
+- `줄이 너무 길어 재검토 불가: <id>` in the log: a line in the issue's region is over 4,000
+  characters, so the model cannot be shown it whole and a `resolved` report is never accepted.
+  The issue stays open (and blocking, if it was). The long line alone does not make it pending;
+  it is pending (and the line is not logged) when its recheck was left out or a chunk holding
+  its file is not `ok`. It closes only when the code changes or a person dismisses the review.
+- `줄이 너무 길어 일부만 검토함: <path>:<line>` (or `<path>` alone, for a line cut in an earlier
+  run) in the log: a changed line is longer than one chunk (`chunk_max_tokens`), so the model
+  saw only its start (the row ends with `…[ai-review: 줄이 너무 길어 잘림]`). The line counts as
+  reviewed, so the next run does not try it again, but the bot never approves while that line
+  is in the head: the verdict is `COMMENT`, the reason `줄이 너무 길어 일부만 검토한 파일:`
+  names the files, and the scope line says `줄 잘림 n files`. Review the long line by hand. If the file is
+  generated or minified, add it to `exclude_globs`. Changing or removing the line lifts it.
+- A blocking finding within 3 lines of a known issue, without `same_as`, is always a new issue
+  and blocks under the normal rules; the log names the nearest issue: `기존 이슈 근처의 새 지적:
+  file:line (이슈 id)` for an open one, `해결/면제된 이슈 근처의 새 지적: file:line (이슈 id)` for
+  a resolved or waived one (the comment then says `해결/면제된 이슈 <id> 근처의 새 지적`). So a
+  reworded blocking re-raise without `same_as` is posted again and blocks again, also next to a
+  waived issue: dismiss the new review to waive it too. An exact re-report of an open issue
+  (same file, line and title, not more severe) is not new: it is logged as
+  `기존 이슈에 연결` and converges.
+- A non-blocking finding more severe than every issue within 3 lines is a new issue; the log
+  says `기존 이슈 근처의 새 지적: file:line (이슈 id)`. One within 3 lines of resolved or waived issues only is posted with the
+  `해결/면제된 이슈` note and log line; it keeps its `확인 필요` mark if it had one.
+- `면제 n건`: n open issues were waived because a person other than the bot dismissed the review
+  that listed them. A waived issue is closed for good. Such a run posts a new review even when
+  the head did not change, and approves when nothing blocking is left. A dismissal starts no
+  run: it applies on the next push or re-run.
+- `dropped_closed` (state field; the body shows `오래된 종료 이슈 기록 n건 삭제`): the state marker
+  was over its size cap and the oldest closed issue records were dropped. Those issues can be
+  raised again. Open issues are never dropped.
+- `이전 커밋을 찾을 수 없어 위치 추적이 약해짐`: the previous reviewed commit is not in the
+  checkout (force-push to a commit that was never fetched), so issues were located by their
+  anchor line instead of by diff and may be lost; lost ones are asked of the model again.
+- `고아 이슈 n건은 프롬프트 목록에서 제외됨`: the orphan list of the prompt is capped at 4000
+  characters per chunk; the ids left out are named.
 
 Trade-offs:
 - A whole-file reformat (clang-format) changes every fingerprint, so the whole file is reviewed

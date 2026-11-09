@@ -9,6 +9,12 @@ from review.hunks import diff_hunk_keys, diff_prints
 Seen = Dict[str, Counter]
 
 
+def _printed(c: dict) -> str:
+    """The chunk diff with its cut rows whole (`diff_split.build_chunks`): a removed row's
+    print is made from its text."""
+    return c.get("full_diff") or c["diff"]
+
+
 def _add(dst: Seen, src: Seen) -> None:
     for path, c in src.items():
         dst.setdefault(path, Counter()).update(c)
@@ -18,13 +24,14 @@ def update_seen(scope: dict, chunks: List[dict], results: List[dict]) -> Seen:
     """A print counts as reviewed only when it went through an `ok` chunk of this run (or a
     hunk skipped as reviewed by its key: `prior`) and no copy of it is left unreviewed: in
     a non-ok chunk or in a target beyond this run's ok copies (`prior` is not subtracted:
-    those copies are not in the targets). Otherwise the previous count is kept (capped)."""
+    those copies are not in the targets). Otherwise the previous count is kept (capped). A row
+    cut to fit its chunk went through it: it counts (its gap is `cut`, see `scope`)."""
     blobs = scope["blobs"]
     status = {r["index"]: r.get("status") for r in results}
     ok: Seen = {}
     bad: Seen = {}
     for c in chunks:
-        _add(ok if status.get(c["index"]) == "ok" else bad, diff_prints(c["diff"], blobs))
+        _add(ok if status.get(c["index"]) == "ok" else bad, diff_prints(_printed(c), blobs))
     for t in scope["targets"]:
         left = diff_prints(t["text"], blobs).get(t["path"], Counter())
         _add(bad, {t["path"]: left - ok.get(t["path"], Counter())})
@@ -50,7 +57,7 @@ def update_hunks(scope: dict, chunks: List[dict], results: List[dict],
     ok: Dict[str, Set[bytes]] = {}
     for c in chunks:
         if status.get(c["index"]) == "ok":
-            for path, keys in diff_hunk_keys(c["diff"], scope["blobs"]).items():
+            for path, keys in diff_hunk_keys(_printed(c), scope["blobs"]).items():
                 ok.setdefault(path, set()).update(keys)
     out: Dict[str, Set[bytes]] = {}
     for path, head in scope["head_prints"].items():

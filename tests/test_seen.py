@@ -3,8 +3,8 @@ from collections import Counter
 
 from review.diff_split import MARKER, build_chunks, parse_unified_diff
 from review.fingerprint import decode_seen, encode_seen, fp_line, whole_hash
-from review.hunks import diff_prints, select_file
-from review.seen import update_seen
+from review.hunks import diff_hunk_keys, diff_prints, select_file
+from review.seen import update_hunks, update_seen
 
 
 def lines_of(tag, n=10):
@@ -107,6 +107,35 @@ class UpdateSeenTest(unittest.TestCase):
                  "prev_seen": {"f.py": Counter()}}
         got = update_seen(scope, [chunk(0, joined)], [res(0)])
         self.assertEqual(got, {"f.py": want})
+
+
+class CutRowTest(unittest.TestCase):
+    """A row cut to fit a chunk (`diff_split._units`) counts as reviewed: its prints come
+    from the blob, or from the whole row of `full_diff` for a removed line."""
+    CFG = {"chunk_max_tokens": 100, "max_chunks": 5, "exclude_globs": []}
+
+    def check(self, blob, text):
+        # the target as `scope.determine` builds it: the long row is its own sub-hunk
+        f = select_file(parse_unified_diff(text)[0], blob, None, None, limit_chars=350)["file"]
+        chunks, _, truncated = build_chunks([f], self.CFG)
+        self.assertEqual(truncated, [])
+        self.assertTrue(any(c["cut"] for c in chunks))
+        ok = [res(c["index"]) for c in chunks]
+        scope = {"targets": [f], "blobs": {"f.js": blob},
+                 "head_prints": diff_prints(text, {"f.js": blob}), "prev_seen": {},
+                 "hunk_keys": diff_hunk_keys(f["text"], {"f.js": blob})}
+        self.assertEqual(update_seen(scope, chunks, ok), scope["head_prints"])
+        self.assertEqual(update_hunks(scope, chunks, ok, {}), scope["hunk_keys"])
+
+    def test_added_long_row(self):
+        long = "x" * 4000
+        self.check(["a", long, "b"], "diff --git a/f.js b/f.js\n--- a/f.js\n+++ b/f.js\n"
+                                     "@@ -1,2 +1,3 @@\n a\n+%s\n b\n" % long)
+
+    def test_removed_long_row(self):
+        long = "x" * 4000
+        self.check(["a", "b"], "diff --git a/f.js b/f.js\n--- a/f.js\n+++ b/f.js\n"
+                               "@@ -1,3 +1,2 @@\n a\n-%s\n b\n" % long)
 
 
 if __name__ == "__main__":
