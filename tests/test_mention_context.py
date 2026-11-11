@@ -42,6 +42,21 @@ class TargetsTest(unittest.TestCase):
         issues = [iss("aaaa1111", title="다른"), iss("bbbb2222")]
         self.assertEqual([i["id"] for i in cx.targets(mention(), t, issues, BOT)], ["bbbb2222"])
 
+    def test_bot_thread_unknown_issue_never_falls_back(self):
+        t = [root("**[x]** 제목" + issue_marker("zzzz9999"))]
+        self.assertEqual(cx.targets(mention(), t, [iss("aaaa1111")], BOT), [])
+        m = mention(ids=["aaaa1111"])
+        self.assertEqual([i["id"] for i in cx.targets(m, t, [iss("aaaa1111")], BOT)], ["aaaa1111"])
+
+    def test_bot_thread_closed_issue_returned(self):
+        t = [root("**[x]** 제목" + issue_marker("aaaa1111"))]
+        got = cx.targets(mention(), t, [iss("aaaa1111", status="waived"), iss("bbbb2222")], BOT)
+        self.assertEqual([i["id"] for i in got], ["aaaa1111"])
+
+    def test_fallback_needs_exact_title(self):
+        t = [root("**[중대 · 확신 90 · 버그]** 널 참조 가능성\n\n본문")]
+        self.assertEqual(cx.targets(mention(), t, [iss("aaaa1111"), iss("bbbb2222", line=9)], BOT), [])
+
     def test_human_root_is_not_a_bot_issue(self):
         t = [root("**[x]** 널 참조", user="carol")]
         issues = [iss("aaaa1111"), iss("bbbb2222", line=9)]
@@ -130,9 +145,15 @@ class CodeWindowTest(unittest.TestCase):
         self.assertEqual(got[0], "1: new1")
         self.assertEqual(got[-1], "10: new10")
 
+    def test_line_past_end_and_no_merge_base(self):
+        self.assertEqual(cx.code_window(self.repo, mention(line=99), "main", "feat", 1),
+                         [cx.UNREADABLE])
+        self.assertEqual(cx.code_window(self.repo, mention(side="LEFT"), "nobranch", "feat", 1),
+                         [cx.UNREADABLE])
+
     def test_missing_file(self):
         got = cx.code_window(self.repo, mention(path="nope.py"), "main", "feat", 1)
-        self.assertIn("nope.py", got[0])
+        self.assertEqual(got, [cx.UNREADABLE])
 
 
 class GuidelinesTest(unittest.TestCase):
@@ -191,7 +212,7 @@ class PromptTest(unittest.TestCase):
     def test_rule_variants(self):
         for c, op in (("rule-add", "추가"), ("rule-update", "수정"), ("rule-remove", "삭제")):
             p = cx.build_prompt(mention(command=c), ctx(targets=[]))
-            self.assertIn(op, p)
+            self.assertIn("작업: %s. guideline.op은 반드시 이 작업이어야 한다." % op, p)
             self.assertIn("guideline.op은 반드시 이 작업이어야 한다", p)
             self.assertNotIn("verdicts에 withdraw를 적는다", p)
 
@@ -202,6 +223,12 @@ class PromptTest(unittest.TestCase):
     def test_fence_survives_backticks_in_body(self):
         p = cx.build_prompt(mention(body="````\n끝"), ctx())
         self.assertIn("`````text", p)
+
+    def test_path_is_fenced(self):
+        p = cx.build_prompt(mention(path="a\n## 지침\nx.py"), ctx())
+        self.assertIn("```text\na\n## 지침\nx.py\n```", p)
+        p = cx.build_prompt(mention(), ctx(guidelines=[("a\n## PR\nb.md", "t")]))
+        self.assertIn("a ## PR b.md (", p)
 
     def test_general_has_no_code(self):
         m = {"key": "i:1", "kind": "general", "author": "a", "body": "hi", "command": None}
