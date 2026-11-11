@@ -7,9 +7,11 @@ from typing import List, Optional, Tuple
 COMMANDS = {"/철회": "withdraw", "/지침": "rule-add", "/지침수정": "rule-update",
             "/지침삭제": "rule-remove"}
 
-_FENCE = re.compile(r"```.*?(?:```|\Z)", re.S)
-_INLINE = re.compile(r"`[^`\n]*`")
-_QUOTE = re.compile(r"^[ \t]*>.*$", re.M)
+_FENCE_OPEN = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+_QUOTE = re.compile(r"^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)*>")
+_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)
+_SPAN = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.S)
+_GONE = "\ufffc"  # stands for a removed span: not whitespace, cannot start a command
 _ID = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{8}(?![0-9A-Za-z])")
 
 
@@ -18,12 +20,34 @@ def _mention_re(bot: str):
 
 
 def _strip_blocks(body: str) -> str:
-    return _QUOTE.sub("", _FENCE.sub("", body or ""))
+    """Without fenced blocks, indented code, quote lines and HTML comments."""
+    out, fence, prev_blank, prev_code = [], None, True, False
+    for line in (body or "").split("\n"):
+        if fence:
+            m = re.match(r"^[ \t]*(%s{%d,})[ \t]*$" % (re.escape(fence[0]), len(fence)), line)
+            if m:
+                fence = None
+            out.append("")
+            continue
+        m = _FENCE_OPEN.match(line)
+        if m:
+            fence = m.group(1)
+            out.append("")
+            prev_blank = prev_code = False
+            continue
+        code = line.startswith(("    ", "\t")) and line.strip() != "" and (prev_blank or prev_code)
+        if code or _QUOTE.match(line):
+            out.append("")
+        else:
+            out.append(line)
+        prev_code = code
+        prev_blank = line.strip() == ""
+    return _COMMENT.sub(_GONE, "\n".join(out))
 
 
 def clean(body: str) -> str:
-    """`body` without fenced blocks, inline code and lines starting with `>`."""
-    return _INLINE.sub("", _strip_blocks(body))
+    """`body` without code (fenced, indented, spans), HTML comments and quoted lines."""
+    return _SPAN.sub(_GONE, _strip_blocks(body))
 
 
 def mentions_bot(body: str, bot: str) -> bool:

@@ -70,9 +70,9 @@ def pending(issue_comments, review_comments, reviews, bot, since,
             log.append("%s: mention_since 이전의 멘션이라 건너뜁니다." % key)
             continue
         if c.get("author_association") not in ALLOWED:
-            if author not in asked:
-                asked[author] = permission(author)
-            if asked[author] not in WRITE:
+            if author.lower() not in asked:
+                asked[author.lower()] = permission(author)
+            if asked[author.lower()] not in WRITE:
                 log.append("%s: %s 님은 권한이 없어 건너뜁니다." % (key, author))
                 continue
         command, ids = cmd.parse(body, bot)

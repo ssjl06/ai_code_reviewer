@@ -41,6 +41,27 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(ids("@ai-bot\n```\na1b2c3d4\n```"), [])
         self.assertEqual(ids("@ai-bot\n> a1b2c3d4"), [])
 
+    def test_not_a_command(self):
+        for body in ["@ai-bot ``/철회``", "see ``@ai-bot /철회`` ok", "~~~\n@ai-bot /철회\n~~~",
+                     "<!-- @ai-bot /철회 -->", "<!-- @ai-bot /철회", "@ai-bot `x` /철회",
+                     "- > @ai-bot /철회", "* > @ai-bot /철회", "1. > @ai-bot /철회",
+                     "  > @ai-bot /철회", "text\n\n    @ai-bot /철회", "x\n\n\t@ai-bot /철회",
+                     "```\n@ai-bot /철회"]:
+            self.assertNotEqual(self.cmd(body), "withdraw", body)
+            self.assertFalse(cmd.mentions_bot(body, BOT) and self.cmd(body) == "withdraw", body)
+
+    def test_still_commands(self):
+        self.assertEqual(self.cmd("@ai-bot /철회 이 줄의 `foo()`는 의도된 동작"), "withdraw")
+        self.assertEqual(self.cmd("@ai-bot /지침 `std::move` 뒤 재사용은 지적한다"), "rule-add")
+        self.assertEqual(self.cmd("```\nx\n```\n@ai-bot /철회"), "withdraw")
+        self.assertEqual(self.cmd("~~~\nx\n~~~\n@ai-bot /철회"), "withdraw")
+
+    def test_ids_skip_new_blocks(self):
+        ids = lambda b: cmd.parse(b, BOT)[1]
+        self.assertEqual(ids("@ai-bot\n~~~\na1b2c3d4\n~~~"), [])
+        self.assertEqual(ids("@ai-bot\n- > a1b2c3d4"), [])
+        self.assertEqual(ids("@ai-bot <!-- a1b2c3d4 -->"), [])
+
 
 if __name__ == "__main__":
     unittest.main()
