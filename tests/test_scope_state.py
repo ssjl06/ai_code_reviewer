@@ -129,7 +129,8 @@ class HelpersTest(unittest.TestCase):
                 json.dump({"v": 2, "sha": "x", "complete": True, "findings": []}, f)
             self.assertEqual(read_state_file(p), {"v": 3, "sha": "x", "complete": True,
                                                   "seen": {}, "seen_files": {}, "seen_hunks": {},
-                                                  "issues": [], "recheck_pending": []})
+                                                  "issues": [], "recheck_pending": [],
+                                                  "approvable": False, "unclear": None})
 
 
 def repo_with_review(findings, files=None, base_files=None):

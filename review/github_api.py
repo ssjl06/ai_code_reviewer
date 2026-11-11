@@ -8,6 +8,7 @@ import urllib.request
 from typing import Any, Callable, Optional, Set
 
 from review.render import parse_state
+from review.validate import normalize_state
 
 TIMEOUT_S = 30
 PER_PAGE = 100
@@ -141,6 +142,14 @@ class GitHub:
             state = parse_state(r.get("body"))
             if state is not None:
                 return state
+        return None
+
+    def mention_receipt(self, bot_login: str, key: str) -> Optional[dict]:
+        """`{"m", "url"}` of the newest bot review whose state marker has `m.k == key`."""
+        for r in self.bot_reviews(bot_login):
+            st = normalize_state(parse_state(r.get("body")))
+            if st and st.get("m", {}).get("k") == key:
+                return {"m": st["m"], "url": r.get("html_url")}
         return None
 
     def _events(self) -> list:

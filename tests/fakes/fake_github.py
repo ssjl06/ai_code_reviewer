@@ -13,6 +13,7 @@ class FakeGitHub:
         self.base, self.head, self.title, self.login = base, head, title, login
         self.reviews, self.posted, self.dismissed, self.requests = [], [], [], []
         self.events = []  # issue events; a dismissal adds a `review_dismissed` one
+        self.reject_inline = False  # answer 422 to a review that carries inline comments
         self.before_post = None  # called with the body just before a review is stored
         self._lock = threading.Lock()
         fake = self
@@ -58,6 +59,8 @@ class FakeGitHub:
         if method == "GET" and path == "/repos/o/r/issues/1/events":
             return 200, self.events
         if method == "POST" and path == PR + "/reviews":
+            if self.reject_inline and body.get("comments"):
+                return 422, {"message": "Unprocessable: line must be part of the diff"}
             if self.before_post:
                 self.before_post(body)
             review = {"id": len(self.reviews) + 1, "user": {"login": self.login},

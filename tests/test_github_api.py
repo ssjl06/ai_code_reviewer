@@ -278,3 +278,20 @@ class RetryPostTest(unittest.TestCase):
     def test_success_does_not_look_up(self):
         send, _ = self.sender([{"id": 2}])
         self.assertEqual(retry_post(send, lambda: self.fail("looked up")), {"id": 2})
+
+
+class MentionReceiptTest(unittest.TestCase):
+    def test_mention_receipt(self):
+        def body(k):
+            return "hi\n" + state_marker({"v": 3, "sha": "s", "issues": [],
+                                          "m": {"k": k, "w": ["a"], "n": [], "up": []}})
+        r1 = dict(rev(1, body=body("i:5")), html_url="https://x/1")
+        person = dict(rev(2, login="human", body=body("i:6")), html_url="https://x/2")
+        other = dict(rev(3, body=body("i:7")), html_url="https://x/3")
+        gh, _ = make([(200, [r1, person, other])])
+        self.assertEqual(gh.mention_receipt("ai-bot", "i:5"),
+                         {"m": {"k": "i:5", "w": ["a"], "n": [], "up": []}, "url": "https://x/1"})
+        gh, _ = make([(200, [r1, person, other])])
+        self.assertIsNone(gh.mention_receipt("ai-bot", "i:6"))
+        gh, _ = make([(200, [r1])])
+        self.assertIsNone(gh.mention_receipt("ai-bot", "i:99"))

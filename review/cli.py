@@ -21,7 +21,7 @@ from review.gitutil import GitError
 from review.ledger import apply_waivers, assign_recheck, pending_after, prompt_lists, shown_lines
 from review.previous import anchor_of
 from review.prompt import build_prompt, orphan_split
-from review.render import render_body, render_inline
+from review.render import issue_marker, render_body, render_inline
 from review.validate import normalize_state
 
 LLM_ENV = ("AI_REVIEW_LLM_BASE_URL", "AI_REVIEW_LLM_API_KEY")
@@ -217,8 +217,8 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
             "reviewed": cu.reviewed_files(chunks), "skipped": skipped}
     body = render_body(review, body_only, meta, state)
     fallback = render_body(review, inline + body_only, meta, state)
-    comments = [{"path": f["file"], "line": f["line"], "side": "RIGHT", "body": render_inline(f)}
-                for f in inline]
+    comments = [{"path": f["file"], "line": f["line"], "side": "RIGHT",
+                 "body": render_inline(f) + issue_marker(f["id"])} for f in inline]
     log("판정: %s · 새 지적 %d건 (inline %d) · 미완료 조각 %d개" % (
         review["event"], len(review["findings"]), len(inline), len(review["incomplete"])))
     cu.append_step_summary(env, results)

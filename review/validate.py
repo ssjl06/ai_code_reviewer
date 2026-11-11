@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Optional
 
 from review.ledger import CLOSED, from_v2
@@ -165,6 +166,25 @@ def _expand_closed(closed: Any) -> list:
     return out
 
 
+def _str_list(v: Any) -> Optional[list]:
+    return list(v) if isinstance(v, list) and all(isinstance(x, str) for x in v) else None
+
+
+def normalize_mention(m: Any) -> Optional[dict]:
+    """The receipt `m` of a mention review (`k`, `w`, `n`, `up`, optional `g`), or None when
+    malformed."""
+    if not isinstance(m, dict) or not isinstance(m.get("k"), str) \
+            or not re.match(r"[irv]:\d+\Z", m["k"]):
+        return None
+    lists = {f: _str_list(m.get(f)) for f in ("w", "n", "up")}
+    if any(v is None for v in lists.values()) or ("g" in m and not isinstance(m["g"], str)):
+        return None
+    out = dict(k=m["k"], **lists)
+    if "g" in m:
+        out["g"] = m["g"]
+    return out
+
+
 def normalize_state(state: Any) -> Optional[dict]:
     """Previous bot state as v3 with malformed parts dropped: a v2 marker is migrated (each
     finding becomes an open issue), the compact `closed` map of a v3 marker is expanded into
@@ -175,7 +195,13 @@ def normalize_state(state: Any) -> Optional[dict]:
     out = {"v": 3, "sha": sha if isinstance(sha, str) else "",
            "complete": state.get("complete") is True,
            "seen": _str_map(state.get("seen")), "seen_files": _str_map(state.get("seen_files")),
-           "seen_hunks": _str_map(state.get("seen_hunks"))}
+           "seen_hunks": _str_map(state.get("seen_hunks")),
+           "approvable": state.get("approvable") is True,
+           "unclear": ([x for x in state["unclear"] if isinstance(x, str)]
+                       if isinstance(state.get("unclear"), list) else None)}  # None: an old marker
+    m = normalize_mention(state.get("m"))
+    if m is not None:
+        out["m"] = m
     if state["v"] == 2:
         found = state.get("findings")
         issues = [from_v2(dict(e, anchor=e.get("anchor") if isinstance(e.get("anchor"), str)

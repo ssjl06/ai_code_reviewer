@@ -121,12 +121,13 @@ class NormalizeStateTest(unittest.TestCase):
                          ({"b.c": "x"}, {}, {"c.c": "y"}, False))
         self.assertEqual(normalize_state({"v": 2, "sha": 1, "complete": "yes", "findings": "x"}),
                          {"v": 3, "sha": "", "complete": False, "seen": {}, "seen_files": {},
-                          "seen_hunks": {}, "issues": [], "recheck_pending": []})
+                          "seen_hunks": {}, "issues": [], "recheck_pending": [],
+                          "approvable": False, "unclear": None})
 
     def test_v3_round_trip(self):
         out = normalize_state(V3_STATE)
         self.assertEqual(out, {k: v for k, v in V3_STATE.items() if k != "closed"}
-                         | {"seen_hunks": {}})
+                         | {"seen_hunks": {}, "approvable": False, "unclear": None})
 
     def test_cut_prints_are_kept(self):
         st = dict(V3_STATE, cut={"a.js": "AQIDBA==", 3: "x", "b.js": 1})
@@ -193,3 +194,25 @@ class NormalizeStateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StateMentionFieldsTest(unittest.TestCase):
+    def test_state_approvable_unclear(self):
+        st = normalize_state(dict(V3_STATE, approvable=True, unclear=["a", 1, "b"]))
+        self.assertEqual((st["approvable"], st["unclear"]), (True, ["a", "b"]))
+        old = normalize_state(V3_STATE)
+        self.assertEqual((old["approvable"], old["unclear"]), (False, None))
+        self.assertIs(normalize_state(dict(V3_STATE, approvable="true"))["approvable"], False)
+        self.assertEqual(normalize_state(dict(V3_STATE, unclear=[]))["unclear"], [])
+        self.assertIsNone(normalize_state(dict(V3_STATE, unclear="x"))["unclear"])
+        v2 = normalize_state(V2_STATE)
+        self.assertEqual((v2["approvable"], v2["unclear"]), (False, None))
+
+    def test_state_m(self):
+        m = {"k": "i:12", "w": ["a"], "n": ["b"], "up": [], "g": "x.md r1 add"}
+        self.assertEqual(normalize_state(dict(V3_STATE, m=m))["m"], m)
+        m2 = {"k": "r:3", "w": [], "n": [], "up": ["c"]}
+        self.assertEqual(normalize_state(dict(V3_STATE, m=m2))["m"], m2)
+        for bad in (dict(m, k="x:1"), dict(m, k=5), dict(m, w="a"), dict(m, n=[1]),
+                    dict(m, up=None), dict(m, g=3), "x", {"k": "i:1"}):
+            self.assertNotIn("m", normalize_state(dict(V3_STATE, m=bad)), bad)

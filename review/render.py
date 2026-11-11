@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from review.ledger import SEV_RANK
 
@@ -59,6 +60,40 @@ def parse_state(body):
     except ValueError:
         return None
     return state if isinstance(state, dict) else None
+
+
+_ISSUE_TAIL = re.compile(r"<!-- ai-review-issue ([0-9A-Za-z_-]+) -->\Z")
+_REPLY_TAIL = re.compile(r"<!-- ai-review-reply (\{[^{}]*\}) -->\Z")
+_KEY = re.compile(r"[irv]:\d+\Z")
+
+
+def issue_marker(issue_id: str) -> str:
+    """Hidden tail of an inline comment: which ledger issue the comment belongs to."""
+    return "\n\n<!-- ai-review-issue %s -->" % issue_id
+
+
+def parse_issue_marker(body):
+    """The issue id of a marker at the very end of `body`, else None."""
+    m = _ISSUE_TAIL.search(body.rstrip()) if isinstance(body, str) else None
+    return m.group(1) if m else None
+
+
+def reply_marker(key: str) -> str:
+    """Hidden tail of a reply: the mention key it answers."""
+    return "<!-- ai-review-reply %s -->" % json.dumps({"c": key}, separators=(",", ":"))
+
+
+def parse_reply(body):
+    """The mention key of a reply marker at the very end of `body`, else None."""
+    m = _REPLY_TAIL.search(body.rstrip()) if isinstance(body, str) else None
+    if not m:
+        return None
+    try:
+        raw = json.loads(m.group(1))
+    except ValueError:
+        return None
+    key = raw.get("c") if isinstance(raw, dict) else None
+    return key if isinstance(key, str) and _KEY.match(key) else None
 
 
 def _safe(text: str) -> str:
