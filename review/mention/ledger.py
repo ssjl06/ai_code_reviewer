@@ -21,10 +21,10 @@ def apply_changes(state: dict, changes: dict) -> Tuple[dict, dict]:
     issues = []
     for i in state.get("issues") or []:
         if _open(i):
-            if i["id"] in waive and i["id"] not in done["w"]:
+            if i["id"] in waive:
                 i = dict(i, status="waived")
                 done["w"].append(i["id"])
-            elif i["id"] in upgrade and not i.get("blocking") and i["id"] not in done["up"]:
+            elif i["id"] in upgrade and not i.get("blocking"):
                 i = dict(i, blocking=True)
                 done["up"].append(i["id"])
         issues.append(i)

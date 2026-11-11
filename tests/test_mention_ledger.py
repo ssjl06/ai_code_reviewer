@@ -72,12 +72,14 @@ class MarkerStateTest(unittest.TestCase):
         ms = marker_state(s, dict(RECEIPT, w=["x"]))
         back = normalize_state(ms)
         self.assertEqual(back["issues"], s["issues"])
-        self.assertEqual({i["id"]: i["status"] for i in back["issues"]},
-                         {i["id"]: i["status"] for i in s["issues"]})
         for k in ("sha", "complete", "seen_files", "seen_hunks", "approvable", "unclear",
                   "cut", "recheck_pending"):
             self.assertEqual(back[k], s[k], k)
         self.assertEqual(back["m"], dict(RECEIPT, w=["x"]))
+
+    def test_dropped_closed_kept(self):
+        back = normalize_state(marker_state(dict(base(), dropped_closed=5), RECEIPT))
+        self.assertEqual(back["dropped_closed"], 5)
 
     def test_old_marker_stays_old(self):
         back = normalize_state(marker_state(base(unclear=None), RECEIPT))
@@ -107,6 +109,10 @@ class LedgerEventTest(unittest.TestCase):
         self.assertEqual(self.ev([orphan]), "REQUEST_CHANGES")
         self.assertEqual(self.ev([issue(1, blocking=True)], unclear=[issue(1)["id"]]), "COMMENT")
         self.assertEqual(self.ev([issue(1, "waived", blocking=True)]), "APPROVE")
+
+    def test_added_blocking_ignored_with_unclear_list(self):
+        self.assertEqual(self.ev([issue(1)], added=True), "APPROVE")
+        self.assertEqual(self.ev([issue(1)], current=False, added=True), "COMMENT")
 
     def test_old_marker(self):
         iss = [issue(1, blocking=True)]
