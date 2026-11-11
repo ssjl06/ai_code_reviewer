@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ai-review mention output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reply", "verdicts", "new_issues", "guideline", "wants"],
+  "properties": {
+    "reply": {"type": "string", "minLength": 1},
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "withdraw", "reason"],
+        "properties": {
+          "id": {"type": "string"},
+          "withdraw": {"type": "boolean"},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "new_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "line", "severity", "confidence", "category", "title", "detail"],
+        "properties": {
+          "file": {"type": "string"},
+          "line": {"type": "integer", "minimum": 1},
+          "end_line": {"type": "integer", "minimum": 1},
+          "severity": {"type": "string", "enum": ["critical", "major", "minor", "info"]},
+          "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+          "category": {"type": "string", "enum": ["bug", "security", "concurrency", "memory",
+                       "performance", "api-misuse", "maintainability", "docs"]},
+          "title": {"type": "string", "maxLength": 80},
+          "detail": {"type": "string"},
+          "suggestion": {"type": "string"}
+        }
+      }
+    },
+    "guideline": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["op", "path", "applies", "rule", "reason"],
+      "properties": {
+        "op": {"type": "string", "enum": ["add", "update", "remove"]},
+        "path": {"type": "string"},
+        "applies": {"type": "array", "items": {"type": "string"}},
+        "rule": {"type": "string", "maxLength": 200},
+        "reason": {"type": "string", "maxLength": 200},
+        "target": {"type": "string"}
+      }
+    },
+    "wants": {"type": ["string", "null"], "enum": [null, "withdraw", "rule"]}
+  }
+}

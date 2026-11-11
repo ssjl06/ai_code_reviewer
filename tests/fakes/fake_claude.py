@@ -31,6 +31,14 @@ KOREAN_MOVED = dict(KOREAN, findings=[dict(KO_FINDING, line=3)])
 KOREAN_ASK = "서술 필드만 한국어로"  # marker phrase of review.prompt.KOREAN_PROMPT
 
 
+MENTION = {"reply": "확인했습니다. 이 이슈는 철회해도 됩니다.",
+           "verdicts": [{"id": "a1", "withdraw": True, "reason": "호출부에서 길이를 검사한다"}],
+           "new_issues": [], "guideline": None, "wants": None}
+MENTION_EN = dict(MENTION, reply="Checked. This issue can be withdrawn.",
+                  verdicts=[{"id": "a1", "withdraw": True, "reason": "The caller checks the length"}])
+MENTION_ASK = "reply, reason"  # marker phrase of review.prompt.MENTION_KOREAN
+
+
 def scenario_output(scn, stdin):
     if scn == "blocking":
         return {"summary": "차단 1건", "findings": [BLOCKING], "previous_findings": [],
@@ -132,6 +140,12 @@ def main():
             result(sid, structured_output=KOREAN if scn == "korean" else KOREAN_MOVED)
         else:
             result(sid, "error_max_turns")
+    elif scn == "mention":
+        result(sid, structured_output=MENTION)
+    elif scn == "mention_en":
+        result(sid, structured_output=MENTION_EN)
+    elif scn == "mention_korean":  # resume answers only the Korean re-ask prompt
+        result(sid, structured_output=MENTION if MENTION_ASK in stdin else MENTION_EN)
     elif scn in ("budget_stop", "time_stop"):  # which one depends on the guard env
         budget_stop(sid)
     elif scn == "max_turns":

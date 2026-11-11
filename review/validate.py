@@ -227,12 +227,56 @@ def normalize_state(state: Any) -> Optional[dict]:
     return out
 
 
-def extract_output(result: Optional[dict]) -> Optional[dict]:
-    """Normalized chunk output from the final `result` event (structured_output or text JSON)."""
+WANTS = ("withdraw", "rule")
+GUIDELINE_OPS = ("add", "update", "remove")
+
+
+def _verdict(raw: Any) -> Optional[dict]:
+    if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) \
+            or not isinstance(raw.get("withdraw"), bool):
+        return None
+    return {"id": raw["id"], "withdraw": raw["withdraw"], "reason": _str(raw.get("reason"))}
+
+
+def _guideline(raw: Any) -> Optional[dict]:
+    """A guideline change with its types checked; None for anything else (an update or a
+    remove also needs the `target` rule id)."""
+    if not isinstance(raw, dict) or raw.get("op") not in GUIDELINE_OPS:
+        return None
+    applies = _str_list(raw.get("applies"))
+    if not isinstance(raw.get("path"), str) or not raw["path"] or applies is None \
+            or not isinstance(raw.get("rule"), str) or not isinstance(raw.get("reason"), str):
+        return None
+    g = {"op": raw["op"], "path": raw["path"], "applies": applies, "rule": raw["rule"],
+         "reason": raw["reason"]}
+    if isinstance(raw.get("target"), str) and raw["target"]:
+        g["target"] = raw["target"]
+    return g if raw["op"] == "add" or "target" in g else None
+
+
+def normalize_mention(obj: Any) -> Optional[dict]:
+    """Schema-shaped mention output (spec 5.4), or None without a non-empty `reply`. Bad
+    verdicts and new issues are dropped; a bad guideline or `wants` becomes None."""
+    if not isinstance(obj, dict) or not isinstance(obj.get("reply"), str) or not obj["reply"]:
+        return None
+    verdicts, issues = obj.get("verdicts"), obj.get("new_issues")
+    return {"reply": obj["reply"],
+            "verdicts": [v for v in map(_verdict, verdicts if isinstance(verdicts, list) else [])
+                         if v is not None],
+            "new_issues": [{k: v for k, v in f.items() if k != "same_as"} for f in
+                           map(_finding, issues if isinstance(issues, list) else [])
+                           if f is not None],
+            "guideline": _guideline(obj.get("guideline")),
+            "wants": obj["wants"] if obj.get("wants") in WANTS else None}
+
+
+def _extract(result: Optional[dict], normalize, key: str) -> Optional[dict]:
+    """Normalized output from the final `result` event (structured_output or text JSON
+    holding `key`)."""
     if not isinstance(result, dict):
         return None
     if isinstance(result.get("structured_output"), dict):
-        return normalize_output(result["structured_output"])
+        return normalize(result["structured_output"])
     text, dec, i = result.get("result"), json.JSONDecoder(), 0
     if not isinstance(text, str):
         return None
@@ -245,7 +289,17 @@ def extract_output(result: Optional[dict]) -> Optional[dict]:
         except ValueError:
             i += 1
             continue
-        out = normalize_output(obj) if isinstance(obj, dict) and "findings" in obj else None
+        out = normalize(obj) if isinstance(obj, dict) and key in obj else None
         if out is not None:
             return out
         i = end if isinstance(obj, dict) else i + 1
+
+
+def extract_output(result: Optional[dict]) -> Optional[dict]:
+    """Normalized chunk output from the final `result` event."""
+    return _extract(result, normalize_output, "findings")
+
+
+def extract_mention(result: Optional[dict]) -> Optional[dict]:
+    """Normalized mention output from the final `result` event."""
+    return _extract(result, normalize_mention, "reply")

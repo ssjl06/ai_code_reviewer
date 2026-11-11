@@ -6,6 +6,8 @@ import unittest
 from review.claude_cmd import (
     ENV_PASSTHROUGH,
     build_command,
+    MENTION,
+    REVIEW,
     build_env,
     load_agent,
     write_agents_file,
@@ -93,3 +95,30 @@ class ClaudeCmdTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionKindTest(unittest.TestCase):
+    def test_review_kind_is_todays_values(self):
+        self.assertEqual((REVIEW.agent_name, REVIEW.label, REVIEW.needs_diff_reviewed),
+                         ("pr-reviewer", "c", True))
+        self.assertEqual(build_command(CFG, "/t/a.json"), build_command(CFG, "/t/a.json", None, REVIEW))
+
+    def test_mention_command(self):
+        c = build_command(CFG, "/t/agents.json", kind=MENTION)
+        self.assertEqual(c[c.index("--agent") + 1], "pr-mention")
+        schema = json.loads(c[c.index("--json-schema") + 1])
+        self.assertIn("reply", schema["properties"])
+        self.assertEqual(c[c.index("--tools") + 1], "Read,Grep,Glob,Bash")
+        r = build_command(CFG, "/t/agents.json", "abc", MENTION)
+        self.assertEqual((r[r.index("--tools") + 1], r[r.index("--max-turns") + 1]), ("", "4"))
+
+    def test_agents_file_for_either_kind(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = write_agents_file(AGENT_MD, d)
+            m = write_agents_file(os.path.join(KIT_DIR, "agent/pr-mention.md"), d, MENTION)
+            self.assertNotEqual(a, m)
+            with open(m, encoding="utf-8") as f:
+                self.assertEqual(list(json.load(f)), ["pr-mention"])
+            with open(a, encoding="utf-8") as f:
+                self.assertEqual(list(json.load(f)), ["pr-reviewer"])
+

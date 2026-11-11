@@ -28,6 +28,13 @@ KOREAN_PROMPT = (
     "diff_reviewed는 반드시 JSON 불리언으로 포함한다. "
     "도구를 호출하지 마라."
 )
+MENTION_FALLBACK = "도구를 더 호출하지 말고 지금까지의 근거만으로 스키마에 맞는 최종 JSON을 출력하라. 모든 서술은 한국어로 쓴다."
+MENTION_KOREAN = (
+    "직전 최종 결과를 내용과 필드(id, withdraw, file, line, severity, confidence, category, "
+    "op, path, applies, target, wants)는 그대로 두고, 서술 필드만 한국어로 옮겨 스키마에 맞는 "
+    "최종 JSON으로 다시 출력하라. 서술 필드는 reply, reason, title, detail, suggestion, "
+    "rule이다. 도구를 호출하지 마라."
+)
 
 
 def _safe_title(title: str) -> str:

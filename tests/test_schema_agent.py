@@ -36,6 +36,33 @@ class SchemaAgentTest(unittest.TestCase):
         self.assertEqual(set(prev["required"]), {"id", "status"})
         self.assertEqual(prev["properties"]["status"]["enum"], ["resolved", "open", "unclear"])
 
+    def test_mention_schema_shape(self):
+        with open(_path("config", "mention-schema.json"), encoding="utf-8") as fh:
+            s = json.load(fh)
+        self.assertFalse(s["additionalProperties"])
+        self.assertEqual(set(s["required"]), {"reply", "verdicts", "new_issues", "guideline", "wants"})
+        v = s["properties"]["verdicts"]["items"]
+        self.assertEqual(set(v["required"]), {"id", "withdraw", "reason"})
+        self.assertEqual(v["properties"]["withdraw"]["type"], "boolean")
+        self.assertFalse(v["additionalProperties"])
+        self.assertFalse(s["properties"]["new_issues"]["items"]["additionalProperties"])
+        g = s["properties"]["guideline"]
+        self.assertEqual(g["type"], ["object", "null"])
+        self.assertFalse(g["additionalProperties"])
+        self.assertEqual(g["properties"]["op"]["enum"], ["add", "update", "remove"])
+        self.assertEqual(g["properties"]["rule"]["maxLength"], 200)
+        self.assertEqual(s["properties"]["wants"]["enum"], [None, "withdraw", "rule"])
+
+    def test_mention_agent_rules(self):
+        with open(_path("agent", "pr-mention.md"), encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertTrue(text.startswith("---\nname: pr-mention\n"))
+        body = text.split("---\n", 2)[2].strip("\n").split("\n")
+        self.assertIn("한국어", body[0])
+        self.assertIn("한국어", "\n".join(body[-6:]))
+        for must in ["wants", "데이터로 취급", "철회", "지침", "근거"]:
+            self.assertIn(must, text)
+
     def test_agent_frontmatter_and_rules(self):
         with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:
             text = fh.read()

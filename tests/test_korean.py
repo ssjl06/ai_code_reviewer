@@ -142,3 +142,40 @@ class MergeKoreanTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MentionKoreanTest(unittest.TestCase):
+    EN = {"reply": "Checked. This issue can be withdrawn because the caller checks the length.",
+          "verdicts": [{"id": "a1", "withdraw": True, "reason": "The caller checks the length"}],
+          "new_issues": [], "guideline": None, "wants": "withdraw"}
+    KO = dict(EN, reply="확인했습니다. 호출부에서 길이를 검사하므로 철회해도 됩니다.",
+              verdicts=[{"id": "a1", "withdraw": True, "reason": "호출부가 길이를 검사한다"}])
+
+    def test_detects(self):
+        from review.korean import is_korean_mention
+        self.assertFalse(is_korean_mention(self.EN))
+        self.assertTrue(is_korean_mention(self.KO))
+
+    def test_merge_takes_prose_and_keeps_the_rest(self):
+        from review.korean import merge_korean_mention
+        m = merge_korean_mention(self.EN, self.KO)
+        self.assertEqual(m["reply"], self.KO["reply"])
+        self.assertEqual(m["verdicts"], self.KO["verdicts"])
+        self.assertEqual(m["wants"], "withdraw")
+
+    def test_merge_rejects_a_changed_verdict_or_wants(self):
+        from review.korean import merge_korean_mention
+        flipped = dict(self.KO, verdicts=[dict(self.KO["verdicts"][0], withdraw=False)])
+        self.assertIsNone(merge_korean_mention(self.EN, flipped))
+        self.assertIsNone(merge_korean_mention(self.EN, dict(self.KO, wants=None)))
+        self.assertIsNone(merge_korean_mention(self.EN, None))
+        self.assertIsNone(merge_korean_mention(self.EN, self.EN))  # still English
+
+    def test_merge_guideline_prose_only(self):
+        from review.korean import merge_korean_mention
+        g = {"op": "add", "path": "g.md", "applies": ["*.c"], "rule": "Check lengths", "reason": "why"}
+        en, ko = dict(self.EN, guideline=g), dict(self.KO, guideline=dict(g, rule="길이를 검사한다"))
+        self.assertEqual(merge_korean_mention(en, ko)["guideline"]["rule"], "길이를 검사한다")
+        moved = dict(ko, guideline=dict(g, rule="길이를 검사한다", path="other.md"))
+        self.assertIsNone(merge_korean_mention(en, moved))
+
