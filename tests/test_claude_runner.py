@@ -408,9 +408,9 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual((rs[0]["status"], rs[0]["error"]), ("incomplete", "deadline"))
 
     # --- mention sessions
-    def mention(self, scn, resume="mention", out=None, deadline=None):
+    def mention(self, scn, resume="mention", out=None, deadline=None, session=10):
         self.chunk = {"index": 0, "files": [], "est_tokens": 0}
-        cfg = self.cfg(scn, resume)
+        cfg = dict(self.cfg(scn, resume), mention_session_s=session, fallback_timeout_s=10)
         with contextlib.redirect_stdout(out or io.StringIO()):
             return run_chunk(self.chunk, "PROMPT", 1, cfg, self.paths, self.env, None, deadline,
                              MENTION), cfg
@@ -439,8 +439,9 @@ class RunnerTest(unittest.TestCase):
 
     def test_mention_run_chunk_respects_the_deadline(self):
         t0 = time.monotonic()
-        r, _ = self.mention("hang", "mention", deadline=t0 + 1.5)
-        self.assertLess(time.monotonic() - t0, 3.5)
+        r, _ = self.mention("hang", "mention", deadline=t0 + 3, session=30)  # the deadline binds
+        self.assertGreater(time.monotonic() - t0, 2.5)
+        self.assertLess(time.monotonic() - t0, 6)
         self.assertEqual(r["status"], "incomplete")
         self.assertEqual(len(self.calls()), 1)  # no time left for the resume
 

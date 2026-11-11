@@ -199,8 +199,9 @@ def _attempt(chunk, total, paths, cmd, text, limit, env, kind: SessionKind = REV
     """One claude call; returns (status, output, session id, stats, process info)."""
     idx = chunk["index"]
     log, info = StreamLogger("%s%d" % (kind.label, idx + 1), out=sys.stdout), {}
-    log.start("chunk %d/%d  files=%d  diff=%.1fk tok"
-              % (idx + 1, total, len(chunk["files"]), chunk["est_tokens"] / 1000.0))
+    of = "%d/%d" % (idx + 1, total) if total else "%d" % (idx + 1)  # no ratio when unknown
+    log.start("chunk %s  files=%d  diff=%.1fk tok"
+              % (of, len(chunk["files"]), chunk["est_tokens"] / 1000.0))
     tee = os.path.join(_session_dir(chunk, paths, kind), "stream.jsonl")
     st = run_process(cmd, env, paths["repo"], text, limit, log, tee, info)
     out = kind.extract(log.stats()["result"])
@@ -257,8 +258,8 @@ def resume_ask(result, chunk, prompt, cfg, paths, base_env, kind: SessionKind,
     if not sid or limit <= 0.5:
         return None
     env, _ = _chunk_env(chunk, cfg, paths, base_env, kind)
-    return _attempt(chunk, 1, paths, build_command(cfg, paths["agents_file"], sid, kind), prompt,
-                    limit, env, kind)[1]
+    return _attempt(chunk, None, paths, build_command(cfg, paths["agents_file"], sid, kind),
+                    prompt, limit, env, kind)[1]
 
 
 def reask_korean(r, chunk, cfg, paths, base_env, kind: SessionKind, deadline, total=None):
@@ -278,7 +279,7 @@ def reask_korean(r, chunk, cfg, paths, base_env, kind: SessionKind, deadline, to
             return r
         t0 = time.monotonic()
         env, _ = _chunk_env(chunk, cfg, paths, base_env, kind)
-        new = _attempt(chunk, total or r["index"] + 1, paths,
+        new = _attempt(chunk, total, paths,
                        build_command(cfg, paths["agents_file"], r["session_id"], kind),
                        kind.korean_prompt, limit, env, kind)[1]
         merged = kind.merge_korean(r["output"], new)

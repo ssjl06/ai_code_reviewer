@@ -140,8 +140,6 @@ class MergeKoreanTest(unittest.TestCase):
         self.assertIsNone(merge_korean(EN, EN))
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class MentionKoreanTest(unittest.TestCase):
@@ -179,3 +177,6 @@ class MentionKoreanTest(unittest.TestCase):
         moved = dict(ko, guideline=dict(g, rule="길이를 검사한다", path="other.md"))
         self.assertIsNone(merge_korean_mention(en, moved))
 
+
+if __name__ == "__main__":
+    unittest.main()

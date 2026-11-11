@@ -215,8 +215,6 @@ class StateMentionFieldsTest(unittest.TestCase):
             self.assertNotIn("m", normalize_state(dict(V3_STATE, m=bad)), bad)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class NormalizeMentionTest(unittest.TestCase):
@@ -270,3 +268,6 @@ class NormalizeMentionTest(unittest.TestCase):
         self.assertEqual(extract_mention({"result": txt}), self.GOOD)
         self.assertIsNone(extract_mention({"result": '{"reply": ""}'}))
 
+
+if __name__ == "__main__":
+    unittest.main()

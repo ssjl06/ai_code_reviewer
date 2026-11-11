@@ -93,8 +93,6 @@ class ClaudeCmdTest(unittest.TestCase):
             build_env(CFG, "/repo", "/s", "/c", {"AI_REVIEW_LLM_BASE_URL": "u"})
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class SessionKindTest(unittest.TestCase):
@@ -122,3 +120,6 @@ class SessionKindTest(unittest.TestCase):
             with open(a, encoding="utf-8") as f:
                 self.assertEqual(list(json.load(f)), ["pr-reviewer"])
 
+
+if __name__ == "__main__":
+    unittest.main()
