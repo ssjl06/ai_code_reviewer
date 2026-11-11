@@ -301,6 +301,26 @@ Pass: at least 3 of 4 planted defects reported; `■ done` for every chunk withi
 `✖ ... denied` caused by an actual escape attempt; `review.json` event is `REQUEST_CHANGES`.
 Result:
 
+Mention smoke run (a test PR on the GHES, real runner and LiteLLM; one push review first, so
+one issue is open). Each row: post the comment, wait for the run, check the reply and the log
+(`[m<n>]` lines, the "AI review mentions" table of the step summary).
+
+| # | Action | Expected | Result: |
+|---|---|---|---|
+| 1 | PR comment `@<bot> 이 함수는 왜 이렇게 했어?` | A reply quoting the comment; `**반영:** 없음`; no review | |
+| 2 | Reply in the bot's inline thread `@<bot> 테스트에서만 쓰는 코드야` | A reply in the thread; no review | |
+| 3 | New inline comment on a changed line `@<bot> 여기 경계 검사 빠진 거 아냐?` | A thread reply; a real defect becomes a new issue with a mention review (`REQUEST_CHANGES` if blocking) | |
+| 4 | A review with body `@<bot> 전체적으로 괜찮아?` | A PR comment quoting the review body | |
+| 5 | In the open issue's thread `@<bot> /철회 의도된 동작` | The issue `waived` in a mention review; `APPROVE` (earlier change requests dismissed) when nothing else blocks | |
+| 6 | `@<bot> /지침 <rule>` | A bot commit on the PR branch with `AI-Review-Mention: i:<id>`; no AI review of it; the reply says to pull | |
+| 7 | `@<bot> /지침수정 <which rule, how>` | A commit; the reply quotes the replaced rule text | |
+| 8 | `@<bot> /지침삭제 <which rule>` | A commit; the reply quotes the removed rule text | |
+| 9 | `@<bot> /취소` | "알 수 없는 명령입니다. ..." without a model call | |
+| 10 | A mention while a push review runs | The mention run waits for the review, then answers | |
+| 11 | A push while a mention is handled | The mention run is cancelled; the push's run reviews, then answers the mention once | |
+| 12 | An ordinary comment (no mention) and the bot's guideline push | No job starts; nothing is cancelled | |
+| 13 | The GHES checks of "Mentions" above (`vars` in `if:` and `concurrency`, `cancel-in-progress` expression, cancel order, same group across old and new workflow files, `author_association` of private org members) | As described there | |
+
 ## Known limitations
 - `git grep` patterns containing shell metacharacters are denied (use the Grep tool).
 - There is no `/ai-review full` trigger to force a full re-review.
