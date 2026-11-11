@@ -1,7 +1,7 @@
 # Mention Feedback — Design
 
 - Date: 2026-11-11
-- Status: Draft (awaiting review), rev 4
+- Status: Implemented (branch feat/mention-feedback), rev 4 with the implementation notes of section 13
 - Extends `2026-10-18-ai-code-review-design.md` (base design) and
   `2026-11-02-review-convergence-design.md` (issue ledger, state marker v3).
 
@@ -200,10 +200,12 @@ command per comment. New issues need no command and may come with any command.
 Targets of `/철회`, decided by code:
 
 1. a reply in the thread of a bot inline comment: that thread's issue;
-2. else the open issues whose id (8 hex digits) is written in the comment; ids are read
-   before inline code is removed, with ASCII boundaries (`a1b2c3d4는` and `` `a1b2c3d4` ``
-   count);
-3. else, when exactly one issue is open: that issue;
+2. else the ledger issues whose id (8 hex digits) is written in the comment, whatever their
+   status (5.4 reports a waived one as done and a resolved one as not applicable); ids are
+   read before inline code is removed, with ASCII boundaries (`a1b2c3d4는` and
+   `` `a1b2c3d4` `` count);
+3. else, when the comment names no ledger id, the mention is not a reply in a bot thread,
+   and exactly one issue is open: that issue;
 4. else no session and the reply "어느 이슈인지 알 수 없습니다. 지적 스레드에서 답하거나
    `@<bot> /철회 <id>`로 불러 주세요." followed by the open issues, one line each
    (`<id>` `file:line` title), or "열린 이슈가 없습니다." when there is none.
@@ -557,3 +559,36 @@ retry), defaults, template, README, runbook.
 
 - Reacting without a mention; reopening a waived issue through a mention; guidelines shared
   across repositories.
+
+## 13. Implementation Notes
+
+Decisions taken while implementing, where the text above was silent or was refined:
+
+- A reply in a bot thread whose issue cannot be found never falls back to the only open
+  issue; ids written in the comment still count (5.1).
+- The cleaned text (4) also drops `~~~` fences, code spans of any backtick length, HTML
+  comments, quotes nested in list items and indented code; a removed span leaves a
+  non-space placeholder, so a command must follow the mention directly.
+- `mention_since` reaches the kit through the environment variable
+  `AI_REVIEW_MENTION_SINCE` (set by the workflow from `MENTION_SINCE`), not `--set`: a PR
+  branch with an older kit would reject the unknown key. A malformed value stops the
+  mention phase with exit 1.
+- The review phase hands the state it posted to the mention phase in memory; the mention
+  phase reads the listing only when the review phase posted nothing (6.1).
+- After the bot's own push the API may still report the older head: the phase reads the PR
+  again up to `mention_head_tries` 10 times, `mention_head_delay_s` 3 s apart, before it
+  treats the head as moved (3).
+- The review phase also takes the checked-out commit as its head (3).
+- The workflow's first step fails when `vars.AI_REVIEW_BOT_NAME` is empty.
+- `quiet` in `scope.determine` needs a non-empty changed-path list; a rename counts both
+  names.
+- Guideline editing is in `review/rules_edit.py`; the mention phase is split into
+  `cli.py`, `handle.py`, `publish.py` and `guideline.py` (9).
+- A guideline file already over 100 lines may be shrunk by `update` or `remove`; the limit
+  applies when a file grows (7.4). Files whose path fails the path check are not loaded.
+- `push_change` works on a detached HEAD and never moves a branch ref (7.5).
+- A mention approval dismisses earlier change requests with "코멘트를 반영하여 이전 AI 변경
+  요청을 해제합니다." (6.2). The quoted line of a reply has its `@` broken so nobody is
+  notified again (6.3). A model failure is reported with the review's Korean cause labels.
+- With a guideline commit already pushed for a mention (trailer) and too little time left,
+  the mention stays pending instead of getting the time reply (4, 6.4).
