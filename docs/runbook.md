@@ -77,6 +77,17 @@ and a push cancels a mention being handled (its mentions stay pending for the ne
 
   A reply in the bot's inline thread needs no issue id for `/철회`; elsewhere give the 8-hex
   id, or leave it out when exactly one issue is open.
+  A mention or command inside a quote (`>`), including the lines GitHub joins to the quote
+  until a blank line, is ignored.
+- **Failures and recovery.** A mention stays pending (answered by a later run) when its
+  mention review was refused, when GitHub's answer to it was lost and could not be checked
+  (`리뷰 게시 결과를 확인할 수 없어 언급 처리를 중단함`: the phase stops), when the head moved
+  or the bot's guideline commit landed on top of someone else's push, or when dismissing the
+  earlier change requests after an approval failed (the next run dismisses, then replies).
+  When the push review of the run fails to post, the mention phase does not run
+  (`리뷰 게시 실패로 언급 단계를 건너뜀`). A PR closed while a mention is handled gets the reply
+  only. When the ledger is too large for another issue, the reply says
+  `장부가 가득 차 이슈로 등록하지 않음`.
 - **Guidelines** live in `.github/ai-review-rules/` (excluded from review). The bot commits and
   pushes them to the PR branch: pull before your next push, or the push is rejected.
 - **Dismiss-stale caveat.** A guideline commit is a new head; with "dismiss stale approvals"

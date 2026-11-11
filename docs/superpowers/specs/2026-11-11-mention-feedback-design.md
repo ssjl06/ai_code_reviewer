@@ -592,3 +592,23 @@ Decisions taken while implementing, where the text above was silent or was refin
   notified again (6.3). A model failure is reported with the review's Korean cause labels.
 - With a guideline commit already pushed for a mention (trailer) and too little time left,
   the mention stays pending instead of getting the time reply (4, 6.4).
+- A mention review POST whose outcome stays unknown (network or 5xx, then a failed receipt
+  lookup or a second send that is not refused) stops the mention phase with exit 1; a 4xx
+  fails only that mention. A failed review-phase post skips the mention phase (6.1, 6.4).
+- On a state that is not current for the head (or an old marker) the mention verdict is
+  `REQUEST_CHANGES` only for a blocker the mention added or upgraded, else `COMMENT` (6.2).
+- A mention finding with the id of a waived issue, or with its file and title on a line in
+  its span, is not registered (note "이미 철회된 이슈 <id>와 같은 지적이라 등록하지 않음"); a
+  resolved one is (5.4).
+- A settle run keeps the state's uncertainty: listed unclear blockers (on an old marker every
+  blocking issue) stay unclear in `merge`, and an old marker stays without `unclear` (6.2).
+- The PR is read again after the session: closed -> reply only; moved -> the phase stops.
+  The mention review is posted only on a head the API shows, and a guideline push rebased
+  on someone else's commit stops the phase without a review or reply (3, 6.4, 7.5).
+- A failed dismissal after a mention approval leaves the mention unanswered; the receipt
+  path dismisses again (idempotent) only while that approval is the bot's latest review (6.4).
+- The trailer is looked up once, right after the receipt check; a model failure or a closed
+  PR then names the committed guideline in the reply (6.4, 7.5). Receipt and trailer
+  recovery live in `review/mention/recover.py` (9).
+- A mention review whose marker or body exceeds its limit drops its new issues once (note
+  "장부가 가득 차 이슈로 등록하지 않음"), else the step fails without a post (6.2).
