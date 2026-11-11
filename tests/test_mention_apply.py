@@ -57,6 +57,12 @@ class WithdrawTest(unittest.TestCase):
         v = [{"id": i, "withdraw": False, "reason": ""}, {"id": i, "withdraw": True, "reason": ""}]
         self.assertEqual(plan(out(v), targets=[rec(1)])["changes"]["w"], [])
 
+    def test_resolved_target_dropped_with_reason(self):
+        t = [rec(1, "resolved")]
+        p = plan(out([{"id": t[0]["id"], "withdraw": True, "reason": ""}]), targets=t)
+        self.assertEqual((p["changes"]["w"], p["done"]), ([], []))
+        self.assertEqual(p["dropped"], ["이슈 %s는 이미 해결되어 철회할 수 없음" % t[0]["id"]])
+
     def test_non_target_verdicts_ignored(self):
         v = [{"id": rec(2)["id"], "withdraw": True, "reason": ""}]
         self.assertEqual(plan(out(v), targets=[rec(1)])["changes"]["w"], [])
@@ -111,6 +117,25 @@ class NewIssueTest(unittest.TestCase):
         self.assertEqual(p["changes"]["n"], [])
         self.assertIn("아직 리뷰가 없어 이슈로 등록하지 않음", p["notes"])
 
+    def test_skip_check_order(self):
+        p = plan(out(new=[fnd(file="z.py", line=99)]), st=None)
+        self.assertEqual(p["notes"], ["아직 리뷰가 없어 이슈로 등록하지 않음"])
+        p = plan(out(new=[fnd(file="z.py", line=99)]))
+        self.assertEqual(p["notes"], ["리뷰 대상이 아닌 파일이라 이슈로 등록하지 않음"])
+        p = plan(out(new=[fnd(line=99)]), same=lambda f: False)
+        self.assertEqual(p["notes"], ["diff 밖이라 이슈로 등록하지 않음"])
+
+    def test_blocking_next_to_open_nonblocking_is_new(self):
+        st = state([rec(1, line=11)])  # open minor 1 line away
+        p = plan(out(new=[fnd(line=12, title="다른 결함")]), st=st)
+        self.assertEqual(len(p["changes"]["n"]), 1)
+        self.assertEqual(p["notes"], [])
+        self.assertEqual(p["findings"][0]["near_issue"], rec(1)["id"])
+
+    def test_blocking_needs_block_confidence(self):
+        self.assertTrue(plan(out(new=[fnd(conf=80)]), st=state())["findings"][0]["blocking"])
+        self.assertFalse(plan(out(new=[fnd(conf=79)]), st=state())["findings"][0]["blocking"])
+
     def test_state_not_at_head(self):
         same = {"a.py": True}
         p = plan(out(new=[fnd()]), same=lambda f: same[f])
@@ -159,6 +184,11 @@ class GuidelineTest(unittest.TestCase):
         self.assertIsNone(plan(out(guideline=self.G), mention("withdraw"))["guideline"])
         self.assertEqual(plan(out(guideline=self.G), mention("rule-add"))["guideline"], self.G)
 
+    def test_rule_command_without_guideline(self):
+        p = plan(out(), mention("rule-add"))
+        self.assertEqual(p["dropped"], ["지침 내용을 만들지 못함"])
+        self.assertEqual(plan(out(), mention("withdraw"))["dropped"], [])
+
     def test_guideline_op_must_match_command(self):
         p = plan(out(guideline=dict(self.G, op="remove")), mention("rule-add"))
         self.assertIsNone(p["guideline"])
@@ -169,14 +199,14 @@ class GuidelineTest(unittest.TestCase):
 
 class BodyTest(unittest.TestCase):
     def test_summary_none(self):
-        self.assertEqual(summary({"w": [], "n": [], "up": []}, plan(out()), None), "**반영:** 없음")
+        self.assertEqual(summary({"w": [], "n": [], "up": []}, plan(out()), None, "bot"), "**반영:** 없음")
 
     def test_summary_parts_and_lines(self):
         p = plan(out(new=[fnd(), fnd(line=99, title="밖")], wants=None))
         e = {"w": ["aaaaaaaa"], "n": [p["findings"][0]["id"]], "up": ["bbbbbbbb"]}
         p["done"] = ["cccccccc"]
         p["dropped"] = ["명령과 다른 지침 작업"]
-        s = summary(e, p, None)
+        s = summary(e, p, None, "bot")
         self.assertEqual(s.split("\n")[0], "**반영:** 철회 aaaaaaaa · 새 이슈 %s (차단) · 차단 상향 "
                          "bbbbbbbb · 철회 cccccccc (이미 반영됨)" % e["n"][0])
         self.assertIn("- 반영 안 됨: 명령과 다른 지침 작업", s)
@@ -185,20 +215,20 @@ class BodyTest(unittest.TestCase):
     def test_summary_guideline_old_rule_quoted_and_pull_line(self):
         none = {"w": [], "n": [], "up": []}
         g = {"status": "updated", "path": "g.md", "rule_id": "R-1", "old": "옛\n규칙", "pushed": True}
-        s = summary(none, plan(out()), g)
+        s = summary(none, plan(out()), g, "bot")
         self.assertIn("지침 g.md R-1 수정", s)
         self.assertIn('이전 지침 내용: "옛 규칙"', s)
         self.assertIn("git pull", s)
-        s = summary(none, plan(out()), dict(g, status="added", old=None, pushed=False))
+        s = summary(none, plan(out()), dict(g, status="added", old=None, pushed=False), "bot")
         self.assertIn("지침 g.md R-1 추가", s)
         self.assertNotIn("git pull", s)
-        self.assertIn("지침 g.md R-1 삭제", summary(none, plan(out()), dict(g, status="removed")))
+        self.assertIn("지침 g.md R-1 삭제", summary(none, plan(out()), dict(g, status="removed"), "bot"))
         self.assertEqual(guideline_receipt(g), "g.md R-1 수정")
 
     def test_summary_guideline_failed(self):
         g = {"status": "failed", "path": "g.md", "rule_id": "R-1", "reason": "푸시 실패",
              "entry": "## R-1 규칙"}
-        s = summary({"w": [], "n": [], "up": []}, plan(out()), g)
+        s = summary({"w": [], "n": [], "up": []}, plan(out()), g, "bot")
         self.assertIn("- 반영 안 됨: 지침 푸시 실패", s)
         self.assertIn("## R-1 규칙", s)
 
@@ -226,6 +256,19 @@ class BodyTest(unittest.TestCase):
         self.assertEqual(parse_reply(text), "r:1")
         self.assertEqual(text.count("<!--"), 1)
         self.assertTrue(text.endswith(reply_marker("r:1")))
+
+    def test_reply_capped_marker_last(self):
+        t = reply("가" * 200000, "요약", "r:1", "인용", "https://x/1")
+        self.assertLessEqual(len(t), 60000)
+        self.assertEqual(parse_reply(t), "r:1")
+
+    def test_review_reason_matches_ledger_event(self):
+        st = state([rec(1, blocking=True), rec(2, blocking=True)])
+        st["unclear"] = [rec(2)["id"]]
+        body, _ = mention_review("kim", "u", "답", st, "REQUEST_CHANGES", "s")
+        self.assertIn("머지 차단 1건", body)
+        body, _ = mention_review("kim", "u", "답", st, "COMMENT", "s")
+        self.assertNotIn("다시 검토하지 않음", body)
 
     def test_reply_quote_only_for_issue_comments(self):
         t = reply("답", "요약", "r:1", "첫 줄\n둘째 줄", "https://x/1")

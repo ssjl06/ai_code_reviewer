@@ -41,7 +41,7 @@ def _joined(parts: List[str]) -> str:
     return "**반영:** " + (" · ".join(parts) if parts else "없음")
 
 
-def summary(effect: dict, plan: dict, guideline: Optional[dict], bot: str = "<bot>") -> str:
+def summary(effect: dict, plan: dict, guideline: Optional[dict], bot: str) -> str:
     """The summary of 5.4 from what `apply_changes` reported (`effect`) and the `plan`."""
     blocking = {f["id"] for f in plan.get("findings", ()) if f.get("blocking")}
     parts = ["철회 " + i for i in effect.get("w", ())]
@@ -91,13 +91,14 @@ def inline_body(f: dict) -> str:
 
 
 def _reason(event: str, state: dict) -> str:
-    blocking = [i for i in state["issues"]
-                if i.get("status", "open") == "open" and i.get("blocking")]
+    unclear = state.get("unclear") or []
+    blocking = [i for i in state["issues"] if i.get("status", "open") == "open"
+                and i.get("blocking") and i["id"] not in unclear]
     if event == "REQUEST_CHANGES":
         return "머지 차단 %d건" % len(blocking)
     if event == "APPROVE":
         return "차단 사유 없음"
-    return "코멘트 반영만 했고 코드는 다시 검토하지 않음"
+    return "이 코멘트 반영만으로는 승인 조건을 충족하지 않음"
 
 
 def _listed(findings: List[dict]) -> str:
@@ -136,4 +137,7 @@ def reply(text: str, summary_text: str, key: str, quote_line: Optional[str], lin
         first = _line((quote_line or "").split("\n", 1)[0])[:_QUOTE_MAX]
         parts.append("> %s ([원문](%s))" % (first, link))
     parts += [text, summary_text]
-    return _safe("\n\n".join(parts)) + "\n\n" + reply_marker(key)
+    marker = reply_marker(key)
+    text = _safe("\n\n".join(parts))
+    room = MAX_BODY - len(marker) - 2
+    return (text[:room] if len(text) > room else text) + "\n\n" + marker

@@ -15,6 +15,7 @@ NOT_COVERED = "리뷰 대상이 아닌 파일이라 이슈로 등록하지 않�
 OUT_OF_DIFF = "diff 밖이라 이슈로 등록하지 않음"
 NOT_AT_HEAD = "이 파일은 아직 리뷰되지 않은 변경이 있어 이슈로 등록하지 않음"
 WRONG_OP = "명령과 다른 지침 작업"
+NO_GUIDELINE = "지침 내용을 만들지 못함"
 
 
 def _withdrawals(out: dict, m: dict, targets: List[dict], plan: dict) -> None:
@@ -97,7 +98,10 @@ def _new_issues(out: dict, state: Optional[dict], hunk_lines, covered, same_line
 def _guideline(out: dict, m: dict, plan: dict) -> None:
     g = out.get("guideline")
     op = RULE_OPS.get(m.get("command"))
-    if not g or op is None:
+    if op is None:
+        return
+    if not g:
+        plan["dropped"].append(NO_GUIDELINE)
         return
     if g.get("op") != op:
         plan["dropped"].append(WRONG_OP)
