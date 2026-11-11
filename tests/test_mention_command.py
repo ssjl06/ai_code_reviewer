@@ -69,6 +69,17 @@ class CommandTest(unittest.TestCase):
             self.assertFalse(cmd.mentions_bot(body, BOT), body)
             self.assertEqual(cmd.parse(body, BOT), (None, []), body)
 
+    def test_indented_marker_stays_in_the_quote(self):
+        """A list marker indented 4 or more columns starts no list item: a lazy line."""
+        for body in ["> q\n    - @ai-bot /철회 00000001", "> q\n\t- @ai-bot /철회 00000001"]:
+            self.assertFalse(cmd.mentions_bot(body, BOT), body)
+            self.assertEqual(cmd.parse(body, BOT), (None, []), body)
+        for body in ["> q\n- @ai-bot /철회", "> q\n   - @ai-bot /철회"]:
+            self.assertEqual(self.cmd(body), "withdraw", body)
+
+    def test_crlf_fence_closes(self):
+        self.assertEqual(self.cmd("```\r\ncode\r\n```\r\n@ai-bot /철회"), "withdraw")
+
     def test_quote_ends(self):
         for body in ["> q\n\n@ai-bot /철회", "> q\n# 제목\n@ai-bot /철회",
                      "> q\n- @ai-bot /철회", "> q\n```\nx\n```\n@ai-bot /철회"]:

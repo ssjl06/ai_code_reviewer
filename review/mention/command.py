@@ -9,8 +9,9 @@ COMMANDS = {"/철회": "withdraw", "/지침": "rule-add", "/지침수정": "rule
 
 _FENCE_OPEN = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 _QUOTE = re.compile(r"^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)*>")
-_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]|$)")
-_ITEM = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])(?:[ \t]|$)")
+_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t\r]|$)")
+# a list item start (0-3 spaces: a marker indented further is a lazy line of the quote)
+_ITEM = re.compile(r"^ {0,3}(?:[-*+]|\d+[.)])(?:[ \t\r]|$)")
 _COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)
 _SPAN = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.S)
 _GONE = "\ufffc"  # stands for a removed span: not whitespace, cannot start a command
@@ -28,7 +29,7 @@ def _strip_blocks(body: str) -> str:
     out, fence, prev_blank, prev_code, quote = [], None, True, False, False
     for line in (body or "").split("\n"):
         if fence:
-            m = re.match(r"^[ \t]*(%s{%d,})[ \t]*$" % (re.escape(fence[0]), len(fence)), line)
+            m = re.match(r"^[ \t]*(%s{%d,})[ \t]*\r?$" % (re.escape(fence[0]), len(fence)), line)
             if m:
                 fence = None
             out.append("")
