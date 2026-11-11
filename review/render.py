@@ -64,7 +64,7 @@ def parse_state(body):
 
 _ISSUE_TAIL = re.compile(r"<!-- ai-review-issue ([0-9A-Za-z_-]+) -->\Z")
 _REPLY_TAIL = re.compile(r"<!-- ai-review-reply (\{[^{}]*\}) -->\Z")
-_KEY = re.compile(r"[irv]:\d+\Z")
+MENTION_KEY = re.compile(r"[irv]:\d+\Z")  # also used by validate
 
 
 def issue_marker(issue_id: str) -> str:
@@ -93,7 +93,7 @@ def parse_reply(body):
     except ValueError:
         return None
     key = raw.get("c") if isinstance(raw, dict) else None
-    return key if isinstance(key, str) and _KEY.match(key) else None
+    return key if isinstance(key, str) and MENTION_KEY.match(key) else None
 
 
 def _safe(text: str) -> str:

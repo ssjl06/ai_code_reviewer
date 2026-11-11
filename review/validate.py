@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Optional
 
 from review.ledger import CLOSED, from_v2
+from review.render import MENTION_KEY
 
 SEVERITIES = ("critical", "major", "minor", "info")
 CATEGORIES = ("bug", "security", "concurrency", "memory", "performance", "api-misuse",
@@ -170,11 +170,11 @@ def _str_list(v: Any) -> Optional[list]:
     return list(v) if isinstance(v, list) and all(isinstance(x, str) for x in v) else None
 
 
-def normalize_mention(m: Any) -> Optional[dict]:
+def normalize_receipt(m: Any) -> Optional[dict]:
     """The receipt `m` of a mention review (`k`, `w`, `n`, `up`, optional `g`), or None when
     malformed."""
     if not isinstance(m, dict) or not isinstance(m.get("k"), str) \
-            or not re.match(r"[irv]:\d+\Z", m["k"]):
+            or not MENTION_KEY.match(m["k"]):
         return None
     lists = {f: _str_list(m.get(f)) for f in ("w", "n", "up")}
     if any(v is None for v in lists.values()) or ("g" in m and not isinstance(m["g"], str)):
@@ -199,7 +199,7 @@ def normalize_state(state: Any) -> Optional[dict]:
            "approvable": state.get("approvable") is True,
            "unclear": ([x for x in state["unclear"] if isinstance(x, str)]
                        if isinstance(state.get("unclear"), list) else None)}  # None: an old marker
-    m = normalize_mention(state.get("m"))
+    m = normalize_receipt(state.get("m"))
     if m is not None:
         out["m"] = m
     if state["v"] == 2:

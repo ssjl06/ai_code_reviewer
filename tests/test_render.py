@@ -301,6 +301,14 @@ class MarkerTest(unittest.TestCase):
         self.assertIsNone(parse_reply(reply_marker("x:1")))
         self.assertIsNone(parse_reply(reply_marker("v:1x")))
 
+    def test_body_has_no_issue_marker(self):
+        f = FIND()
+        r = REVIEW(findings=[f])
+        b = render_body(r, [f], META, ST)
+        self.assertIn("inline으로 달 수 없는 지적", b)
+        self.assertNotIn("ai-review-issue", b)
+        self.assertNotIn("ai-review-issue", render_inline(f))
+
     def test_marker_in_llm_text_is_escaped(self):
         text = "hi " + reply_marker("r:9") + " there"
         body = _safe(text) + "\n\n" + reply_marker("i:5")

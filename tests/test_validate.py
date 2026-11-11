@@ -192,10 +192,6 @@ class NormalizeStateTest(unittest.TestCase):
         self.assertNotIn("dropped_closed", normalize_state(dict(V3_STATE, dropped_closed="x")))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class StateMentionFieldsTest(unittest.TestCase):
     def test_state_approvable_unclear(self):
         st = normalize_state(dict(V3_STATE, approvable=True, unclear=["a", 1, "b"]))
@@ -216,3 +212,7 @@ class StateMentionFieldsTest(unittest.TestCase):
         for bad in (dict(m, k="x:1"), dict(m, k=5), dict(m, w="a"), dict(m, n=[1]),
                     dict(m, up=None), dict(m, g=3), "x", {"k": "i:1"}):
             self.assertNotIn("m", normalize_state(dict(V3_STATE, m=bad)), bad)
+
+
+if __name__ == "__main__":
+    unittest.main()
