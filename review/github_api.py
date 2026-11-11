@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
-from typing import Any, Optional, Set
+from typing import Any, Callable, Optional, Set
 
 from review.render import parse_state
 
@@ -39,6 +40,18 @@ def _error_message(raw: bytes) -> str:
     except ValueError:
         pass
     return text[:500]
+
+
+def retry_post(send: Callable[[], dict], stored: Callable[[], Optional[dict]]) -> dict:
+    """Send once. After a network failure or a 5xx the POST may still have landed, so look
+    for the stored object first and only send again when there is none."""
+    try:
+        return send()
+    except GitHubError as e:
+        if e.status != 0 and e.status < 500:
+            raise
+    found = stored()
+    return found if found is not None else send()
 
 
 class GitHub:
@@ -77,22 +90,51 @@ class GitHub:
     def get_pr(self) -> dict:
         return self.request("GET", self._pr_path())
 
-    def list_reviews(self) -> list:
+    def _paged(self, path: str) -> list:
         out: list = []
         page = 1
         while True:
-            chunk = self.request(
-                "GET", "%s/reviews?per_page=%d&page=%d" % (self._pr_path(), PER_PAGE, page))
+            chunk = self.request("GET", "%s?per_page=%d&page=%d" % (path, PER_PAGE, page))
             out.extend(chunk)
             if len(chunk) < PER_PAGE:
                 return out
             page += 1
 
-    def _bot_reviews(self, bot_login: str) -> list:
+    def list_reviews(self) -> list:
+        return self._paged(self._pr_path() + "/reviews")
+
+    def list_issue_comments(self) -> list:
+        return self._paged("/repos/%s/issues/%d/comments" % (self.repo, self.pr))
+
+    def list_review_comments(self) -> list:
+        return self._paged(self._pr_path() + "/comments")
+
+    def post_issue_comment(self, body: str) -> dict:
+        return self.request("POST", "/repos/%s/issues/%d/comments" % (self.repo, self.pr),
+                            {"body": body})
+
+    def reply_review_comment(self, root_id: int, body: str) -> dict:
+        return self.request("POST", "%s/comments/%d/replies" % (self._pr_path(), root_id),
+                            {"body": body})
+
+    def permission(self, login: str) -> Optional[str]:
+        """Repository permission of `login` (admin, write, read, none), None on 404."""
+        try:
+            data = self.request("GET", "/repos/%s/collaborators/%s/permission"
+                                % (self.repo, urllib.parse.quote(login, safe="")))
+        except GitHubError as e:
+            if e.status == 404:
+                return None
+            raise
+        return (data or {}).get("permission")
+
+    def bot_reviews(self, bot_login: str) -> list:
         want = bot_login.lower()
         mine = [r for r in self.list_reviews()
                 if r.get("user") and str(r["user"].get("login", "")).lower() == want]
         return sorted(mine, key=lambda r: r.get("id", 0), reverse=True)
+
+    _bot_reviews = bot_reviews
 
     def latest_state(self, bot_login: str) -> Optional[dict]:
         for r in self._bot_reviews(bot_login):
@@ -102,15 +144,7 @@ class GitHub:
         return None
 
     def _events(self) -> list:
-        out: list = []
-        page = 1
-        while True:
-            chunk = self.request("GET", "/repos/%s/issues/%d/events?per_page=%d&page=%d"
-                                 % (self.repo, self.pr, PER_PAGE, page))
-            out.extend(chunk)
-            if len(chunk) < PER_PAGE:
-                return out
-            page += 1
+        return self._paged("/repos/%s/issues/%d/events" % (self.repo, self.pr))
 
     def dismissed_ids(self, bot_login: str) -> Set[str]:
         """Issue ids that are open in the marker of a bot review someone else dismissed. The
