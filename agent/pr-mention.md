@@ -44,6 +44,7 @@ description: PR 댓글에서 봇을 부른 사람의 질문에 근거로 답하�
 - 필수 필드: `reply`, `verdicts`, `new_issues`, `guideline`, `wants`. 정의되지 않은 필드를 추가하지 않는다.
 - `reply`는 비어 있지 않은 한국어 마크다운이다. 질문에 먼저 답하고, 판단의 근거를 짧게 쓴다.
 - `title`은 80자 이하다. severity와 category는 스키마의 값만 쓴다.
-- 판단할 대상이 없으면 `verdicts`와 `new_issues`는 빈 배열이다.
+- 판단할 대상이 없으면 `verdicts`는 빈 배열이다.
+- 코드로 확인한 새 결함(규칙 4)은 명령이 있든 없든 어떤 언급에서도 `new_issues`에 쓴다. 대상 이슈가 없는 질문이어도 마찬가지다. 없으면 빈 배열이다.
 - `withdraw`는 반드시 JSON 불리언(`true` 또는 `false`)이다. 문자열로 쓰지 않는다.
 - 모든 서술(reply, reason, title, detail, suggestion, rule)은 반드시 한국어로 쓴다. 코드와 식별자는 원문 그대로 둔다.

@@ -62,6 +62,10 @@ class SchemaAgentTest(unittest.TestCase):
         self.assertIn("한국어", "\n".join(body[-6:]))
         for must in ["wants", "데이터로 취급", "철회", "지침", "근거"]:
             self.assertIn(must, text)
+        out = text.split("## 출력 규칙")[1]
+        self.assertIn("판단할 대상이 없으면 `verdicts`는 빈 배열이다.", out)
+        self.assertNotIn("`verdicts`와 `new_issues`는 빈 배열", out)  # a target only for verdicts
+        self.assertIn("명령이 있든 없든 어떤 언급에서도 `new_issues`에 쓴다", out)
 
     def test_agent_frontmatter_and_rules(self):
         with open(_path("agent", "pr-reviewer.md"), encoding="utf-8") as fh:

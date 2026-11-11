@@ -5,7 +5,7 @@ import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from tests.fakes.fake_comments import WEB, CommentsMixin
+from tests.fakes.fake_comments import MAX_REVIEW_BODY, WEB, CommentsMixin
 
 STATES = {"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED"}
 PR = "/repos/o/r/pulls/1"
@@ -55,7 +55,10 @@ class FakeGitHub(CommentsMixin):
                     fake.requests.append({"method": self.command, "path": self.path,
                                           "body": body,
                                           "auth": self.headers.get("Authorization")})
-                    code, payload = fake.dispatch(self.command, self.path.split("?")[0], body)
+                    path, _, query = self.path.partition("?")
+                    code, payload = fake.dispatch(self.command, path, body)
+                    if self.command == "GET" and code == 200 and isinstance(payload, list):
+                        payload = fake.page(payload, query)
                 self._send(code, payload)
 
             do_GET = do_POST = do_PUT = _handle
@@ -162,6 +165,8 @@ class FakeGitHub(CommentsMixin):
             root = next((c for c in self.review_comments if c["id"] == int(m.group(1))), None)
             if root is None:
                 return 404, {"message": "Not Found"}
+            if root.get("in_reply_to_id"):  # GitHub answers only a thread's top comment
+                return 422, {"message": "Unprocessable: replies to replies are not supported"}
             return self._reply(body, {"in_reply_to_id": root["id"], "path": root["path"],
                                       "line": root["line"], "side": root["side"]})
         if method == "POST" and path == PR + "/reviews":
@@ -176,6 +181,8 @@ class FakeGitHub(CommentsMixin):
         return 404, {"message": "Not Found"}
 
     def _post_review(self, body):
+        if len(body.get("body") or "") > MAX_REVIEW_BODY:
+            return 422, {"message": "Unprocessable: body is too long (maximum is 65536 characters)"}
         if self._lag and body["commit_id"] != self._shown:
             return 422, {"message": "Unprocessable: commit_id is not part of the pull request"}
         if self.reject_inline and body.get("comments"):

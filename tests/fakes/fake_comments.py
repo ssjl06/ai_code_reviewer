@@ -1,5 +1,8 @@
 """Comment helpers of the fake GitHub: ids, a clock, and comments made by people."""
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs
+
+MAX_REVIEW_BODY = 65536  # GitHub refuses a longer review body (422)
 
 WEB = "https://ghe.example/o/r/pull/1"
 T0 = datetime(2026, 11, 11, tzinfo=timezone.utc)
@@ -13,6 +16,15 @@ class CommentsMixin:
             return created_at
         self._clock += 1
         return (T0 + timedelta(seconds=self._clock)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    @staticmethod
+    def page(items, query):
+        """One page of a list route, as GitHub serves it: `per_page` (default 30, at most
+        100) and `page` (from 1)."""
+        q = parse_qs(query)
+        per = min(int((q.get("per_page") or ["30"])[0]), 100)
+        n = int((q.get("page") or ["1"])[0])
+        return list(items)[(n - 1) * per:n * per]
 
     def next_id(self):
         self._ids += 1
