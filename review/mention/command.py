@@ -9,6 +9,8 @@ COMMANDS = {"/철회": "withdraw", "/지침": "rule-add", "/지침수정": "rule
 
 _FENCE_OPEN = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 _QUOTE = re.compile(r"^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)*>")
+_HEADING = re.compile(r"^ {0,3}#{1,6}(?:[ \t]|$)")
+_ITEM = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])(?:[ \t]|$)")
 _COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)
 _SPAN = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.S)
 _GONE = "\ufffc"  # stands for a removed span: not whitespace, cannot start a command
@@ -20,8 +22,10 @@ def _mention_re(bot: str):
 
 
 def _strip_blocks(body: str) -> str:
-    """Without fenced blocks, indented code, quote lines and HTML comments."""
-    out, fence, prev_blank, prev_code = [], None, True, False
+    """Without fenced blocks, indented code, quote blocks and HTML comments. A quote block
+    is a quote line and, as GitHub renders it (lazy continuation), every following non-blank
+    line up to a blank line, a fence start, a heading or a list item start."""
+    out, fence, prev_blank, prev_code, quote = [], None, True, False, False
     for line in (body or "").split("\n"):
         if fence:
             m = re.match(r"^[ \t]*(%s{%d,})[ \t]*$" % (re.escape(fence[0]), len(fence)), line)
@@ -33,15 +37,21 @@ def _strip_blocks(body: str) -> str:
         if m:
             fence = m.group(1)
             out.append("")
-            prev_blank = prev_code = False
+            prev_blank = prev_code = quote = False
             continue
-        code = line.startswith(("    ", "\t")) and line.strip() != "" and (prev_blank or prev_code)
-        if code or _QUOTE.match(line):
+        blank = line.strip() == ""
+        if _QUOTE.match(line):
+            quote = True
+        elif blank or _HEADING.match(line) or _ITEM.match(line):
+            quote = False
+        code = line.startswith(("    ", "\t")) and not blank and (prev_blank or prev_code) \
+            and not quote
+        if code or quote:
             out.append("")
         else:
             out.append(line)
         prev_code = code
-        prev_blank = line.strip() == ""
+        prev_blank = blank
     return _COMMENT.sub(_GONE, "\n".join(out))
 
 

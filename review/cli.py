@@ -200,7 +200,7 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
     log("조각 %d개 · 생략 파일 %d개 · 잘린 파일 %d개" % (len(chunks), len(skipped), len(truncated)))
     if scope["weak_tracking"]:
         log(WEAK_MSG)
-    previous = scope["previous"]
+    previous = sc.settle_previous(scope) if settle else scope["previous"]
     recheck, left_out = assign_recheck(chunks, previous, scope["blobs"], cfg)
     only = {t["path"] for t in scope["targets"] if t.get("recheck_only")}
     ledger, orphans = prompt_lists(previous, scope["closed"])

@@ -270,10 +270,24 @@ def settle_state(head: str, review: dict, scope: dict) -> dict:
              "seen_files": dict(prev["seen_files"]), "seen_hunks": dict(prev["seen_hunks"]),
              "issues": [_record(i) for i in issues], "closed": {},
              "recheck_pending": list(prev.get("recheck_pending") or []),
-             "approvable": bool(prev.get("approvable")),
-             "unclear": [x for x in prev.get("unclear") or [] if x in still_open]}
+             "approvable": bool(prev.get("approvable"))}
+    if prev.get("unclear") is not None:  # None (an old marker) stays unknown
+        state["unclear"] = [x for x in prev["unclear"] if x in still_open]
     if scope.get("dropped_closed"):
         state["dropped_closed"] = scope["dropped_closed"]
     if prev.get("cut"):
         state["cut"] = dict(prev["cut"])
     return fit_state(state, partial=set())
+
+
+def settle_previous(scope: dict) -> List[dict]:
+    """The previous issues for the `merge` of a settle run: an issue the state lists as
+    unclear (on an old marker, which does not say, every blocking one) stays unclear, as a
+    recheck that could not decide leaves it; the settle run does not look again."""
+    listed = (scope["prev"] or {}).get("unclear")
+    out = []
+    for p in scope["previous"]:
+        doubt = p.get("blocking") if listed is None else p["id"] in listed
+        out.append(dict(p, pre="ask", located=False) if doubt and p.get("pre") != "resolved"
+                   else p)
+    return out

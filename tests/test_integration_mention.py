@@ -158,7 +158,8 @@ class MentionLedgerTest(MentionBase):
         target = st["issues"][0]
         orphan = dict(target, id="0rphan01", file="src/gone.cu", line=7, lo=7, hi=7,
                       orphan=True, title="다른 차단 이슈")
-        st.update(complete=False, approvable=False, issues=[target, orphan])
+        # current for the head (an incomplete state's stored blockers would not decide, F3)
+        st.update(approvable=False, issues=[target, orphan])
         self.gh.draft = True
         self.put_state(st)
         self.withdraw_all("@ai-bot /철회 %s 의도된 동작" % target["id"])

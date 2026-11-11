@@ -9,7 +9,7 @@ from review.fingerprint import decode_seen, fp_line
 from review.cli_util import parse_overrides, read_state_file
 from review.diff_split import build_chunks
 from review.ledger import apply_waivers, assign_recheck, pending_after, shown_lines
-from review.scope import determine, next_state, settle_state
+from review.scope import determine, next_state, settle_previous, settle_state
 from review.validate import normalize_state
 from tests.test_scope import CFG, code, run, state_for
 
@@ -379,8 +379,24 @@ class SettleTest(unittest.TestCase):
         out = settle_state("h2", review, s)  # i1 was waived: only i2 is still open
         self.assertEqual((out["approvable"], out["unclear"]), (False, ["i2"]))
         st, s = self.settle_scope(approvable=True, unclear=None)
+        out = settle_state("h2", review, s)  # an old marker: whether i2 was decided is unknown
+        self.assertTrue(out["approvable"])
+        self.assertNotIn("unclear", out)
+
+    def test_settle_keeps_an_unclear_blocker_unclear(self):
+        st, s = self.settle_scope(unclear=["i2"])
+        review = merge([], CFG, settle_previous(s), s["changed"], False, closed=s["closed"])
+        self.assertEqual(review["event"], "COMMENT")
+        self.assertEqual(settle_state("h2", review, s)["unclear"], ["i2"])
+
+    def test_settle_from_an_old_marker_never_requests_changes(self):
+        st, s = self.settle_scope(unclear=None)
+        review = merge([], CFG, settle_previous(s), s["changed"], False, closed=s["closed"])
+        self.assertEqual(review["event"], "COMMENT")
         out = settle_state("h2", review, s)
-        self.assertEqual((out["approvable"], out["unclear"]), (True, []))
+        self.assertNotIn("unclear", out)
+        self.assertEqual([(i["id"], i["status"]) for i in out["issues"]],
+                         [("i2", "open"), ("i1", "waived")])
 
     def test_settle_keeps_the_cut_gap(self):
         st, s = self.settle_scope(waive=("i1", "i2"), cut={"a.cc": "AQIDBA=="})

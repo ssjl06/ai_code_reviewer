@@ -1,7 +1,9 @@
 import unittest
 
 from review.mention.apply import plan_actions
+from review.mention.ledger import apply_changes, ledger_event
 from review.ledger import finding_id
+from review.validate import normalize_mention
 
 CFG = {"min_confidence": 50, "block_severities": ["critical", "major"], "block_confidence": 80}
 
@@ -171,6 +173,36 @@ class NewIssueTest(unittest.TestCase):
         taken["id"] = finding_id(f)
         p = plan(out(new=[f]), st=state([taken]))
         self.assertNotEqual(p["findings"][0]["id"], taken["id"])
+
+
+class WaivedReportTest(unittest.TestCase):
+    """A literal re-report of a waived issue is not a new issue (a resolved one is)."""
+    def run_through(self, st, raw, anchor=None):
+        o = normalize_mention(out(new=[dict(raw, same_as="zzzzzzzz")]))
+        p = plan(o, mention(None), st=st, anchor=anchor)
+        new, effect = apply_changes(st, p["changes"])
+        return p, new, effect
+
+    def test_same_place_and_title(self):
+        st = state([dict(rec(1, "waived", blocking=True, line=11), title="새 결함", hi=13)])
+        p, new, effect = self.run_through(st, fnd(line=12))
+        self.assertEqual((effect["n"], len(new["issues"])), ([], 1))
+        self.assertIn("이미 철회된 이슈 %s와 같은 지적이라 등록하지 않음" % rec(1)["id"], p["notes"])
+        self.assertEqual(ledger_event(new, True, False), ledger_event(st, True, False))
+
+    def test_same_finding_id(self):
+        f = dict(fnd(), anchor="ab12cd34")
+        st = state([dict(rec(1, "waived", blocking=True, line=40), title=f["title"],
+                         id=finding_id(f))])
+        p, new, effect = self.run_through(st, fnd(), anchor=lambda path, line: "ab12cd34")
+        self.assertEqual(effect["n"], [])
+        self.assertIn("이미 철회된 이슈 %s와 같은 지적이라 등록하지 않음" % finding_id(f), p["notes"])
+
+    def test_other_title_or_resolved_is_new(self):
+        waived = dict(rec(1, "waived", blocking=True, line=12), title="다른 결함")
+        self.assertEqual(len(self.run_through(state([waived]), fnd())[2]["n"]), 1)
+        resolved = dict(rec(1, "resolved", blocking=True, line=12), title="새 결함")
+        self.assertEqual(len(self.run_through(state([resolved]), fnd())[2]["n"]), 1)
 
 
 class GuidelineTest(unittest.TestCase):

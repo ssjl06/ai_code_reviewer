@@ -16,6 +16,7 @@ OUT_OF_DIFF = "diff 밖이라 이슈로 등록하지 않음"
 NOT_AT_HEAD = "이 파일은 아직 리뷰되지 않은 변경이 있어 이슈로 등록하지 않음"
 WRONG_OP = "명령과 다른 지침 작업"
 NO_GUIDELINE = "지침 내용을 만들지 못함"
+WAIVED_AGAIN = "이미 철회된 이슈 %s와 같은 지적이라 등록하지 않음"
 
 
 def _withdrawals(out: dict, m: dict, targets: List[dict], plan: dict) -> None:
@@ -50,6 +51,18 @@ def _skip_note(f: dict, state: Optional[dict], hunk_lines, covered, same_line) -
     return None
 
 
+def _waived_twin(f: dict, issues: List[dict]) -> Optional[dict]:
+    """A waived issue `f` reports again: the same id, or the same file and title with the
+    line in its span. (A resolved one is registered again: the defect came back.)"""
+    fid = finding_id(f)
+    for i in issues:
+        if i.get("status") == "waived" and (i["id"] == fid or (
+                i["file"] == f["file"] and i.get("title") == f["title"]
+                and i.get("lo", i["line"]) <= f["line"] <= i.get("hi", i["line"]))):
+            return i
+    return None
+
+
 def _new_issues(out: dict, state: Optional[dict], hunk_lines, covered, same_line, anchor,
                 cfg: dict, plan: dict) -> None:
     issues = list(state["issues"]) if state else []
@@ -73,6 +86,10 @@ def _new_issues(out: dict, state: Optional[dict], hunk_lines, covered, same_line
         why = _skip_note(f, state, hunk_lines, covered, same_line)
         if why:
             note(why)
+            continue
+        twin = _waived_twin(f, issues)
+        if twin is not None:
+            note(WAIVED_AGAIN % twin["id"])
             continue
         in_block = f.get("severity") in cfg["block_severities"]
         f["blocking"] = in_block and f["confidence"] >= cfg["block_confidence"]

@@ -59,9 +59,11 @@ def marker_state(state: dict, m: dict) -> dict:
 
 
 def ledger_event(state: dict, current: bool, added_blocking: bool) -> str:
-    """The review verdict after a mention (spec 6.2)."""
+    """The review verdict after a mention (spec 6.2). On an old marker or a state that is
+    not current for the head, only a blocking issue this mention added or upgraded requests
+    changes: the stored blockers may be fixed on the head already (and never an approval)."""
     unclear = state.get("unclear")
-    if unclear is None:  # an old marker: never an approval
+    if unclear is None or not current:
         return "REQUEST_CHANGES" if added_blocking else "COMMENT"
     opened = [i for i in state["issues"] if _open(i)]
     if any(i.get("blocking") and i["id"] not in unclear for i in opened):

@@ -62,6 +62,18 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(ids("@ai-bot\n- > a1b2c3d4"), [])
         self.assertEqual(ids("@ai-bot <!-- a1b2c3d4 -->"), [])
 
+    def test_lazy_quote_continuation(self):
+        """GitHub renders a non-blank line after a quote line as part of the quote."""
+        for body in ["> quoted\n@ai-bot /철회 00000001", "- > quoted\n@ai-bot /철회 00000001",
+                     "> a\n> b\nmore\n@ai-bot /지침 x"]:
+            self.assertFalse(cmd.mentions_bot(body, BOT), body)
+            self.assertEqual(cmd.parse(body, BOT), (None, []), body)
+
+    def test_quote_ends(self):
+        for body in ["> q\n\n@ai-bot /철회", "> q\n# 제목\n@ai-bot /철회",
+                     "> q\n- @ai-bot /철회", "> q\n```\nx\n```\n@ai-bot /철회"]:
+            self.assertEqual(self.cmd(body), "withdraw", body)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -110,9 +110,17 @@ class LedgerEventTest(unittest.TestCase):
         self.assertEqual(self.ev([issue(1, blocking=True)], unclear=[issue(1)["id"]]), "COMMENT")
         self.assertEqual(self.ev([issue(1, "waived", blocking=True)]), "APPROVE")
 
-    def test_added_blocking_ignored_with_unclear_list(self):
+    def test_added_blocking_with_unclear_list(self):
+        """On a current state the ledger decides; on a stale one only the mention's own."""
         self.assertEqual(self.ev([issue(1)], added=True), "APPROVE")
-        self.assertEqual(self.ev([issue(1)], current=False, added=True), "COMMENT")
+        self.assertEqual(self.ev([issue(1)], current=False, added=True), "REQUEST_CHANGES")
+
+    def test_stale_blockers_do_not_request_changes(self):
+        """A state not current for the head: its open blockers may be fixed already."""
+        iss = [issue(1, blocking=True), issue(2), issue(3, "waived")]
+        self.assertEqual(self.ev(iss, current=False), "COMMENT")
+        self.assertEqual(self.ev(iss, current=False, added=True), "REQUEST_CHANGES")
+        self.assertEqual(self.ev(iss, current=True), "REQUEST_CHANGES")
 
     def test_old_marker(self):
         iss = [issue(1, blocking=True)]
