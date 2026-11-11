@@ -93,8 +93,6 @@ class ClaudeCmdTest(unittest.TestCase):
             build_env(CFG, "/repo", "/s", "/c", {"AI_REVIEW_LLM_BASE_URL": "u"})
 
 
-
-
 class SessionKindTest(unittest.TestCase):
     def test_review_kind_is_todays_values(self):
         self.assertEqual((REVIEW.agent_name, REVIEW.label, REVIEW.needs_diff_reviewed),

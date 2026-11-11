@@ -439,9 +439,9 @@ class RunnerTest(unittest.TestCase):
 
     def test_mention_run_chunk_respects_the_deadline(self):
         t0 = time.monotonic()
-        r, _ = self.mention("hang", "mention", deadline=t0 + 3, session=30)  # the deadline binds
-        self.assertGreater(time.monotonic() - t0, 2.5)
-        self.assertLess(time.monotonic() - t0, 6)
+        r, _ = self.mention("hang", "mention", deadline=t0 + 6, session=30)  # the deadline binds
+        self.assertGreater(time.monotonic() - t0, 5.5)
+        self.assertLess(time.monotonic() - t0, 9)
         self.assertEqual(r["status"], "incomplete")
         self.assertEqual(len(self.calls()), 1)  # no time left for the resume
 

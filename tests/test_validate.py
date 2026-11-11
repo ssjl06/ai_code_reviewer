@@ -215,8 +215,6 @@ class StateMentionFieldsTest(unittest.TestCase):
             self.assertNotIn("m", normalize_state(dict(V3_STATE, m=bad)), bad)
 
 
-
-
 class NormalizeMentionTest(unittest.TestCase):
     GOOD = {"reply": "답", "verdicts": [{"id": "a1", "withdraw": True, "reason": "r"}],
             "new_issues": [], "guideline": None, "wants": None}

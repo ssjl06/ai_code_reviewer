@@ -140,8 +140,6 @@ class MergeKoreanTest(unittest.TestCase):
         self.assertIsNone(merge_korean(EN, EN))
 
 
-
-
 class MentionKoreanTest(unittest.TestCase):
     EN = {"reply": "Checked. This issue can be withdrawn because the caller checks the length.",
           "verdicts": [{"id": "a1", "withdraw": True, "reason": "The caller checks the length"}],
