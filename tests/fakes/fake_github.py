@@ -3,17 +3,16 @@ import json
 import re
 import subprocess
 import threading
-from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from tests.fakes.fake_comments import WEB, CommentsMixin
 
 STATES = {"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED"}
 PR = "/repos/o/r/pulls/1"
 ISSUE_COMMENTS = "/repos/o/r/issues/1/comments"
-WEB = "https://ghe.example/o/r/pull/1"
-T0 = datetime(2026, 11, 11, tzinfo=timezone.utc)
 
 
-class FakeGitHub:
+class FakeGitHub(CommentsMixin):
     def __init__(self, base, head, title="PR 제목", login="ai-bot"):
         self.base, self._head, self.title, self.login = base, head, title, login
         self.reviews, self.posted, self.dismissed, self.requests = [], [], [], []
@@ -30,6 +29,7 @@ class FakeGitHub:
         self._fail = []  # [(status, path part)] for the next matching POSTs
         self._drop = []  # path parts: the next matching POST is stored but answers 502
         self._ids, self._clock = 100, 0
+        self._lag, self._shown, self._pending, self._left = 0, None, None, 0  # lag_after_push
         self._lock = threading.Lock()
         fake = self
 
@@ -81,6 +81,22 @@ class FakeGitHub:
         """The PR head repository is `bare`; the API head follows its branch tip."""
         self.head_remote, self.clone_url, self._head = bare, bare, None
 
+    def lag_after_push(self, reads):
+        """After the head moves, the PR keeps reporting the old head for `reads` reads, and a
+        review on a commit it does not report yet is refused (422)."""
+        self._lag = reads
+
+    def _reported_head(self):
+        tip = self.head
+        if self._lag and self._shown is not None and tip != self._shown:
+            if self._pending != tip:
+                self._pending, self._left = tip, self._lag
+            if self._left > 0:
+                self._left -= 1
+                return self._shown
+        self._shown = tip
+        return tip
+
     def fail_next_post(self, status, match=""):
         """The next POST whose path contains `match` answers `status` and stores nothing."""
         self._fail.append((status, match))
@@ -89,45 +105,10 @@ class FakeGitHub:
         """The next POST whose path contains `match` is stored but answers 502."""
         self._drop.append(match)
 
-    def now(self, created_at=None):
-        if created_at:
-            return created_at
-        self._clock += 1
-        return (T0 + timedelta(seconds=self._clock)).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    def next_id(self):
-        self._ids += 1
-        return self._ids
-
-    def add_issue_comment(self, body, login="dev", assoc="MEMBER", created_at=None):
-        c = {"id": self.next_id(), "user": {"login": login}, "body": body,
-             "author_association": assoc, "created_at": self.now(created_at)}
-        c["html_url"] = "%s#issuecomment-%d" % (WEB, c["id"])
-        self.issue_comments.append(c)
-        return c
-
-    def add_review_comment(self, body, path="src/k.cu", line=2, login="dev", assoc="MEMBER",
-                           in_reply_to=None, created_at=None, side="RIGHT"):
-        c = {"id": self.next_id(), "user": {"login": login}, "body": body, "path": path,
-             "line": line, "side": side, "start_line": None, "diff_hunk": "@@ -0,0 +1,3 @@",
-             "author_association": assoc, "created_at": self.now(created_at),
-             "in_reply_to_id": in_reply_to}
-        if in_reply_to:
-            root = next(r for r in self.review_comments if r["id"] == in_reply_to)
-            c.update(path=root["path"], line=root["line"], side=root["side"])
-        c["html_url"] = "%s#discussion_r%d" % (WEB, c["id"])
-        self.review_comments.append(c)
-        return c
-
-    def bot_replies(self):
-        """Every comment the bot posted (issue comments and thread replies)."""
-        return [c for c in self.issue_comments + self.review_comments
-                if c["user"]["login"] == self.login and not c.get("pull_request_review_id")]
-
     def _pr(self):
         return {"number": 1, "title": self.title, "draft": self.draft, "state": self.state,
                 "merged": self.merged, "base": {"sha": self.base, "ref": "main"},
-                "head": {"sha": self.head, "ref": self.head_ref,
+                "head": {"sha": self._reported_head(), "ref": self.head_ref,
                          "repo": {"full_name": self.full_name, "clone_url": self.clone_url}}}
 
     def _take(self, items, path):
@@ -195,6 +176,8 @@ class FakeGitHub:
         return 404, {"message": "Not Found"}
 
     def _post_review(self, body):
+        if self._lag and body["commit_id"] != self._shown:
+            return 422, {"message": "Unprocessable: commit_id is not part of the pull request"}
         if self.reject_inline and body.get("comments"):
             return 422, {"message": "Unprocessable: line must be part of the diff"}
         if self.before_post:

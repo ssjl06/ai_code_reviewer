@@ -28,7 +28,10 @@ class MentionFlowTest(MentionBase):
         m = self.mention("@ai-bot 이거 왜 그래?")
         moved = self.commit_and_push({"src/k.cu": FIXED})
         git(self.R, "checkout", "-q", "--detach", self.C1)
+        n = len(self.gh.requests)
         self.assertEqual(self.run_phases(), 1)
+        reads = [r for r in self.gh.requests[n:] if r["path"] == "/repos/o/r/pulls/1"]
+        self.assertEqual(len(reads), 2)  # run.main and the head check: no wait, no own push
         self.assertIn("[m1] head가 바뀌어 언급 처리를 중단함", self.stdout)
         self.assertEqual(self.replies(), [])
         self.assertEqual(self.mention_calls(), [])

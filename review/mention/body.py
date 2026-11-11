@@ -20,7 +20,7 @@ from review.render import (MAX_BODY, _HEADS, _safe, issue_marker, render_inline,
 
 _OPS = {"added": "추가", "updated": "수정", "removed": "삭제"}
 RECOVERED = "이전 실행에서 반영했습니다."
-PULL_LINE = "- 지침 변경을 브랜치에 커밋했습니다. 로컬 작업을 푸시하기 전에 `git pull`로 먼저 받아 주세요."
+PULL_LINE = "- 브랜치에 커밋을 추가했습니다. 다음 push 전에 pull 하세요."
 _HINTS = {"withdraw": "반영하려면 `@%s /철회`로 불러 주세요.",
           "rule": "지침으로 남기려면 `@%s /지침 <내용>`으로 불러 주세요."}
 _QUOTE_MAX = 200

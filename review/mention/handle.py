@@ -10,7 +10,9 @@ from review.claude_runner import reask_korean, run_chunk
 from review.diff_split import line_map, parse_unified_diff, reviewable
 from review.gitutil import blob_id, diff_text, read_blobs
 from review.ledger import CLOSED
+from review import rules_git
 from review.mention import body, context, fetch, guideline, publish
+from review.mention.apply import RULE_OPS
 from review.mention.apply import plan_actions
 from review.mention.command import mentions_bot
 from review.mention.ledger import apply_changes
@@ -36,6 +38,7 @@ class Phase:
         self.issue_comments, self.review_comments, self.reviews = lists
         self.callers = {c.lower() for c in callers}  # allowed authors of pending mentions
         self.failed = False
+        self.pushed = set()  # commits this phase pushed (the API head may lag behind them)
 
     def end(self) -> float:
         """The monotonic deadline of sessions and resumes: the phase's minus the reserve."""
@@ -55,7 +58,7 @@ def handle(ph: Phase, n: int, m: dict) -> str:
     note(n, "언급 %s (%s, @%s) 명령: %s" % (m["key"], m["kind"], m["author"],
                                           m.get("command") or "없음"))
     nothing = body.summary({}, {}, None, ph.bot)
-    pr = ph.gh.get_pr()
+    pr = publish.wait_head(ph, ph.gh.get_pr())
     if pr["head"]["sha"] != ph.head:
         note(n, HEAD_MOVED)
         return "stopped"
@@ -65,6 +68,10 @@ def handle(ph: Phase, n: int, m: dict) -> str:
         text, _, summary = body.summary_from_receipt(receipt).partition("\n")
         return publish.reply(ph, n, m, text, summary)
     if ph.deadline - time.monotonic() < ph.cfg["mention_publish_reserve_s"] + MIN_LEFT_S:
+        if m.get("command") in RULE_OPS and \
+                rules_git.receipt(ph.repo, pr["base"]["sha"], ph.head, m["key"]) is not None:
+            note(n, "시간 부족 — 이전 실행의 지침 커밋이 있어 다음 실행에서 처리함")
+            return "failed"  # a time reply would answer it and hide the commit
         note(n, "시간 부족 — 처리하지 않음")
         return publish.reply(ph, n, m, TIME_REPLY, nothing)
     issues = ph.state["issues"] if ph.state else []

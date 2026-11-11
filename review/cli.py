@@ -22,12 +22,15 @@ from review.gitutil import GitError
 from review.ledger import apply_waivers, assign_recheck, pending_after, prompt_lists, shown_lines
 from review.previous import anchor_of
 from review.prompt import build_prompt, orphan_split
-from review.render import issue_marker, render_body, render_inline
+from review.render import issue_marker, parse_state, render_body, render_inline
 from review.validate import normalize_state
 
 LLM_ENV = ("AI_REVIEW_LLM_BASE_URL", "AI_REVIEW_LLM_API_KEY")
 ONLINE_ENV = ("GITHUB_API_URL", "GITHUB_REPOSITORY", "AI_REVIEW_BOT_PAT", "AI_REVIEW_BOT_NAME")
 AGENT_MD = os.path.join(KIT_DIR, "agent", "pr-reviewer.md")
+# The state marker of the review this process posted last (`main` resets it): the mention
+# phase starts from it, as a listing right after the post may not show that review yet.
+LAST_POSTED: Optional[dict] = None
 
 
 def _fail(msg: str) -> int:
@@ -70,6 +73,8 @@ def _inputs(args, env):
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    global LAST_POSTED
+    LAST_POSTED = None
     t0 = time.monotonic()
     args = _parser().parse_args(argv)
     env = dict(os.environ)
@@ -243,7 +248,10 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
         print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
         log("dry-run: 게시하지 않음")
         return 0
-    return post(gh, env, head, review, body, comments, fallback)
+    def posted() -> None:
+        global LAST_POSTED
+        LAST_POSTED = parse_state(body)
+    return post(gh, env, head, review, body, comments, fallback, posted)
 
 
 if __name__ == "__main__":

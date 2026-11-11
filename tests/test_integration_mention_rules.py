@@ -24,7 +24,7 @@ class GuidelineTest(MentionBase):
         self.assertIn("- 출처: PR #1 %s (@dev, 2026-11-11, %s)" % (m["html_url"], m["key"]), text)
         [reply] = self.replies(m["key"])
         self.assertIn("지침 %s %s 추가" % (PATH, RID), reply["body"])
-        self.assertIn("git pull", reply["body"])
+        self.assertIn("- 브랜치에 커밋을 추가했습니다. 다음 push 전에 pull 하세요.", reply["body"])
         self.assertEqual(len(self.gh.posted), posted)  # no ledger change: no review
         self.assertEqual(len(self.review_calls()), reviews_before)
         # the PAT reached neither the model, the log, the reply nor .git/config

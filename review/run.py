@@ -46,8 +46,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         log("리뷰 단계 실행")
         rc = cli.main(argv)
+    hint = None if skip else cli.LAST_POSTED  # the state the review phase just posted
     try:
-        rc_mention = mention_cli.run(args, env, cfg, gh)
+        rc_mention = mention_cli.run(args, env, cfg, gh, state_hint=hint)
     except Exception as e:  # a bug in the mention phase: logged, the review phase stands
         traceback.print_exception(type(e), e, e.__traceback__, file=sys.stderr)
         sys.stderr.flush()

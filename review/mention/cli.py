@@ -33,8 +33,9 @@ def _summary(env: dict, rows: List[dict]) -> None:
         f.write("\n".join(lines) + "\n\n")
 
 
-def run(args, env, cfg, gh) -> int:
-    """Answer the pending mentions; 0 when every one got its reply, else 1."""
+def run(args, env, cfg, gh, state_hint=None) -> int:
+    """Answer the pending mentions; 0 when every one got its reply, else 1. `state_hint` is
+    the state marker the review phase of this run posted: the ledger starts from it."""
     deadline = time.monotonic() + cfg["mention_deadline_s"]
     bot = env["AI_REVIEW_BOT_NAME"]
     repo = os.path.abspath(args.repo)
@@ -47,7 +48,8 @@ def run(args, env, cfg, gh) -> int:
     if not found:
         return 0
     head = git(repo, "rev-parse", "HEAD").strip()
-    state = apply_waivers(normalize_state(gh.latest_state(bot)), gh.dismissed_ids(bot))
+    raw = state_hint if state_hint is not None else gh.latest_state(bot)
+    state = apply_waivers(normalize_state(raw), gh.dismissed_ids(bot))
     os.makedirs(work, exist_ok=True)
     scfg = dict(cfg, explore_budget=cfg["mention_explore_budget"],
                 chunk_timeout_s=cfg["mention_session_s"])
@@ -57,19 +59,21 @@ def run(args, env, cfg, gh) -> int:
                       [m["author"] for m in found])
     rows = [{"n": n, "key": m["key"], "kind": m["kind"], "command": m.get("command"),
              "outcome": None} for n, m in enumerate(found, 1)]
-    for row, m in zip(rows, found):
-        t0 = time.monotonic()
-        try:
-            row["outcome"] = handle.handle(ph, row["n"], m)
-        except (GitHubError, GitError, OSError) as e:
-            handle.note(row["n"], "처리 실패: %s: %s" % (type(e).__name__, e))
-            row["outcome"] = "failed"
-        row["seconds"] = round(time.monotonic() - t0, 1)
-        if row["outcome"] == "stopped":
-            break
-    _summary(env, rows)
-    with open(os.path.join(work, "mention.json"), "w", encoding="utf-8") as f:
-        json.dump(rows, f, ensure_ascii=False, indent=2)
+    try:
+        for row, m in zip(rows, found):
+            t0 = time.monotonic()
+            try:
+                row["outcome"] = handle.handle(ph, row["n"], m)
+            except (GitHubError, GitError, OSError) as e:
+                handle.note(row["n"], "처리 실패: %s: %s" % (type(e).__name__, e))
+                row["outcome"] = "failed"
+            row["seconds"] = round(time.monotonic() - t0, 1)
+            if row["outcome"] == "stopped":
+                break
+    finally:  # also when the phase aborts: the rows so far
+        _summary(env, rows)
+        with open(os.path.join(work, "mention.json"), "w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False, indent=2)
     answered = sum(r["outcome"] == "answered" for r in rows)
     log("언급 %d건 중 %d건 답변" % (len(rows), answered))
     return 0 if answered == len(rows) and not ph.failed else 1

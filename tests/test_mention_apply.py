@@ -218,10 +218,10 @@ class BodyTest(unittest.TestCase):
         s = summary(none, plan(out()), g, "bot")
         self.assertIn("지침 g.md R-1 수정", s)
         self.assertIn('이전 지침 내용: "옛 규칙"', s)
-        self.assertIn("git pull", s)
+        self.assertIn("브랜치에 커밋을 추가했습니다. 다음 push 전에 pull 하세요.", s)
         s = summary(none, plan(out()), dict(g, status="added", old=None, pushed=False), "bot")
         self.assertIn("지침 g.md R-1 추가", s)
-        self.assertNotIn("git pull", s)
+        self.assertNotIn("다음 push 전에 pull", s)
         self.assertIn("지침 g.md R-1 삭제", summary(none, plan(out()), dict(g, status="removed"), "bot"))
         self.assertEqual(guideline_receipt(g), "g.md R-1 수정")
 

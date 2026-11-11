@@ -23,6 +23,7 @@ class FakeGH:
 
 class RunTest(unittest.TestCase):
     def setUp(self):
+        self.addCleanup(setattr, run.cli, "LAST_POSTED", None)
         p = mock.patch.dict(os.environ, ENV)
         p.start()
         self.addCleanup(p.stop)
@@ -33,10 +34,12 @@ class RunTest(unittest.TestCase):
 
         def review(a):
             self.calls.append("review")
+            run.cli.LAST_POSTED = {"v": 3, "sha": "posted"}
             return review_rc
 
-        def mention_run(args, env, cfg, gh):
+        def mention_run(args, env, cfg, gh, state_hint=None):
             self.calls.append("mention")
+            self.hint = state_hint
             self.assertEqual(args.pr, 1)
             self.assertEqual(env["AI_REVIEW_BOT_NAME"], "ai-bot")
             self.assertIn("mention_deadline_s", cfg)
@@ -56,9 +59,16 @@ class RunTest(unittest.TestCase):
         self.assertEqual(self.go(), 0)
         self.assertEqual(self.calls, ["review", "mention"])
 
+    def test_posted_state_handed_to_mention_phase(self):
+        self.assertEqual(self.go(), 0)
+        self.assertEqual(self.hint, {"v": 3, "sha": "posted"})
+
     def test_draft_skips_review_phase(self):
+        run.cli.LAST_POSTED = {"v": 3, "sha": "stale"}  # from an earlier main() in this process
+        self.addCleanup(setattr, run.cli, "LAST_POSTED", None)
         self.assertEqual(self.go({"draft": True, "state": "open", "merged": False}), 0)
         self.assertEqual(self.calls, ["mention"])
+        self.assertIsNone(self.hint)
         self.assertIn("[main] 리뷰 단계 건너뜀: 초안", self.out)
 
     def test_closed_and_merged_skip_review_phase(self):

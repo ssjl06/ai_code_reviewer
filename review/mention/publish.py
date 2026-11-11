@@ -1,15 +1,31 @@
 """Publishing one mention's work: the mention review and the reply."""
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 from review import scope as sc
-from review.failure import DISMISS_MSG
 from review.github_api import GitHubError, retry_post
 from review.mention import body
 from review.mention.ledger import ledger_event, marker_state
 from review.render import parse_reply
 from review.validate import normalize_state
+
+
+DISMISS_MSG = "코멘트를 반영하여 이전 AI 변경 요청을 해제합니다."
+HEAD_TRIES = 5  # reads of the PR while its head may still lag this phase's own push
+HEAD_DELAY_S = 2.0
+
+
+def wait_head(ph, pr: dict) -> dict:
+    """`pr`, read again (up to HEAD_TRIES reads in all) while the API head is not the phase's
+    head and that head is a commit this phase pushed: the API may not show the push yet."""
+    for _ in range(HEAD_TRIES - 1):
+        if pr["head"]["sha"] == ph.head or ph.head not in ph.pushed:
+            break
+        time.sleep(HEAD_DELAY_S)
+        pr = ph.gh.get_pr()
+    return pr
 
 
 def _note(n: int, msg: str) -> None:
@@ -74,6 +90,8 @@ def mention_review(ph, n: int, m: dict, out: dict, plan: dict, new: dict, effect
                  "body": body.inline_body(f)} for f in findings]
     text, fallback = body.mention_review(m["author"], m.get("url") or "", out["reply"], marker,
                                          event, summary, tuple(findings))
+    if ph.head in ph.pushed:
+        wait_head(ph, ph.gh.get_pr())  # a review on a commit the API does not show is refused
     try:
         posted = retry_post(
             lambda: ph.gh.post_with_fallback(ph.head, event, text, comments, fallback),

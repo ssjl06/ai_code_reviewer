@@ -16,6 +16,7 @@ from review.mention.apply import NO_GUIDELINE, RULE_OPS, WRONG_OP
 OVERFLOW_ASK = "같은 디렉토리에 새 주제 파일 경로를 정하라. 경로만 바꾼 최종 JSON을 출력하라."
 FORK = "PR 브랜치가 이 저장소에 없어 커밋할 수 없습니다"
 TOO_LONG = "지침 파일이 %d줄을 넘게 됩니다" % rules.MAX_LINES
+NO_COMMIT = "커밋이 만들어지지 않았습니다"
 _DONE = {"add": "added", "update": "updated", "remove": "removed"}
 _WORD = {"add": "to", "update": "in", "remove": "from"}
 _SUBJECT = re.compile(r"ai-review: (add|update|remove) rule (R-[0-9a-f]{6}) (?:to|in|from) (\S+) "
@@ -94,16 +95,17 @@ def step(ph, n: int, m: dict, pr: dict, base: str, plan: dict, sess: dict) -> Op
     change = dict(plan["guideline"])
     source = "PR #%d %s (@%s, %s, %s)" % (pr["number"], m.get("url") or "", m["author"],
                                          (m.get("created_at") or "")[:10], m["key"])
-    if change["op"] == "add" and rules.check_path(change["path"]) is None \
-            and _overflows(ph.repo, change, source):
+    repo_info = (pr.get("head") or {}).get("repo") or {}
+    fork = str(repo_info.get("full_name") or "").lower() != ph.env["GITHUB_REPOSITORY"].lower()
+    if not fork and change["op"] == "add" and rules.check_path(change["path"]) is None \
+            and _overflows(ph.repo, change, source):  # no resume for a path never committed
         change["path"] = _new_path(ph, n, sess, change["path"])
     rid = change["target"] if change["op"] == "remove" else rules.rule_id(change["path"],
                                                                           change["rule"])
     old = _old_rule(ph.repo, change)
     failed = {"status": "failed", "path": change["path"], "rule_id": rid,
               "entry": _entry(rid, change, source)}
-    repo_info = (pr.get("head") or {}).get("repo") or {}
-    if str(repo_info.get("full_name") or "").lower() != ph.env["GITHUB_REPOSITORY"].lower():
+    if fork:
         _note(n, "지침 커밋 안 함: " + FORK)
         return dict(failed, reason="%s: %s" % (change["path"], FORK))
 
@@ -120,12 +122,16 @@ def step(ph, n: int, m: dict, pr: dict, base: str, plan: dict, sess: dict) -> Op
     if reason:
         return dict(failed, reason="%s: %s" % (change["path"], reason))
     status = (result or {}).get("status")
+    head = git(ph.repo, "rev-parse", "HEAD").strip()
+    if status in _DONE.values() and head == ph.head:  # a change but no commit: nothing landed
+        _note(n, "지침 반영 안 됨: " + NO_COMMIT)
+        return dict(failed, reason="%s: %s" % (change["path"], NO_COMMIT))
     if status in _DONE.values():
-        head = git(ph.repo, "rev-parse", "HEAD").strip()
-        pushed, ph.head = head != ph.head, head
+        ph.head = head
+        ph.pushed.add(head)
         _note(n, "지침 커밋 push 완료: %s %s" % (head[:7], message))
         return {"status": status, "path": result["path"], "rule_id": result["rule_id"],
-                "old": old, "pushed": pushed}
+                "old": old, "pushed": True}
     if status == "unchanged":
         return {"status": "unchanged", "path": result["path"], "rule_id": result["rule_id"]}
     why = TOO_LONG if status == "overflow" else (result or {}).get("reason") or status

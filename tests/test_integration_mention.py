@@ -20,6 +20,8 @@ class MentionCommandTest(MentionBase):
         self.assertEqual([(i["id"], i["status"]) for i in new["issues"]], [(fid, "waived")])
         self.assertEqual(new["m"], {"k": m["key"], "w": [fid], "n": [], "up": []})
         self.assertEqual(self.gh.dismissed, [1])
+        [put] = [r for r in self.gh.requests if r["method"] == "PUT"]
+        self.assertEqual(put["body"]["message"], "코멘트를 반영하여 이전 AI 변경 요청을 해제합니다.")
         [reply] = self.replies(m["key"])
         self.assertIn("철회합니다.", reply["body"])
         self.assertIn("**반영:** 철회 %s" % fid, reply["body"])
