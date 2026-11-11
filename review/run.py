@@ -60,6 +60,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     else:
         log("리뷰 단계 실행")
         rc = cli.main(_at_checkout(args, argv))
+    if not skip and cli.POST_FAILED:  # its review may have landed: no ledger write on top
+        log("리뷰 게시 실패로 언급 단계를 건너뜀")
+        return max(rc, 1)
     hint = None if skip else cli.LAST_POSTED  # the state the review phase just posted
     try:
         rc_mention = mention_cli.run(args, env, cfg, gh, state_hint=hint)

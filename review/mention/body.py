@@ -123,7 +123,7 @@ def mention_review(author: str, url: str, answer: str, state: dict, event: str, 
     marker = state_marker(state)
 
     def build(extra: List[str]) -> str:
-        room = MAX_BODY - len(marker) - 2
+        room = max(MAX_BODY - len(marker) - 2, 0)  # an oversized marker: the caller checks
         parts = [head, "### 답변\n" + answer, summary_text] + extra + blocking
         text = _safe("\n\n".join(parts))
         return (text[:room] if len(text) > room else text) + "\n\n" + marker

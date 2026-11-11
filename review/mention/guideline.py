@@ -27,7 +27,7 @@ def _note(n: int, msg: str) -> None:
     print("[m%d] %s" % (n, msg), flush=True)
 
 
-def _from_subject(subject: str) -> Optional[dict]:
+def from_subject(subject: str) -> Optional[dict]:
     hit = _SUBJECT.match(subject)
     if not hit:
         return None
@@ -79,17 +79,18 @@ def _author(env: dict, bot: str):
     return bot, "%s@users.noreply.%s" % (bot, host or "github.com")
 
 
-def step(ph, n: int, m: dict, pr: dict, base: str, plan: dict, sess: dict) -> Optional[dict]:
+def step(ph, n: int, m: dict, pr: dict, base: str, plan: dict, sess: dict,
+         subject: Optional[str]) -> Optional[dict]:
     """The guideline step (7.5): the result dict of `body.summary`, or None. A commit of an
-    earlier run (its trailer) is reported instead of pushing again. After a push the phase's
-    head is the pushed commit."""
+    earlier run (`subject`, from its trailer) is reported instead of pushing again. After a
+    push the phase's head is the pushed commit; `moved` is set when that commit's parent is
+    not the head the step started from (the retry rebased it on someone else's commits)."""
     if m.get("command") not in RULE_OPS:
         return None
-    subject = rules_git.receipt(ph.repo, base, ph.head, m["key"])
     if subject is not None:
         _note(n, "이전 실행의 지침 커밋 발견: %s" % subject)
         plan["dropped"] = [d for d in plan["dropped"] if d not in (WRONG_OP, NO_GUIDELINE)]
-        return _from_subject(subject)
+        return from_subject(subject)
     if not plan["guideline"]:
         return None
     change = dict(plan["guideline"])
@@ -127,11 +128,12 @@ def step(ph, n: int, m: dict, pr: dict, base: str, plan: dict, sess: dict) -> Op
         _note(n, "지침 반영 안 됨: " + NO_COMMIT)
         return dict(failed, reason="%s: %s" % (change["path"], NO_COMMIT))
     if status in _DONE.values():
-        ph.head = head
+        start, ph.head = ph.head, head
         ph.pushed.add(head)
         _note(n, "지침 커밋 push 완료: %s %s" % (head[:7], message))
         return {"status": status, "path": result["path"], "rule_id": result["rule_id"],
-                "old": old, "pushed": True}
+                "old": old, "pushed": True,
+                "moved": git(ph.repo, "rev-parse", head + "^").strip() != start}
     if status == "unchanged":
         return {"status": "unchanged", "path": result["path"], "rule_id": result["rule_id"]}
     why = TOO_LONG if status == "overflow" else (result or {}).get("reason") or status

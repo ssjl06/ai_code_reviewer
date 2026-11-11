@@ -43,16 +43,37 @@ def _error_message(raw: bytes) -> str:
     return text[:500]
 
 
+class PostUnknown(GitHubError):
+    """A POST that may have landed: it failed without a refusal (network, 5xx) and neither
+    the lookup of the stored object nor a second send settled it."""
+
+
+def _ambiguous(e: GitHubError) -> bool:
+    return e.status == 0 or e.status >= 500
+
+
 def retry_post(send: Callable[[], dict], stored: Callable[[], Optional[dict]]) -> dict:
     """Send once. After a network failure or a 5xx the POST may still have landed, so look
-    for the stored object first and only send again when there is none."""
+    for the stored object first and only send again when there is none. A refusal (4xx)
+    raises GitHubError; a lookup that fails, or a second send that fails without a refusal,
+    raises PostUnknown."""
     try:
         return send()
     except GitHubError as e:
-        if e.status != 0 and e.status < 500:
+        if not _ambiguous(e):
             raise
-    found = stored()
-    return found if found is not None else send()
+    try:
+        found = stored()
+    except GitHubError as e:
+        raise PostUnknown(e.status, "stored object lookup failed: " + e.message) from None
+    if found is not None:
+        return found
+    try:
+        return send()
+    except GitHubError as e:
+        if _ambiguous(e):
+            raise PostUnknown(e.status, e.message) from None
+        raise
 
 
 class GitHub:
@@ -145,11 +166,13 @@ class GitHub:
         return None
 
     def mention_receipt(self, bot_login: str, key: str) -> Optional[dict]:
-        """`{"m", "url"}` of the newest bot review whose state marker has `m.k == key`."""
+        """`{"m", "url", "id", "state"}` of the newest bot review whose state marker has
+        `m.k == key`."""
         for r in self.bot_reviews(bot_login):
             st = normalize_state(parse_state(r.get("body")))
             if st and st.get("m", {}).get("k") == key:
-                return {"m": st["m"], "url": r.get("html_url")}
+                return {"m": st["m"], "url": r.get("html_url"), "id": r.get("id"),
+                        "state": r.get("state")}
         return None
 
     def _events(self) -> list:

@@ -3,7 +3,7 @@ import json
 import unittest
 import urllib.error
 
-from review.github_api import GitHub, GitHubError, retry_post
+from review.github_api import GitHub, GitHubError, PostUnknown, retry_post
 from review.render import state_marker
 
 OPEN_I1 = "hi\n" + state_marker({"v": 3, "sha": "s", "issues": [{"id": "i1", "status": "open"}]})
@@ -275,6 +275,24 @@ class RetryPostTest(unittest.TestCase):
             retry_post(send, lambda: {"id": 9})
         self.assertEqual(len(calls), 1)
 
+    def test_unknown_when_the_lookup_fails(self):
+        send, calls = self.sender([GitHubError(502, "bad")])
+
+        def lookup():
+            raise GitHubError(503, "down")
+        with self.assertRaises(PostUnknown) as e:
+            retry_post(send, lookup)
+        self.assertEqual((e.exception.status, len(calls)), (503, 1))
+
+    def test_unknown_when_the_second_send_is_not_refused(self):
+        send, calls = self.sender([GitHubError(0, "net"), GitHubError(502, "bad")])
+        with self.assertRaises(PostUnknown):
+            retry_post(send, lambda: None)
+        send, calls = self.sender([GitHubError(0, "net"), GitHubError(422, "bad")])
+        with self.assertRaises(GitHubError) as e:
+            retry_post(send, lambda: None)
+        self.assertNotIsInstance(e.exception, PostUnknown)  # a refusal is definite
+
     def test_success_does_not_look_up(self):
         send, _ = self.sender([{"id": 2}])
         self.assertEqual(retry_post(send, lambda: self.fail("looked up")), {"id": 2})
@@ -290,7 +308,8 @@ class MentionReceiptTest(unittest.TestCase):
         other = dict(rev(3, body=body("i:7")), html_url="https://x/3")
         gh, _ = make([(200, [r1, person, other])])
         self.assertEqual(gh.mention_receipt("ai-bot", "i:5"),
-                         {"m": {"k": "i:5", "w": ["a"], "n": [], "up": []}, "url": "https://x/1"})
+                         {"m": {"k": "i:5", "w": ["a"], "n": [], "up": []}, "url": "https://x/1",
+                          "id": 1, "state": r1.get("state")})
         gh, _ = make([(200, [r1, person, other])])
         self.assertIsNone(gh.mention_receipt("ai-bot", "i:6"))
         gh, _ = make([(200, [r1])])

@@ -31,6 +31,9 @@ AGENT_MD = os.path.join(KIT_DIR, "agent", "pr-reviewer.md")
 # The state marker of the review this process posted last (`main` resets it): the mention
 # phase starts from it, as a listing right after the post may not show that review yet.
 LAST_POSTED: Optional[dict] = None
+# True when the review phase of this process tried to post its review and it did not get
+# stored as far as it knows (refused, or the outcome unknown): the mention phase stays out.
+POST_FAILED = False
 
 
 def _fail(msg: str) -> int:
@@ -73,8 +76,8 @@ def _inputs(args, env):
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    global LAST_POSTED
-    LAST_POSTED = None
+    global LAST_POSTED, POST_FAILED
+    LAST_POSTED, POST_FAILED = None, False
     t0 = time.monotonic()
     args = _parser().parse_args(argv)
     env = dict(os.environ)
@@ -248,9 +251,12 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
         print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
         log("dry-run: 게시하지 않음")
         return 0
+    global POST_FAILED
+    POST_FAILED = True  # until the review is stored
+
     def posted() -> None:
-        global LAST_POSTED
-        LAST_POSTED = parse_state(body)
+        global LAST_POSTED, POST_FAILED
+        LAST_POSTED, POST_FAILED = parse_state(body), False
     return post(gh, env, head, review, body, comments, fallback, posted)
 
 

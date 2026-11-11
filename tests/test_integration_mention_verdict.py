@@ -66,5 +66,36 @@ class StaleStateTest(MentionBase):
         self.assertEqual(last["event"], "REQUEST_CHANGES")
 
 
+class FullLedgerTest(MentionBase):
+    def big(self):
+        """A reviewed head whose open issues alone exceed the marker budget."""
+        st = self.reviewed()
+        filler = [{"id": "%08x" % (0x10000 + k), "file": "src/f%d.cu" % (k % 7),
+                   "line": 10 + k, "lo": 10 + k, "hi": 10 + k, "status": "open",
+                   "severity": "minor", "blocking": False, "anchor": "0a0b0c0d",
+                   "title": "제목 %d" % k, "excerpt": "설명 " * 20, "orphan": False}
+                  for k in range(500)]
+        self.put_state(dict(st, issues=st["issues"] + filler))
+        return st["issues"][0]["id"], len(self.gh.reviews)
+
+    def test_new_issue_dropped_when_the_ledger_is_full(self):
+        _, reviews = self.big()
+        m = self.mention("@ai-bot 1번 줄 초기화 순서 괜찮아?")
+        self.script(mention=[{"out": answer("문제입니다.", new_issues=[NEW_BLOCKER])}])
+        self.assertEqual(self.run_phases(), 0, self.stdout + self.stderr)
+        self.assertEqual(len(self.gh.reviews), reviews)  # nothing left to store
+        [reply] = self.replies(m["key"])
+        self.assertIn("장부가 가득 차 이슈로 등록하지 않음", reply["body"])
+        self.assertNotIn("새 이슈", reply["body"])
+
+    def test_withdrawal_that_cannot_fit_fails_without_a_post(self):
+        fid, reviews = self.big()
+        self.mention("@ai-bot /철회 %s 의도된 동작" % fid)
+        self.script(mention=[{"out": answer("철회합니다."), "withdraw_all": True}])
+        self.assertEqual(self.run_phases(), 1)
+        self.assertIn("언급 리뷰가 크기 제한을 넘어 게시하지 않음", self.stdout)
+        self.assertEqual((len(self.gh.reviews), self.replies()), (reviews, []))
+
+
 if __name__ == "__main__":
     unittest.main()

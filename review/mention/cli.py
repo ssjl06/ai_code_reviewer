@@ -18,7 +18,8 @@ from review.validate import normalize_state
 
 MENTION_MD = os.path.join(KIT_DIR, "agent", "pr-mention.md")
 _OUTCOMES = {"answered": "답변함", "failed": "실패 (다음 실행에서 다시)",
-             "stopped": "중단 (head 변경)", None: "처리 안 함"}
+             "stopped": "중단 (head 변경)", "halted": "중단 (리뷰 게시 결과 불명)",
+             None: "처리 안 함"}
 
 
 def _summary(env: dict, rows: List[dict]) -> None:
@@ -74,7 +75,7 @@ def run(args, env, cfg, gh, state_hint=None) -> int:
                 handle.note(row["n"], "처리 실패: %s: %s" % (type(e).__name__, e))
                 row["outcome"] = "failed"
             row["seconds"] = round(time.monotonic() - t0, 1)
-            if row["outcome"] == "stopped":
+            if row["outcome"] in ("stopped", "halted"):
                 break
     finally:  # also when the phase aborts: the rows so far
         _summary(env, rows)
@@ -82,4 +83,4 @@ def run(args, env, cfg, gh, state_hint=None) -> int:
             json.dump(rows, f, ensure_ascii=False, indent=2)
     answered = sum(r["outcome"] == "answered" for r in rows)
     log("언급 %d건 중 %d건 답변" % (len(rows), answered))
-    return 0 if answered == len(rows) and not ph.failed else 1
+    return 0 if answered == len(rows) else 1

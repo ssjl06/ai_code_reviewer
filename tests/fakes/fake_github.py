@@ -27,6 +27,7 @@ class FakeGitHub(CommentsMixin):
         self.before_reply = None  # called with the body before a comment is stored; raising -> 403
         self.frozen_reviews = None  # when set, GET reviews answers this list (a lagging listing)
         self._fail = []  # [(status, path part)] for the next matching POSTs
+        self._fail_other = {"GET": [], "PUT": []}  # the same for GETs and PUTs
         self._drop = []  # path parts: the next matching POST is stored but answers 502
         self._ids, self._clock = 100, 0
         self._lag, self._shown, self._pending, self._left = 0, None, None, 0  # lag_after_push
@@ -104,6 +105,10 @@ class FakeGitHub(CommentsMixin):
         """The next POST whose path contains `match` answers `status` and stores nothing."""
         self._fail.append((status, match))
 
+    def fail_next(self, method, status, match=""):
+        """The next GET or PUT whose path contains `match` answers `status`, changes nothing."""
+        self._fail_other[method].append((status, match))
+
     def drop_response_once(self, match=""):
         """The next POST whose path contains `match` is stored but answers 502."""
         self._drop.append(match)
@@ -121,8 +126,9 @@ class FakeGitHub(CommentsMixin):
         return None
 
     def dispatch(self, method, path, body):
-        if method == "POST":
-            failed = self._take(self._fail, path)
+        if method == "POST" or self._fail_other.get(method):
+            failed = self._take(self._fail if method == "POST" else self._fail_other[method],
+                                path)
             if failed:
                 return failed[0], {"message": "injected failure"}
         code, payload = self.route(method, path, body)

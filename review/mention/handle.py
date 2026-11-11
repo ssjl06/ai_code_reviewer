@@ -1,5 +1,6 @@
-"""One mention, in the order of spec 6.4: head check, receipt, time, the replies that need no
-session, session, plan, guideline push, mention review, reply. Only the reply answers it."""
+"""One mention, in the order of spec 6.4: head check, receipt (`recover`), trailer, time, the
+replies that need no session, session, the PR read again, plan, guideline push, mention
+review, reply. Only the reply answers it."""
 from __future__ import annotations
 
 import time
@@ -10,9 +11,7 @@ from review.claude_runner import reask_korean, run_chunk
 from review.diff_split import line_map, parse_unified_diff, reviewable
 from review.gitutil import blob_id, diff_text, read_blobs
 from review.ledger import CLOSED
-from review import rules_git
-from review.mention import body, context, fetch, guideline, publish
-from review.mention.apply import RULE_OPS
+from review.mention import body, context, fetch, guideline, publish, recover
 from review.mention.apply import plan_actions
 from review.mention.command import mentions_bot
 from review.mention.ledger import apply_changes
@@ -22,14 +21,16 @@ from review.render import _CAUSES, _cause_label, parse_reply
 MIN_LEFT_S = 60  # a mention is started only with this much left beyond the publish reserve
 TIME_REPLY = "시간이 부족해 처리하지 못했습니다. 다시 불러 주세요."
 UNKNOWN_REPLY = "알 수 없는 명령입니다. 쓸 수 있는 명령: `/철회`, `/지침`, `/지침수정`, `/지침삭제`"
-HEAD_MOVED = "head가 바뀌어 언급 처리를 중단함"
+HEAD_MOVED = publish.HEAD_MOVED
+PUSH_MOVED = "지침 커밋이 다른 사람의 커밋 위에 올라가 언급 처리를 중단함"
+_STOPS = {"failed": "failed", "unknown": "halted", "moved": "stopped"}  # mention_review
 NO_OUTPUT = "처리하지 못했습니다: %s"
 INLINE = ("inline-new", "inline-reply")
 
 
 class Phase:
     """What the mentions of one phase share. `state` and `head` are replaced as mentions
-    publish (single writer, spec 6.1); `failed` records a failure besides the replies."""
+    publish (single writer, spec 6.1)."""
 
     def __init__(self, repo, env, cfg, scfg, gh, bot, paths, deadline, head, state, lists,
                  callers):
@@ -37,7 +38,6 @@ class Phase:
         self.bot, self.paths, self.deadline, self.head, self.state = bot, paths, deadline, head, state
         self.issue_comments, self.review_comments, self.reviews = lists
         self.callers = {c.lower() for c in callers}  # allowed authors of pending mentions
-        self.failed = False
         self.pushed = set()  # commits this phase pushed (the API head may lag behind them)
 
     def end(self) -> float:
@@ -63,7 +63,8 @@ def _closed(pr: dict) -> bool:
 
 
 def handle(ph: Phase, n: int, m: dict) -> str:
-    """'answered', 'failed' or 'stopped' (the head moved: the phase stops)."""
+    """'answered', 'failed', 'stopped' (the head moved) or 'halted' (a review POST may have
+    landed): the phase stops on the last two."""
     note(n, "언급 %s (%s, @%s) 명령: %s" % (m["key"], m["kind"], m["author"],
                                           m.get("command") or "없음"))
     nothing = body.summary({}, {}, None, ph.bot)
@@ -73,12 +74,13 @@ def handle(ph: Phase, n: int, m: dict) -> str:
         return "stopped"
     receipt = ph.gh.mention_receipt(ph.bot, m["key"])
     if receipt:
-        note(n, "이전 실행의 언급 리뷰 발견: %s" % receipt.get("url"))
-        text, _, summary = body.summary_from_receipt(receipt).partition("\n")
-        return publish.reply(ph, n, m, text, summary)
+        return recover.from_receipt(ph, n, m, receipt)
+    base = pr["base"]["sha"]
+    subject = recover.committed(ph, m, base)  # a reply must name this commit (spec 7.5)
+    known = body.summary({}, {}, guideline.from_subject(subject), ph.bot) if subject \
+        else nothing
     if ph.deadline - time.monotonic() < ph.cfg["mention_publish_reserve_s"] + MIN_LEFT_S:
-        if m.get("command") in RULE_OPS and \
-                rules_git.receipt(ph.repo, pr["base"]["sha"], ph.head, m["key"]) is not None:
+        if subject is not None:
             note(n, "시간 부족 — 이전 실행의 지침 커밋이 있어 다음 실행에서 처리함")
             return "failed"  # a time reply would answer it and hide the commit
         note(n, "시간 부족 — 처리하지 않음")
@@ -93,17 +95,23 @@ def handle(ph: Phase, n: int, m: dict) -> str:
             note(n, "철회 대상 없음")
             return publish.reply(ph, n, m, context.no_target_reply(issues, ph.bot), nothing)
         note(n, "철회 대상: " + ", ".join(t["id"] for t in targets))
-    base = pr["base"]["sha"]
     sess = _session(ph, n, m, pr, base, targets, thread)
     out = sess["r"].get("output")
     if not out:
         note(n, "세션 출력 없음: %s" % str(sess["r"].get("error") or "출력 없음")[:200])
-        return publish.reply(ph, n, m, NO_OUTPUT % cause_text(sess["r"].get("error")), nothing)
+        return publish.reply(ph, n, m, NO_OUTPUT % cause_text(sess["r"].get("error")), known)
+    pr = publish.wait_head(ph, ph.gh.get_pr())  # the PR may have changed during the session
     if _closed(pr):
         note(n, "PR이 닫혀 답변만 함")
-        return publish.reply(ph, n, m, out["reply"], nothing)
+        return publish.reply(ph, n, m, out["reply"], known)
+    if pr["head"]["sha"] != ph.head:
+        note(n, HEAD_MOVED)
+        return "stopped"
     plan = _plan(ph, m, out, targets, base)
-    guide = guideline.step(ph, n, m, pr, base, plan, sess)
+    guide = guideline.step(ph, n, m, pr, base, plan, sess, subject)
+    if guide and guide.get("moved"):
+        note(n, PUSH_MOVED)  # the next run reviews that head and finds the trailer
+        return "stopped"
     effect = {"w": [], "n": [], "up": []}
     new = None
     if ph.state is not None:
@@ -112,8 +120,10 @@ def handle(ph: Phase, n: int, m: dict) -> str:
         note(n, line)
     summary = body.summary(effect, plan, guide, ph.bot)
     if any(effect.values()):
-        if publish.mention_review(ph, n, m, out, plan, new, effect, guide, base, summary) is None:
-            return "failed"
+        res = publish.mention_review(ph, n, m, out, plan, new, effect, guide, base)
+        if res["status"] in _STOPS:
+            return _STOPS[res["status"]]
+        summary = res["summary"]
     return publish.reply(ph, n, m, out["reply"], summary)
 
 
