@@ -114,6 +114,21 @@ class AggregateTest(unittest.TestCase):
         r = run([res(0, [])], [dict(P(blocking=False), pre="ask", located=False)], {})
         self.assertEqual((r["previous"][0]["status"], r["event"]), ("unclear", "APPROVE"))
 
+    def test_approvable(self):
+        r = run([res(0, [F()])])
+        self.assertEqual((r["event"], r["approvable"]), ("REQUEST_CHANGES", True))
+        self.assertTrue(run([res(0, [])])["approvable"])
+        self.assertFalse(run([], no_targets=True)["approvable"])
+        self.assertFalse(run([res(0, [], status="incomplete")])["approvable"])
+        self.assertFalse(run([res(0, [])], skipped=["big.cu"])["approvable"])
+        self.assertFalse(merge([res(0, [])], CFG, [], None, False, cut=["a.js"])["approvable"])
+
+    def test_unclear_ids(self):
+        r = run([res(0, [])], [dict(P(blocking=True), pre="ask", located=False),
+                               dict(P("f2", blocking=False), pre="ask", located=False)], {})
+        self.assertEqual((r["unclear"], r["event"]), (["f1"], "COMMENT"))
+        self.assertEqual(run([res(0, [])])["unclear"], [])
+
     def test_complete_when_all_ok(self):
         self.assertTrue(run([res(0, [])])["complete"])
     def test_previous_resolved_approves(self):

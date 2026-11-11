@@ -42,7 +42,8 @@ class NextStateTest(unittest.TestCase):
                             closed=[issue("c1", "waived")])
         st = next_state("h", review, scope, [], [])
         self.assertEqual(set(st), {"v", "sha", "complete", "seen", "seen_files", "seen_hunks",
-                                   "issues", "closed", "recheck_pending"})
+                                   "issues", "closed", "recheck_pending", "approvable",
+                                   "unclear"})
         self.assertEqual((st["v"], st["sha"], st["complete"], st["closed"], st["recheck_pending"]),
                          (3, "h", True, {}, []))
         self.assertEqual([(i["id"], i["status"]) for i in st["issues"]],
@@ -52,6 +53,17 @@ class NextStateTest(unittest.TestCase):
                                                 "severity", "blocking", "anchor", "title"})
         self.assertEqual(st["issues"][2]["anchor"], "")
         self.assertEqual(decode_seen(st)[0], {"a": Counter([P1])})
+        json.dumps(st)
+
+    def test_next_state_has_approval_fields(self):
+        prev = [dict(issue("p1", "unclear"), blocking=True, pre="ask", located=True)]
+        review = {"findings": [], "previous": prev, "complete": True, "approvable": True,
+                  "unclear": ["p1"]}
+        st = next_state("h", review, empty_scope(), [], [])
+        self.assertEqual((st["approvable"], st["unclear"]), (True, ["p1"]))
+        bad = dict(review, approvable=False, unclear=[])
+        st = next_state("h", bad, empty_scope(), [], [])
+        self.assertEqual((st["approvable"], st["unclear"]), (False, []))
         json.dumps(st)
 
     def test_new_finding_becomes_an_open_issue(self):
@@ -150,6 +162,7 @@ def repo_with_review(findings, files=None, base_files=None):
 
 def commit(d, files):
     for name, text in files.items():
+        os.makedirs(os.path.dirname(os.path.join(d, name)), exist_ok=True)
         with open(os.path.join(d, name), "w", encoding="utf-8") as f:
             f.write(text)
         run(d, "add", name)
@@ -220,6 +233,13 @@ class RecheckScopeTest(unittest.TestCase):
         self.assertEqual([(p["id"], p["pre"]) for p in s["previous"]], [("i1", "ask")])
         self.assertEqual(self.ids(s), ["i1"])
         self.assertEqual(s["changed"], {"b.cc": {2, 3, 4}})  # recheck lines are not changed
+
+    def test_commit_in_excluded_dir_is_unchanged(self):
+        tmp, d, base, head, state = repo_with_review([issue_finding()])
+        with tmp:
+            new = commit(d, {".github/ai-review-rules/cpp/x.md": "rule\n"})
+            s = determine(d, base, new, dict(state, approvable=True, unclear=[]), CFG)
+        self.assertEqual((s["mode"], s["targets"]), ("unchanged", []))
 
     def test_a_squash_with_no_new_lines_rechecks_the_open_issue(self):
         tmp, d, base, head, state = repo_with_review([issue_finding()])
@@ -352,6 +372,15 @@ class SettleTest(unittest.TestCase):
         st, s = self.settle_scope(waive=("i1", "i2"))
         review = merge([], CFG, s["previous"], s["changed"], False, closed=s["closed"])
         self.assertEqual(review["event"], "APPROVE")
+
+    def test_settle_carries_approval_fields(self):
+        st, s = self.settle_scope(approvable=False, unclear=["i1", "i2"])
+        review = merge([], CFG, s["previous"], s["changed"], False, closed=s["closed"])
+        out = settle_state("h2", review, s)  # i1 was waived: only i2 is still open
+        self.assertEqual((out["approvable"], out["unclear"]), (False, ["i2"]))
+        st, s = self.settle_scope(approvable=True, unclear=None)
+        out = settle_state("h2", review, s)
+        self.assertEqual((out["approvable"], out["unclear"]), (True, []))
 
     def test_settle_keeps_the_cut_gap(self):
         st, s = self.settle_scope(waive=("i1", "i2"), cut={"a.cc": "AQIDBA=="})

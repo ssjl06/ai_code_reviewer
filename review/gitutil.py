@@ -81,6 +81,21 @@ def diff_u0(repo: str, old: str, new: str) -> Optional[str]:
     return git(repo, "diff", "-U0", "-M", "--no-color", old, new, timeout=120)
 
 
+def changed_paths(repo: str, old: str, new: str) -> Optional[List[str]]:
+    """Every path (both names of a rename) in `git diff --name-status -M` from `old` to `new`;
+    None when `old` is not a local commit."""
+    if not _is_local_commit(repo, old):
+        return None
+    parts = git(repo, "diff", "--name-status", "-M", "-z", old, new, timeout=120).split("\0")
+    out: List[str] = []
+    i = 0
+    while i < len(parts) and parts[i]:
+        n = 2 if parts[i][:1] in ("R", "C") else 1
+        out += [p for p in parts[i + 1:i + 1 + n] if p]
+        i += 1 + n
+    return out
+
+
 def renames_between(repo: str, old_rev: str, new_rev: str) -> Dict[str, str]:
     """Renames old path -> new path from `old_rev` to `new_rev`; {} when `old_rev` is not a
     commit sha available locally (e.g. a force-pushed head that was never fetched)."""

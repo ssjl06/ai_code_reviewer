@@ -271,8 +271,10 @@ def merge(results, cfg, previous, changed, no_targets, skipped=None, anchor=None
         event = "COMMENT"
     else:
         event = "APPROVE"
+    approvable = not (no_targets or incomplete or failed_all or gaps or cut_files)
+    unclear = [p["id"] for p in prev_out if p.get("blocking") and p["status"] == "unclear"]
     findings.sort(key=lambda f: (_sev(f), -f["confidence"], f["file"], f["line"]))
-    return {"event": event, "findings": findings, "previous": prev_out,
+    return {"event": event, "approvable": approvable, "unclear": unclear, "findings": findings, "previous": prev_out,
             "duplicates": duplicates, "links": links, "evidence": evidence,
             "folded": folded, "overlap": overlap,
             "incomplete": incomplete, "errors": errors, "failed_all": failed_all,

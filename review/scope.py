@@ -5,9 +5,9 @@ import re
 from collections import Counter
 from typing import Any, Dict, List, Optional, Set
 
-from review.diff_split import line_map, parse_unified_diff, reviewable
+from review.diff_split import excluded, line_map, parse_unified_diff, reviewable
 from review.fingerprint import decode_hunks, decode_seen, encode_seen, pack, unpack, whole_hash
-from review.gitutil import diff_text, diff_u0, read_blobs, renames_between
+from review.gitutil import changed_paths, diff_text, diff_u0, read_blobs, renames_between
 from review.hunks import cut_prints, near_hunks, select_file
 from review.ledger import CLOSED, advance, moved_lookups, new_issue
 from review.previous import _closest, annotate
@@ -126,7 +126,10 @@ def determine(repo: str, base: str, head: str, prev: Optional[dict], cfg: dict) 
     previous = annotate(opened, live, tpaths, gone, lost, weak, reverted)
     changed = line_map(targets, "right_lines") if prev is None else {
         p: out["added"][p] | out["deleted"][p] for p in tpaths}
-    ask = {i["id"] for i in previous} if prev and prev["sha"] != head else set(pending)
+    moved_head = bool(prev and prev["sha"] != head)
+    touched = changed_paths(repo, prev["sha"], head) if moved_head else None
+    quiet = bool(touched) and all(excluded(p, cfg) for p in touched)
+    ask = {i["id"] for i in previous} if moved_head and not quiet else set(pending)
     targets += _recheck(previous, rev, tpaths, limit, ask)
     for p in previous:  # left out by the last run: first in line for the recheck budget
         p["pending"] = p["id"] in pending
@@ -245,7 +248,9 @@ def next_state(head: str, review: dict, scope: dict, chunks: List[dict],
              "seen_files": seen_files,
              "seen_hunks": {p: pack(Counter(k)) for p, k in sorted(hunks.items())},
              "issues": [_record(i) for i in issues], "closed": {},
-             "recheck_pending": list(review.get("recheck_pending") or [])}
+             "recheck_pending": list(review.get("recheck_pending") or []),
+             "approvable": bool(review.get("approvable")),
+             "unclear": list(review.get("unclear") or [])}
     if scope.get("dropped_closed"):
         state["dropped_closed"] = scope["dropped_closed"]
     cut = _cut(scope, chunks, results)
@@ -259,10 +264,14 @@ def settle_state(head: str, review: dict, scope: dict) -> dict:
     of `scope["prev"]` (the state after the waivers), and so is `cut`; the issues are the ledger after them, and
     the head counts as fully reviewed."""
     prev = scope["prev"]
+    issues = _issues(review, scope)
+    still_open = {i["id"] for i in issues if i.get("status") not in CLOSED}
     state = {"v": 3, "sha": head, "complete": True, "seen": dict(prev["seen"]),
              "seen_files": dict(prev["seen_files"]), "seen_hunks": dict(prev["seen_hunks"]),
-             "issues": [_record(i) for i in _issues(review, scope)], "closed": {},
-             "recheck_pending": list(prev.get("recheck_pending") or [])}
+             "issues": [_record(i) for i in issues], "closed": {},
+             "recheck_pending": list(prev.get("recheck_pending") or []),
+             "approvable": bool(prev.get("approvable")),
+             "unclear": [x for x in prev.get("unclear") or [] if x in still_open]}
     if scope.get("dropped_closed"):
         state["dropped_closed"] = scope["dropped_closed"]
     if prev.get("cut"):

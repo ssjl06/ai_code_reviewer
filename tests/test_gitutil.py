@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-from review.gitutil import GitError, diff_text, git, is_ancestor, read_blobs, renames_between
+from review.gitutil import (GitError, changed_paths, diff_text, git, is_ancestor, read_blobs,
+                           renames_between)
 
 
 def run(repo, *args):
@@ -85,6 +86,18 @@ class GitUtilTest(unittest.TestCase):
         self.assertEqual(renames_between(self.repo, start, end), {})
         for rev in ("", "0" * 40, "--output=x", "HEAD"):
             self.assertEqual(renames_between(self.repo, rev, end), {}, rev)
+
+    def test_changed_paths(self):
+        self._commit("cp src.txt", "".join("row %d\n" % i for i in range(20)))
+        mid = run(self.repo, "rev-parse", "HEAD")
+        run(self.repo, "mv", "cp src.txt", "cp dst.txt")
+        self._commit("other.txt", "o\n")
+        end = run(self.repo, "rev-parse", "HEAD")
+        self.assertEqual(sorted(changed_paths(self.repo, mid, end)),
+                         ["cp dst.txt", "cp src.txt", "other.txt"])
+        self.assertEqual(changed_paths(self.repo, end, end), [])
+        for rev in ("", "0" * 40, "--output=x"):
+            self.assertIsNone(changed_paths(self.repo, rev, end), rev)
 
     def test_unicode_path_not_quoted(self):
         self.assertIn("b/한글.txt", diff_text(self.repo, self.c2, self.c3, merge_base=True))

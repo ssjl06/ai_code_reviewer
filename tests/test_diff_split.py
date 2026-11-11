@@ -4,6 +4,7 @@ import unittest
 from review.config import load_config
 from review.diff_split import (MARKER, ROW_CUT, build_chunks, estimate_tokens, line_map,
                                parse_unified_diff, priority)
+from review.diff_split import excluded
 
 CFG = load_config()
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -52,6 +53,12 @@ class DiffSplitTest(unittest.TestCase):
     def test_quoted_and_unicode_paths(self):
         self.assertEqual(parse_unified_diff(QUOTED)[0]["path"], "my dir/한글.py")
         self.assertEqual(parse_unified_diff(UNQUOTED)[0]["path"], "my dir/x.py")
+
+    def test_excluded(self):
+        cfg = {"exclude_globs": ["*.lock", ".github/ai-review-rules/*"]}
+        self.assertTrue(excluded("a/b.lock", cfg))
+        self.assertTrue(excluded(".github/ai-review-rules/cpp/x.md", cfg))
+        self.assertFalse(excluded("src/a.c", cfg))
 
     def test_priority_order(self):
         self.assertEqual([priority(p) for p in
