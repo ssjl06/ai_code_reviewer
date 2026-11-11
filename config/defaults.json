@@ -23,6 +23,8 @@
   "mention_rules_chars": 6000,
   "rules_max_chars": 6000,
   "mention_since": "",
+  "mention_head_tries": 10,
+  "mention_head_delay_s": 3,
   "block_severities": ["critical", "major"],
   "block_confidence": 80,
   "min_confidence": 50,

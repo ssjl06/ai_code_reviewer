@@ -1,5 +1,6 @@
 import unittest
 
+from review.github_api import GitHubError
 from review.mention import fetch
 from review.render import reply_marker
 
@@ -60,6 +61,33 @@ class PendingTest(unittest.TestCase):
         self.assertEqual(len(run(c, perm=perm)), 2)
         self.assertEqual(calls, ["alice"])
         self.assertEqual(run(c, perm=lambda u: "read"), [])
+
+    def test_permission_error_other_than_404_is_not_allowed(self):
+        calls = []
+
+        def perm(u):
+            calls.append(u)
+            if u == "bob":
+                raise GitHubError(500, "server error")
+            return "write"
+        c = [ic(1, "@ai-bot", user="bob", assoc="CONTRIBUTOR"),
+             ic(2, "@ai-bot", user="bob", assoc="CONTRIBUTOR"),
+             ic(3, "@ai-bot", user="carol", assoc="CONTRIBUTOR")]
+        found, log = fetch.pending(c, [], [], BOT, "", perm)
+        self.assertEqual([x["key"] for x in found], ["i:3"])
+        self.assertEqual(calls, ["bob", "carol"])
+        failed = [x for x in log if "권한 조회 실패" in x]
+        self.assertEqual(len(failed), 1, log)
+        self.assertIn("bob", failed[0])
+        self.assertIn("i:2: bob 님은 권한이 없어 건너뜁니다.", log)
+
+    def test_since_check(self):
+        self.assertIsNone(fetch.since_limit(""))
+        self.assertEqual(fetch.since_limit("2026-11-11T00:00:00Z").isoformat(),
+                         "2026-11-11T00:00:00+00:00")
+        for bad in ("어제", "2026-13-01", 5, None):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                fetch.since_limit(bad)
 
     def test_since(self):
         old = ic(1, "@ai-bot", at="2026-11-10T00:00:00Z")

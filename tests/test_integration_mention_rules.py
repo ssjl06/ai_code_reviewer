@@ -219,7 +219,7 @@ class RecoveryTest(MentionBase):
         self.assertEqual(self.run_phases(), 0, self.stdout + self.stderr)
         [reply] = self.replies(key)
         self.assertIn(reply, self.gh.issue_comments)
-        self.assertTrue(reply["body"].startswith("> @ai-bot /철회 의도된 동작"))
+        self.assertTrue(reply["body"].startswith("> @\u200bai-bot /철회 의도된 동작"))
         self.assertIn("스레드 답글 거부됨", self.stdout)
 
 

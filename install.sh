@@ -103,7 +103,7 @@ if [[ -e "$workflow_dst" && "$force_workflow" -eq 0 ]]; then
   cur_timeout="$(review_timeout "$workflow_dst")"
   if [[ -z "$cur_timeout" ]]; then
     echo "warning: could not find timeout-minutes in the review job of $workflow_dst;" >&2
-    echo "  set timeout-minutes: ${tpl_timeout:-320} on that job by hand (the review can run longer than a lower value)" >&2
+    echo "  set timeout-minutes: ${tpl_timeout:-360} on that job by hand (the review can run longer than a lower value)" >&2
   elif [[ -n "$tpl_timeout" ]] && (( cur_timeout < tpl_timeout )); then
     wf_tmp="$(mktemp "$workflow_dst.tmp.XXXXXX")"
     review_timeout "$workflow_dst" "$tpl_timeout" > "$wf_tmp"
@@ -125,8 +125,10 @@ fi
 cat <<NEXT
 
 Next steps:
-  1. Set the secrets (repository or organization level):
-       AI_REVIEW_BOT_PAT, AI_REVIEW_BOT_NAME, AI_REVIEW_LLM_API_KEY, AI_REVIEW_LLM_BASE_URL
+  1. Set the three secrets (repository or organization level):
+       AI_REVIEW_BOT_PAT, AI_REVIEW_LLM_API_KEY, AI_REVIEW_LLM_BASE_URL
+     and the repository variable (Settings, Variables; not a secret):
+       AI_REVIEW_BOT_NAME = the bot account's login; reviews fail while the variable is empty
   2. Check runs-on and the env values at the top of .github/workflows/ai-review.yml.
   3. Commit and open a pull request:
        cd "$target"

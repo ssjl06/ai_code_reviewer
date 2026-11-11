@@ -63,8 +63,10 @@ def _thread_issue(root: dict, issues: List[dict]) -> Optional[dict]:
 
 
 def targets(m: dict, thread: List[dict], issues: List[dict], bot: str) -> List[dict]:
-    """The issues a `/철회` mention is about (spec 5.1), else []. The thread's issue is
-    returned whatever its status; the other rules only pick open issues."""
+    """The issues a `/철회` mention is about (spec 5.1), else []. The thread's issue and the
+    issues named by id are returned whatever their status (`apply` reports a closed one); an
+    id that is no issue of the ledger names nothing. The single open issue is the target only
+    when no ledger id is named."""
     if m.get("command") != "withdraw":
         return []
     in_bot_thread = False
@@ -75,11 +77,11 @@ def targets(m: dict, thread: List[dict], issues: List[dict], bot: str) -> List[d
             if hit:
                 return [hit]
             in_bot_thread = True  # a bot thread never falls back to the only open issue
-    opened = [i for i in issues if _open(i)]
     named = set(m.get("ids") or [])
-    by_id = [i for i in opened if i["id"] in named]
+    by_id = [i for i in issues if i["id"] in named]
     if by_id:
         return by_id
+    opened = [i for i in issues if _open(i)]
     return opened if len(opened) == 1 and not in_bot_thread else []
 
 

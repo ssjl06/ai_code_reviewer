@@ -98,7 +98,7 @@ class MentionFlowTest(MentionBase):
         self.assertEqual(self.run_phases(), 0, self.stdout + self.stderr)
         self.assertIn("stranger 님은 권한이 없어 건너뜁니다.", self.stdout)
         self.assertEqual([c["body"].split("\n")[0][:20] for c in self.replies()],
-                         ["> @ai-bot 이건 뭐야? ([원"])
+                         ["> @\u200bai-bot 이건 뭐야? (["])  # the quote notifies no one
         [call] = self.mention_calls()
         self.assertNotIn("/철회 해 줘", call["stdin"])  # an outsider's text is not context
         self.assertEqual(self.state()["issues"][0]["status"], "open")
@@ -126,7 +126,9 @@ class MentionFlowTest(MentionBase):
         self.assertEqual(rc, 0, self.stdout + self.stderr)
         self.assertLess(time.monotonic() - t0, 20)
         [reply] = self.replies(m["key"])
-        self.assertIn("처리하지 못했습니다: timeout", reply["body"])
+        self.assertIn("처리하지 못했습니다: 시간 초과", reply["body"])  # the review body's label
+        self.assertNotIn("timeout", reply["body"])
+        self.assertIn("[m1] 세션 출력 없음: timeout", self.stdout)  # the raw cause: log only
 
 
 if __name__ == "__main__":

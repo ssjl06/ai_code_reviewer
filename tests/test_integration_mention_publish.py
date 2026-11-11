@@ -7,7 +7,7 @@ from unittest import mock
 
 from review import rules
 from review.mention import guideline as guideline_step
-from review.mention import handle, publish
+from review.mention import handle
 from review.render import parse_state
 from tests.mention_case import BLOCKER, BLOCKING_REVIEW, PATH, RID, MentionBase, answer, guideline
 from tests.test_integration import git
@@ -17,11 +17,8 @@ RULE_ASK = "@ai-bot /지침 기본 스트림 직후 cudaMemcpy는 지적하지 �
 
 
 class MentionPublishTest(MentionBase):
-    def setUp(self):
-        super().setUp()
-        p = mock.patch.object(publish, "HEAD_DELAY_S", 0)
-        p.start()
-        self.addCleanup(p.stop)
+    def run_phases(self, *extra):
+        return super().run_phases("--set", "mention_head_delay_s=0", *extra)
 
     def test_head_lag_after_own_push_waits(self):
         self.reviewed()

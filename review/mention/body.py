@@ -24,6 +24,7 @@ PULL_LINE = "- 브랜치에 커밋을 추가했습니다. 다음 push 전에 pul
 _HINTS = {"withdraw": "반영하려면 `@%s /철회`로 불러 주세요.",
           "rule": "지침으로 남기려면 `@%s /지침 <내용>`으로 불러 주세요."}
 _QUOTE_MAX = 200
+_ZWSP = "\u200b"
 
 
 def _line(text: str) -> str:
@@ -113,8 +114,9 @@ def mention_review(author: str, url: str, answer: str, state: dict, event: str, 
     to put in the marker."""
     head = "## 🤖 AI Code Review — %s\n**판정 근거:** %s\n\n@%s의 코멘트(%s)를 반영한 리뷰" % (
         _HEADS[event], _reason(event, state), author, url)
-    opened = [i for i in state["issues"]
-              if i.get("status", "open") == "open" and i.get("blocking")]
+    unclear = state.get("unclear") or []
+    opened = [i for i in state["issues"] if i.get("status", "open") == "open"
+              and i.get("blocking") and i["id"] not in unclear]
     blocking = ["### 열린 차단 이슈\n" + "\n".join(
         "- `%s` `%s:%s` %s" % (i["id"], i["file"], i["line"], _line(i.get("title", "")))
         for i in opened)] if opened else []
@@ -135,6 +137,7 @@ def reply(text: str, summary_text: str, key: str, quote_line: Optional[str], lin
     parts = []
     if quote_line is not None:
         first = _line((quote_line or "").split("\n", 1)[0])[:_QUOTE_MAX]
+        first = first.replace("@", "@" + _ZWSP)  # the quote notifies no one again
         parts.append("> %s ([원문](%s))" % (first, link))
     parts += [text, summary_text]
     marker = reply_marker(key)

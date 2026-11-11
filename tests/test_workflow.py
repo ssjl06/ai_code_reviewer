@@ -110,7 +110,21 @@ class WorkflowTest(unittest.TestCase):
         env = re.search(r"^env:\n((?:  .*\n)+)", W, re.M).group(1)
         self.assertIn('  MENTION_SINCE: ""\n', env)
         self.assertIn('--pr "$PR_NUMBER"', W)
-        self.assertIn('--set mention_since="\\"$MENTION_SINCE\\""', W)
+        # an environment variable, not --set: an old kit on a PR branch rejects unknown keys
+        review = W.split("      - name: Review\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("          AI_REVIEW_MENTION_SINCE: ${{ env.MENTION_SINCE }}\n", review)
+        self.assertNotIn("mention_since", W)
+
+    def test_first_step_requires_the_bot_name_variable(self):
+        steps = JOBS.split("    steps:\n", 1)[1]
+        name = "      - name: Check the bot name variable\n"
+        self.assertTrue(re.sub(r"(?m)^\s*#.*\n", "", steps).startswith(name), steps[:300])
+        step = steps.split(name, 1)[1].split("\n      - ", 1)[0]
+        self.assertIn("          AI_REVIEW_BOT_NAME: ${{ vars.AI_REVIEW_BOT_NAME }}\n", step)
+        run = _run_blocks(step)
+        self.assertIn('[ -n "$AI_REVIEW_BOT_NAME" ]', run)
+        self.assertIn("exit 1", run)
+        self.assertNotIn("${{", run)
 
     def test_single_checkout_of_pr_head(self):
         self.assertEqual(W.count("uses: actions/checkout@v4"), 1)

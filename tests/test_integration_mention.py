@@ -25,7 +25,7 @@ class MentionCommandTest(MentionBase):
         [reply] = self.replies(m["key"])
         self.assertIn("철회합니다.", reply["body"])
         self.assertIn("**반영:** 철회 %s" % fid, reply["body"])
-        self.assertTrue(reply["body"].startswith("> @ai-bot /철회 %s 테스트 코드라" % fid))
+        self.assertTrue(reply["body"].startswith("> @\u200bai-bot /철회 %s 테스트 코드라" % fid))
         self.assertEqual(len(self.mention_calls()), 1)
         self.assertIn("[m1]", self.stdout)
 

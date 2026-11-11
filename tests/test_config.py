@@ -36,7 +36,8 @@ class ConfigTest(unittest.TestCase):
                      ("mention_deadline_s", 1500), ("mention_publish_reserve_s", 120),
                      ("mention_conversation_chars", 12000), ("mention_code_lines", 40),
                      ("mention_rules_chars", 6000), ("rules_max_chars", 6000),
-                     ("mention_since", "")]:
+                     ("mention_since", ""), ("mention_head_tries", 10),
+                     ("mention_head_delay_s", 3)]:
             self.assertEqual(c[k], v, k)
         self.assertIn(".github/ai-review-rules/**", c["exclude_globs"])
 

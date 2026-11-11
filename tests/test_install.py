@@ -184,6 +184,23 @@ class InstallTest(InstallBase):
         p = self.install_run()
         self.assertNotIn("differs", p.stderr)
 
+    def test_next_steps_name_three_secrets_and_the_variable(self):
+        out = self.install()
+        steps = out[out.index("Next steps:"):]
+        for s in ("AI_REVIEW_BOT_PAT", "AI_REVIEW_LLM_API_KEY", "AI_REVIEW_LLM_BASE_URL"):
+            self.assertIn(s, steps)
+        self.assertIn("three secrets", steps)
+        self.assertIn("repository variable", steps)
+        self.assertIn("AI_REVIEW_BOT_NAME", steps)
+        self.assertIn("reviews fail while the variable is empty", steps)
+        self.assertNotIn("AI_REVIEW_BOT_PAT, AI_REVIEW_BOT_NAME", steps)
+
+    def test_timeout_fallback_is_360(self):
+        with open(INSTALL, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("${tpl_timeout:-360}", text)
+        self.assertNotIn("${tpl_timeout:-320}", text)
+
     def test_bad_usage(self):
         for args in ([], ["--nope", self.T], [os.path.join(self.tmp, "missing")], [KIT]):
             p = subprocess.run(["bash", INSTALL, *args], capture_output=True, text=True)

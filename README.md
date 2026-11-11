@@ -53,6 +53,7 @@ and a push cancels a mention being handled. Commands: `/철회`, `/지침`, `/�
 pull_request event (target repo)
   └─ .github/workflows/ai-review.yml (from the PR head)
         self-hosted runner, bash (login shell may be tcsh)
+        0. fail at once when vars.AI_REVIEW_BOT_NAME is empty
         1. checkout PR head (fetch-depth 0, persist-credentials false, bot PAT)
         2. cd .github/ai-review
            python3 -E -s -m review --repo "$GITHUB_WORKSPACE" --pr N
@@ -128,8 +129,10 @@ In a target repository, after `install.sh`:
 - `actions/checkout@v4` and `actions/upload-artifact@v3.2.2-node20` must be available. On an
   air-gapped instance, sync them with actions-sync. `upload-artifact@v4` is not supported on GHES.
 - A **bot account** with write access to the target repositories, and a PAT for it with the
-  `repo` scope (classic), or contents read and pull-requests write (fine-grained).
-- The four secrets of section 4, at repository or organization level.
+  `repo` scope (classic), or (fine-grained) contents read **and write** (the bot pushes
+  guideline commits to the PR branch) and pull requests read and write.
+- The three secrets and the repository variable `AI_REVIEW_BOT_NAME` of section 4, at
+  repository or organization level.
 
 **Workstation** (where you run `install.sh`)
 - bash, git, and a clone of this kit repository plus a clone of the target repository.
@@ -164,7 +167,9 @@ In a target repository, after `install.sh`:
 
    Also create the repository (or organization) **variable** `AI_REVIEW_BOT_NAME`, the login of
    the bot account (used to find its earlier reviews and to recognise mentions). It is a variable,
-   not a secret. Set `MENTION_SINCE` in the workflow `env:` to the installation time (UTC, ISO 8601).
+   not a secret, and it is required: while it is empty the workflow's first step fails, so every
+   review fails (and every comment containing `@` would start a job). Set `MENTION_SINCE` in
+   the workflow `env:` to the installation time (UTC, ISO 8601).
    Mentions are described in `docs/runbook.md`, section Mentions.
 4. **Commit and open a PR:**
    ```bash
@@ -240,7 +245,8 @@ ways:
 | `mention_session_s` / `mention_deadline_s` / `mention_publish_reserve_s` | 600 / 1500 / 120 | seconds: one mention session / the whole mention phase / kept back for publishing |
 | `mention_conversation_chars` / `mention_code_lines` / `mention_rules_chars` | 12000 / 40 / 6000 | conversation, code context lines and guideline text shown to a mention session |
 | `rules_max_chars` | 6000 | ceiling on the guideline text |
-| `mention_since` | `""` | mentions older than this (UTC, ISO 8601) are ignored; the workflow sets it from `MENTION_SINCE` |
+| `mention_since` | `""` | mentions older than this (UTC, ISO 8601) are ignored; a non-empty environment variable `AI_REVIEW_MENTION_SINCE` (the workflow passes `MENTION_SINCE` that way) overrides it; a malformed value ends the mention phase with exit 1 |
+| `mention_head_tries` / `mention_head_delay_s` | 10 / 3 | after its own guideline push, the mention phase reads the PR up to this many times, this many seconds apart, until the API shows the pushed head |
 | `exclude_globs` | vendor, third_party, lock files, generated code, `.github/ai-review/**`, `.github/ai-review-rules/**` | never reviewed |
 
 ## 7. Interfaces
@@ -257,7 +263,8 @@ python3 -E -s -m review --dry-run --repo <checkout> --base <sha> --head <sha> \
 - **Environment, both modes:** `AI_REVIEW_LLM_BASE_URL`, `AI_REVIEW_LLM_API_KEY`, and
   optionally `AI_REVIEW_MODEL`.
 - **Environment, online mode only:** `GITHUB_API_URL`, `GITHUB_REPOSITORY`,
-  `AI_REVIEW_BOT_PAT` and `AI_REVIEW_BOT_NAME`.
+  `AI_REVIEW_BOT_PAT` and `AI_REVIEW_BOT_NAME`; optionally `AI_REVIEW_MENTION_SINCE`
+  (overrides `mention_since`).
 - **Exit codes:**
   - `0`: a review was posted or printed, or the run was skipped because there were no new lines.
   - `1`: one of these failures. A failure comment is posted when possible.
@@ -346,7 +353,8 @@ Do not edit or strip the marker. Spec section 6.2 and
 
 When an AI agent installs this kit or migrates a repository to it, follow sections 4–5 in order:
 run `install.sh <target>`, adjust `runs-on` and the `env:` values in the installed workflow,
-make sure the four secrets exist, and commit `.github/ai-review/` plus the workflow in one PR.
+make sure the three secrets and the repository variable `AI_REVIEW_BOT_NAME` exist, and commit
+`.github/ai-review/` plus the workflow in one PR.
 Do not hand-copy files instead of running `install.sh`, and do not edit `.github/ai-review/`
 in the target; change the kit repository and re-install.
 

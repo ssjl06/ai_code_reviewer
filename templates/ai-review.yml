@@ -50,6 +50,15 @@ jobs:
     runs-on: [self-hosted]
     timeout-minutes: 360
     steps:
+      # Without the variable every review fails and every comment with "@" starts a job.
+      - name: Check the bot name variable
+        env:
+          AI_REVIEW_BOT_NAME: ${{ vars.AI_REVIEW_BOT_NAME }}
+        run: |
+          [ -n "$AI_REVIEW_BOT_NAME" ] && exit 0
+          echo "::error::The repository variable AI_REVIEW_BOT_NAME (the bot's login) is empty; set it under Settings > Secrets and variables > Actions > Variables." >&2
+          exit 1
+
       # Note: upload-artifact v4 is not supported on GHES; the kit pins
       # v3.2.2-node20 (Node 20, like checkout@v4). Sync both actions to GHES
       # when the instance is air-gapped.
@@ -74,12 +83,12 @@ jobs:
           AI_REVIEW_LLM_API_KEY: ${{ secrets.AI_REVIEW_LLM_API_KEY }}
           AI_REVIEW_LLM_BASE_URL: ${{ secrets.AI_REVIEW_LLM_BASE_URL }}
           GITHUB_API_URL: ${{ github.api_url }}
+          AI_REVIEW_MENTION_SINCE: ${{ env.MENTION_SINCE }}
         run: |
           cd .github/ai-review
           python3 -E -s -m review --repo "$GITHUB_WORKSPACE" \
             --pr "$PR_NUMBER" \
-            --set max_chunks="$MAX_CHUNKS" --set concurrency="$CONCURRENCY" \
-            --set mention_since="\"$MENTION_SINCE\""
+            --set max_chunks="$MAX_CHUNKS" --set concurrency="$CONCURRENCY"
 
       - name: Upload review artifacts
         if: always()

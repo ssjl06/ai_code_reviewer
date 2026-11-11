@@ -17,7 +17,7 @@ from review.mention.apply import plan_actions
 from review.mention.command import mentions_bot
 from review.mention.ledger import apply_changes
 from review.previous import anchor_of
-from review.render import parse_reply
+from review.render import _CAUSES, _cause_label, parse_reply
 
 MIN_LEFT_S = 60  # a mention is started only with this much left beyond the publish reserve
 TIME_REPLY = "시간이 부족해 처리하지 못했습니다. 다시 불러 주세요."
@@ -47,6 +47,15 @@ class Phase:
 
 def note(n: int, msg: str) -> None:
     print("[m%d] %s" % (n, msg), flush=True)
+
+
+def cause_text(error) -> str:
+    """The Korean label of a runner error code (as in the review body); any other text is
+    raw runner output, kept for the log: the reply says only "출력 없음"."""
+    main, _, fb = str(error or "").partition(" → ")
+    if main in _CAUSES and (not fb or fb in _CAUSES):
+        return _cause_label(str(error))
+    return "출력 없음"
 
 
 def _closed(pr: dict) -> bool:
@@ -88,9 +97,8 @@ def handle(ph: Phase, n: int, m: dict) -> str:
     sess = _session(ph, n, m, pr, base, targets, thread)
     out = sess["r"].get("output")
     if not out:
-        cause = str(sess["r"].get("error") or "출력 없음")[:200]
-        note(n, "세션 출력 없음: %s" % cause)
-        return publish.reply(ph, n, m, NO_OUTPUT % cause, nothing)
+        note(n, "세션 출력 없음: %s" % str(sess["r"].get("error") or "출력 없음")[:200])
+        return publish.reply(ph, n, m, NO_OUTPUT % cause_text(sess["r"].get("error")), nothing)
     if _closed(pr):
         note(n, "PR이 닫혀 답변만 함")
         return publish.reply(ph, n, m, out["reply"], nothing)

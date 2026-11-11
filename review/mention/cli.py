@@ -40,8 +40,14 @@ def run(args, env, cfg, gh, state_hint=None) -> int:
     bot = env["AI_REVIEW_BOT_NAME"]
     repo = os.path.abspath(args.repo)
     work = os.path.join(os.path.abspath(args.out_dir or cu.default_out_dir(env)), "mention")
+    since = env.get("AI_REVIEW_MENTION_SINCE") or cfg["mention_since"]  # the workflow's setting
+    try:
+        fetch.since_limit(since)
+    except ValueError:
+        log("mention_since 형식 오류: %s — 기준 없이 진행하지 않음" % since)
+        return 1
     lists = (gh.list_issue_comments(), gh.list_review_comments(), gh.list_reviews())
-    found, ignored = fetch.pending(*lists, bot, cfg["mention_since"], gh.permission)
+    found, ignored = fetch.pending(*lists, bot, since, gh.permission)
     for line in ignored:
         print("[m] " + line, flush=True)
     log("언급 %d건 처리" % len(found))

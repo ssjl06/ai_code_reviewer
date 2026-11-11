@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Tuple
 
+from review.github_api import GitHubError
 from review.mention import command as cmd
 from review.render import parse_reply
 
@@ -14,6 +15,15 @@ WRITE = ("admin", "maintain", "write")
 def _time(text: str) -> datetime:
     t = datetime.fromisoformat(text.replace("Z", "+00:00"))
     return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def since_limit(since) -> Optional[datetime]:
+    """The time `mention_since` names, None when it is empty; ValueError when malformed."""
+    if since == "":
+        return None
+    if not isinstance(since, str):
+        raise ValueError(since)
+    return _time(since)
 
 
 def _login(item: dict) -> str:
@@ -59,7 +69,7 @@ def pending(issue_comments, review_comments, reviews, bot, since,
         cands.append(("v:%d" % r["id"], "review-body", r.get("submitted_at") or "", r, None))
     cands = [x for x in cands if x[2]]
     cands.sort(key=lambda x: (_time(x[2]), x[0]))
-    limit = _time(since) if since else None
+    limit = since_limit(since)
     asked: Dict[str, Optional[str]] = {}
     out, log = [], []
     for key, kind, when, c, root in cands:
@@ -71,7 +81,12 @@ def pending(issue_comments, review_comments, reviews, bot, since,
             continue
         if c.get("author_association") not in ALLOWED:
             if author.lower() not in asked:
-                asked[author.lower()] = permission(author)
+                try:
+                    asked[author.lower()] = permission(author)
+                except GitHubError as e:  # 404 is None already: any other error denies
+                    log.append("%s: %s 님의 권한 조회 실패 (%s) — 권한 없음으로 처리"
+                               % (key, author, e))
+                    asked[author.lower()] = None
             if asked[author.lower()] not in WRITE:
                 log.append("%s: %s 님은 권한이 없어 건너뜁니다." % (key, author))
                 continue

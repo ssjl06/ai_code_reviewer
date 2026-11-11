@@ -13,17 +13,16 @@ from review.validate import normalize_state
 
 
 DISMISS_MSG = "코멘트를 반영하여 이전 AI 변경 요청을 해제합니다."
-HEAD_TRIES = 5  # reads of the PR while its head may still lag this phase's own push
-HEAD_DELAY_S = 2.0
 
 
 def wait_head(ph, pr: dict) -> dict:
-    """`pr`, read again (up to HEAD_TRIES reads in all) while the API head is not the phase's
-    head and that head is a commit this phase pushed: the API may not show the push yet."""
-    for _ in range(HEAD_TRIES - 1):
+    """`pr`, read again (up to `mention_head_tries` reads in all, `mention_head_delay_s`
+    apart) while the API head is not the phase's head and that head is a commit this phase
+    pushed: the API may not show the push yet."""
+    for _ in range(ph.cfg["mention_head_tries"] - 1):
         if pr["head"]["sha"] == ph.head or ph.head not in ph.pushed:
             break
-        time.sleep(HEAD_DELAY_S)
+        time.sleep(ph.cfg["mention_head_delay_s"])
         pr = ph.gh.get_pr()
     return pr
 

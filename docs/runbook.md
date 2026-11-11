@@ -17,7 +17,12 @@ Set at repository level, or as organization secrets the target repository can us
 | `AI_REVIEW_LLM_BASE_URL` | LiteLLM base URL |
 
 Also set the repository **variable** `AI_REVIEW_BOT_NAME` (Settings, Variables; not a secret): the
-login of the bot account, used to find its earlier reviews and to recognise mentions.
+login of the bot account, used to find its earlier reviews and to recognise mentions. It is
+**required**: while it is empty the workflow's first step fails (and the kit itself would exit 2),
+so every review fails, and the job's `@` filter would let every comment containing `@` start a job.
+
+The bot PAT, if fine-grained, needs contents read **and write** (the guideline push) and pull
+requests read and write.
 
 ## Installing into a target repository
 The kit runs from inside each target repository. From a clone of the kit:
@@ -46,15 +51,21 @@ Mentioning the bot (`@<bot>`) in a PR comment, a review or an inline comment sta
 and a push cancels a mention being handled (its mentions stay pending for the next run).
 
 - **Variable.** Set the repository (or organization) *variable* `AI_REVIEW_BOT_NAME` (not a
-  secret) to the bot's login. The workflow's `if:` and concurrency group read it.
+  secret) to the bot's login; it is required (see Secrets). The workflow's `if:`, concurrency
+  group and first step read it.
 - **Runner.** git >= 2.31.
 - **`MENTION_SINCE`.** In the installed workflow's `env:`, set `MENTION_SINCE` to the
   installation time (UTC, ISO 8601, e.g. `"2026-11-11T09:00:00Z"`), so mentions that predate
-  the installation are not answered.
+  the installation are not answered. The workflow passes it to the kit as the environment
+  variable `AI_REVIEW_MENTION_SINCE` (not `--set`), which overrides the config `mention_since`.
+  A malformed value is logged (`mention_since 형식 오류: ...`) and the mention phase ends with
+  exit 1 without answering anything.
 - **Which workflow file runs.** `issue_comment` runs the workflow file of the default branch,
-  so mentions work only once the new workflow file is on the default branch, and a PR branch
-  that still has the old kit gets a review but no reply until it merges or rebases onto the
-  new kit.
+  so mentions work only once the new workflow file is on the default branch. The job still runs
+  the kit of the PR head: a PR branch that still has the old kit gets a review but no
+  reply until it merges or rebases onto the new kit.
+  The old kit does not fail on the new workflow: `MENTION_SINCE` reaches the kit only as an
+  environment variable, which the old kit ignores.
 - **Commands** (the first word after the mention; anything else is conversation):
 
   | Command | Example |
@@ -75,6 +86,12 @@ and a push cancels a mention being handled (its mentions stay pending for the ne
   stopped; a job-level group and the workflow-level group of the same name on a PR branch
   with the old workflow file are the same group; how `author_association` reports private
   organization members.
+  - With "Dismiss stale pull request approvals" on in branch protection, the bot's own guideline
+    push removes its APPROVE, and nothing approves again until the next event (a push or a
+    mention) starts a run.
+  - How long the API takes to show a new head after a push: after its own guideline push the
+    mention phase reads the PR up to `mention_head_tries` (10) times, `mention_head_delay_s`
+    (3 s) apart; if the lag is longer, raise them in a config file or with `--set`.
 
 ## Trust model
 The workflow uses a plain `on: pull_request` trigger and runs the PR's own copy of the workflow
