@@ -6,9 +6,10 @@ import json
 import os
 import sys
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from review import cli_util as cu
+from review import rules
 from review import scope as sc
 from review.aggregate import merge, split_inline
 from review.claude_cmd import write_agents_file
@@ -170,6 +171,18 @@ def _log_matches(review: dict) -> None:
                 % (f["file"], f["line"], f["near_closed"]))
 
 
+def _chunk_rules(repo: str, chunks: List[dict], cfg: dict) -> Dict[int, list]:
+    """{chunk index: [(path, text)]} of the guideline files that apply; omitted ones are logged."""
+    docs = rules.load_docs(repo)
+    out: Dict[int, list] = {}
+    for c in chunks:
+        chosen, omitted = rules.select(docs, c["files"], cfg["rules_max_chars"])
+        out[c["index"]] = chosen
+        if omitted:
+            log("생략된 지침: " + ", ".join(omitted))
+    return out
+
+
 def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope) -> int:
     if scope["mode"] == "unchanged":
         log("새로 리뷰할 변경 없음 — 리뷰를 건너뜀")
@@ -193,6 +206,7 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
                "pr_title": title, "previous": previous, "ledger": ledger, "orphans": orphans,
                "recheck": recheck,
                "added": scope["added"], "deleted": scope["deleted"], "explore_budget": cfg["explore_budget"]}
+        ctx["rules"] = _chunk_rules(repo, chunks, cfg)
         prompts = [build_prompt(c, ctx) for c in chunks]
         paths = {"repo": repo, "work": out_dir,
                  "agents_file": write_agents_file(AGENT_MD, out_dir)}

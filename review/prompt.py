@@ -131,6 +131,17 @@ def _recheck_section(chunk: Dict[str, Any], ctx: Dict[str, Any]) -> List[str]:
     return out
 
 
+def _rules_section(chunk: Dict[str, Any], ctx: Dict[str, Any]) -> List[str]:
+    items = (ctx.get("rules") or {}).get(chunk["index"]) or []
+    if not items:
+        return []
+    out = ["", "저장소 지침 (이 저장소에서 사람이 정한 규칙이다. 따른다):"]
+    for path, text in items:
+        fence = _fence(text)
+        out += ["", "%s:" % path, fence + "markdown", text.rstrip("\n"), fence]
+    return out
+
+
 def _ranges(nums: Iterable[int]) -> str:
     """Sorted lines compressed as `12-18, 40`."""
     out: List[str] = []
@@ -172,6 +183,7 @@ def build_prompt(chunk: Dict[str, Any], ctx: Dict[str, Any]) -> str:
             json.dumps(prev, ensure_ascii=False, indent=2),
         ]
     lines += _ledger_section(chunk, ctx) + _orphan_section(ctx) + _recheck_section(chunk, ctx)
+    lines += _rules_section(chunk, ctx)
     fence = _fence(chunk["diff"])
     diff = chunk["diff"] if chunk["diff"].endswith("\n") else chunk["diff"] + "\n"
     lines += [
