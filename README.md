@@ -16,7 +16,7 @@ and are written in Korean.
   code and are re-checked.
 - **Bounded cost.** The diff is split into chunks, with up to 3 `claude` sessions in parallel.
   Each session has a 60-turn limit and a tool budget, and the chunks must finish within
-  300 minutes, Korean re-asks within 5 more (job limit 320 minutes). A chunk gets
+  300 minutes, Korean re-asks within 5 more (job limit 360 minutes). A chunk gets
   `min(60 min, deadline / rounds - 10 min)` plus up to 10 minutes for a conclusion, where a round
   is one batch of 3 chunks, and exploring stops 5 minutes (at most a quarter of the limit) before
   that limit. A 2,000-line PR gets the full 60 minutes per chunk. A 20,000-line PR gets less: 23
@@ -44,7 +44,10 @@ The kit is not run from a central repository. `install.sh` copies it into each t
 repository as `.github/ai-review/`, next to the workflow `.github/workflows/ai-review.yml`.
 Each PR runs the workflow and the kit from its own checkout. The workflow runs on
 `opened`, `synchronize`, `reopened` and `ready_for_review`; draft PRs are skipped, and marking
-a draft ready for review triggers a run.
+a draft ready for review triggers a run. It also runs when the bot is mentioned (`@<bot>`) in a PR
+comment, review or inline comment: one job per PR at a time, a mention waits for a running review
+and a push cancels a mention being handled. Commands: `/철회`, `/지침`, `/지침수정`, `/지침삭제`
+(see `docs/runbook.md`, section Mentions).
 
 ```
 pull_request event (target repo)
@@ -118,7 +121,7 @@ In a target repository, after `install.sh`:
 **Runner** (each self-hosted runner that can pick up the job)
 - Claude Code ≥ 2.1.302, installed offline and on `PATH` for a **non-login bash**. Set `PATH` in
   the runner service environment (systemd unit or runner `.env`), not only in tcsh rc files.
-- Python ≥ 3.9 and git. The kit has no pip dependencies.
+- Python ≥ 3.9 and git ≥ 2.31. The kit has no pip dependencies.
 - Network: GHES and the LiteLLM endpoint only. No SSH needed. Everything goes over HTTPS with the PAT.
 
 **GHES**
@@ -156,9 +159,13 @@ In a target repository, after `install.sh`:
    | Secret | Value |
    |---|---|
    | `AI_REVIEW_BOT_PAT` | PAT of the bot account (reviews are posted as this identity) |
-   | `AI_REVIEW_BOT_NAME` | login of the bot account (used to find its earlier reviews) |
    | `AI_REVIEW_LLM_API_KEY` | LiteLLM key |
    | `AI_REVIEW_LLM_BASE_URL` | LiteLLM base URL, e.g. `https://litellm.internal:4000` |
+
+   Also create the repository (or organization) **variable** `AI_REVIEW_BOT_NAME`, the login of
+   the bot account (used to find its earlier reviews and to recognise mentions). It is a variable,
+   not a secret. Set `MENTION_SINCE` in the workflow `env:` to the installation time (UTC, ISO 8601).
+   Mentions are described in `docs/runbook.md`, section Mentions.
 4. **Commit and open a PR:**
    ```bash
    cd /path/to/target-repo
@@ -226,10 +233,15 @@ ways:
 | `deny_total_limit` | 20 | rule denials of any kind per session; the 21st stops the session the same way. A denied call never uses the explore budget, and its message says so and names the allowed tool to use instead (Read, Glob, Grep, read-only git), so different honest mistakes do not end the exploration (each denied call still costs a turn). Each chunk's Actions log line lists what was denied, e.g. `[c2] 거부된 호출 7건: make×3 cat×2 Read(저장소 밖)×2`. The old `deny_limit` key is ignored with a warning. Env `AI_REVIEW_DENY_TOTAL_LIMIT` |
 | `llm_timeout_ms` / `bash_timeout_ms` | 600000 / 60000 | per request / per git command |
 | `chunk_timeout_s` / `fallback_timeout_s` | 3600 / 600 | ceiling per chunk / Korean re-ask, and the conclusion's share. A chunk's limit is `min(chunk_timeout_s, deadline_s / rounds - fallback_timeout_s)`, at least 300 s, where rounds is chunks / `concurrency` rounded up. The first attempt and the conclusion share one absolute end, limit + `fallback_timeout_s` after the chunk starts and never past the deadline: the conclusion gets what remains of it. Exploring stops `min(5 min, limit / 4)` before that limit, so never at the start (at 225 s of a 300 s limit): the guard ends the session and the runner asks for the conclusion |
-| `deadline_s` | 18000 | whole run (300 min; the job's `timeout-minutes` is 320, leaving 20 min for checkout and posting). The per-chunk limit comes from it: up to 3 chunks get 60 min, 23 chunks (8 rounds) about 27 min, and 40 chunks (14 rounds), when files pack badly, about 11 min with about 8.5 min of exploring. A chunk is not started with under 60 s left: it ends `incomplete` with `deadline` and the next run reviews it. Korean re-asks run after every chunk has finished, `concurrency` at a time, each limited by `fallback_timeout_s` and by 5 min past the deadline, which leaves 15 min of the job for checkout and posting. Raise both together |
+| `deadline_s` | 18000 | whole run (300 min; the job's `timeout-minutes` is 360, leaving 60 min for checkout and posting). The per-chunk limit comes from it: up to 3 chunks get 60 min, 23 chunks (8 rounds) about 27 min, and 40 chunks (14 rounds), when files pack badly, about 11 min with about 8.5 min of exploring. A chunk is not started with under 60 s left: it ends `incomplete` with `deadline` and the next run reviews it. Korean re-asks run after every chunk has finished, `concurrency` at a time, each limited by `fallback_timeout_s` and by 5 min past the deadline, which leaves 15 min of the job for checkout and posting. Raise both together |
 | `block_severities`, `block_confidence` | critical, major; 80 | what blocks |
 | `min_confidence` | 50 | findings below this are dropped |
-| `exclude_globs` | vendor, third_party, lock files, generated code, `.github/ai-review/**` | never reviewed |
+| `mention_explore_budget` | 20 | tool calls per mention session |
+| `mention_session_s` / `mention_deadline_s` / `mention_publish_reserve_s` | 600 / 1500 / 120 | seconds: one mention session / the whole mention phase / kept back for publishing |
+| `mention_conversation_chars` / `mention_code_lines` / `mention_rules_chars` | 12000 / 40 / 6000 | conversation, code context lines and guideline text shown to a mention session |
+| `rules_max_chars` | 6000 | ceiling on the guideline text |
+| `mention_since` | `""` | mentions older than this (UTC, ISO 8601) are ignored; the workflow sets it from `MENTION_SINCE` |
+| `exclude_globs` | vendor, third_party, lock files, generated code, `.github/ai-review/**`, `.github/ai-review-rules/**` | never reviewed |
 
 ## 7. Interfaces
 

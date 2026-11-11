@@ -27,7 +27,18 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(c["min_confidence"], 50)
         self.assertEqual(c["exclude_globs"], [
             "vendor/**", "third_party/**", "**/*.lock", "**/package-lock.json",
-            "**/*.min.js", "**/*.pb.go", "**/*_pb2.py", ".github/ai-review/**"])
+            "**/*.min.js", "**/*.pb.go", "**/*_pb2.py", ".github/ai-review/**",
+            ".github/ai-review-rules/**"])
+
+    def test_mention_defaults(self):
+        c = load_config()
+        for k, v in [("mention_explore_budget", 20), ("mention_session_s", 600),
+                     ("mention_deadline_s", 1500), ("mention_publish_reserve_s", 120),
+                     ("mention_conversation_chars", 12000), ("mention_code_lines", 40),
+                     ("mention_rules_chars", 6000), ("rules_max_chars", 6000),
+                     ("mention_since", "")]:
+            self.assertEqual(c[k], v, k)
+        self.assertIn(".github/ai-review-rules/**", c["exclude_globs"])
 
     def test_file_and_overrides_merge(self):
         with tempfile.TemporaryDirectory() as tmp:

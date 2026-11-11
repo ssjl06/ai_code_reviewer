@@ -4,7 +4,7 @@
 - Claude Code >= 2.1.302, installed offline and on `PATH` for **non-login bash**. The runner's login
   shell is tcsh, so set `PATH` in the runner service environment (e.g. the systemd unit or the
   runner's `.env` file), not only in tcsh rc files.
-- Python 3.9+ and git on `PATH`. The kit uses only the Python standard library.
+- Python 3.9+ and git (>= 2.31) on `PATH`. The kit uses only the Python standard library.
 - Network access only to GHES and the LiteLLM endpoint (air-gapped is fine). No SSH needed.
 
 ## Secrets
@@ -13,9 +13,11 @@ Set at repository level, or as organization secrets the target repository can us
 | Secret | Meaning |
 |---|---|
 | `AI_REVIEW_BOT_PAT` | PAT of the bot account; the identity shown on reviews comes from this PAT |
-| `AI_REVIEW_BOT_NAME` | login of the bot account (used to find its earlier reviews) |
 | `AI_REVIEW_LLM_API_KEY` | LiteLLM key |
 | `AI_REVIEW_LLM_BASE_URL` | LiteLLM base URL |
+
+Also set the repository **variable** `AI_REVIEW_BOT_NAME` (Settings, Variables; not a secret): the
+login of the bot account, used to find its earlier reviews and to recognise mentions.
 
 ## Installing into a target repository
 The kit runs from inside each target repository. From a clone of the kit:
@@ -36,6 +38,43 @@ The kit runs from inside each target repository. From a clone of the kit:
 **Updating:** pull the kit repository, re-run `install.sh` on the target, commit the diff.
 `.github/ai-review/VERSION` shows which kit commit is installed (`-dirty` if the kit had local
 changes). Do not edit `.github/ai-review/` in the target by hand; the next install replaces it.
+
+## Mentions
+
+Mentioning the bot (`@<bot>`) in a PR comment, a review or an inline comment starts the same
+`review` job as a push. One job per PR runs at a time: a mention waits for a running review,
+and a push cancels a mention being handled (its mentions stay pending for the next run).
+
+- **Variable.** Set the repository (or organization) *variable* `AI_REVIEW_BOT_NAME` (not a
+  secret) to the bot's login. The workflow's `if:` and concurrency group read it.
+- **Runner.** git >= 2.31.
+- **`MENTION_SINCE`.** In the installed workflow's `env:`, set `MENTION_SINCE` to the
+  installation time (UTC, ISO 8601, e.g. `"2026-11-11T09:00:00Z"`), so mentions that predate
+  the installation are not answered.
+- **Which workflow file runs.** `issue_comment` runs the workflow file of the default branch,
+  so mentions work only once the new workflow file is on the default branch, and a PR branch
+  that still has the old kit gets a review but no reply until it merges or rebases onto the
+  new kit.
+- **Commands** (the first word after the mention; anything else is conversation):
+
+  | Command | Example |
+  |---|---|
+  | `/철회` | `@bot /철회 a1b2c3d4 이 경로는 호출되지 않습니다` |
+  | `/지침` | `@bot /지침 cudaMemcpy 직후 기본 스트림은 동기화 누락으로 지적하지 않는다` |
+  | `/지침수정` | `@bot /지침수정 기본 스트림 규칙을 default-stream 한정으로 좁혀 주세요` |
+  | `/지침삭제` | `@bot /지침삭제 기본 스트림 규칙` |
+
+  A reply in the bot's inline thread needs no issue id for `/철회`; elsewhere give the 8-hex
+  id, or leave it out when exactly one issue is open.
+- **Guidelines** live in `.github/ai-review-rules/` (excluded from review). The bot commits and
+  pushes them to the PR branch: pull before your next push, or the push is rejected.
+- **Dismiss-stale caveat.** A guideline commit is a new head; with "dismiss stale approvals"
+  enabled in branch protection it dismisses existing approvals.
+- **GHES checks.** `vars` in `if:` and `concurrency` (GHES >= 3.8); an expression in
+  `cancel-in-progress`; a run that cancels another starts only after the cancelled job has
+  stopped; a job-level group and the workflow-level group of the same name on a PR branch
+  with the old workflow file are the same group; how `author_association` reports private
+  organization members.
 
 ## Trust model
 The workflow uses a plain `on: pull_request` trigger and runs the PR's own copy of the workflow

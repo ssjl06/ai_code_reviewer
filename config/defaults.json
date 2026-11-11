@@ -14,6 +14,15 @@
   "chunk_timeout_s": 3600,
   "fallback_timeout_s": 600,
   "deadline_s": 18000,
+  "mention_explore_budget": 20,
+  "mention_session_s": 600,
+  "mention_deadline_s": 1500,
+  "mention_publish_reserve_s": 120,
+  "mention_conversation_chars": 12000,
+  "mention_code_lines": 40,
+  "mention_rules_chars": 6000,
+  "rules_max_chars": 6000,
+  "mention_since": "",
   "block_severities": ["critical", "major"],
   "block_confidence": 80,
   "min_confidence": 50,
@@ -25,6 +34,7 @@
     "**/*.min.js",
     "**/*.pb.go",
     "**/*_pb2.py",
-    ".github/ai-review/**"
+    ".github/ai-review/**",
+    ".github/ai-review-rules/**"
   ]
 }
