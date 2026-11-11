@@ -1,17 +1,10 @@
 import os
 import subprocess
-import tempfile
 import unittest
 from unittest import mock
 
 from review import rules, rules_edit, rules_git
-
-BOT = ("ai-review-bot", "bot@example.com")
-
-
-def change(rule, path="cuda/a.md"):
-    return {"op": "add", "path": path, "applies": ["**/*.cu"], "rule": rule, "reason": "이유",
-            "target": None}
+from tests.rules_git_case import GitRemoteCase, change
 
 
 def applier(rule):
@@ -22,48 +15,7 @@ def applier(rule):
     return apply
 
 
-class RulesGitTest(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.tmp = tmp.name
-        home = os.path.join(self.tmp, "home")
-        os.makedirs(home)
-        p = mock.patch.dict(os.environ, {"HOME": home, "GIT_CONFIG_NOSYSTEM": "1"})
-        p.start()
-        self.addCleanup(p.stop)
-        for k in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME",
-                  "GIT_COMMITTER_EMAIL", "EMAIL"):
-            os.environ.pop(k, None)
-        self.remote = os.path.join(self.tmp, "remote.git")
-        self.work = os.path.join(self.tmp, "work")
-        self.git(self.tmp, "init", "-q", "--bare", "-b", "main", self.remote)
-        self.git(self.tmp, "clone", "-q", self.remote, self.work)
-        self.commit(self.work, "README", "x\n", "init")
-        self.git(self.work, "push", "-q", "origin", "HEAD:refs/heads/main")
-
-    def git(self, cwd, *args):
-        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
-                              check=True).stdout
-
-    def commit(self, repo, rel, text, msg):
-        p = os.path.join(repo, rel)
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(text)
-        self.git(repo, "add", "-A")
-        self.git(repo, "-c", "user.name=u", "-c", "user.email=u@x", "commit", "-q", "-m", msg)
-
-    def push(self, apply, key="i:1"):
-        return rules_git.push_change(self.work, self.remote, "main", apply,
-                                     "ai-review: add rule (PR #1)", key, BOT, "SECRET")
-
-    def remote_log(self, fmt="%an|%ae|%cn|%ce|%B"):
-        return self.git(self.remote, "log", "main", "--format=" + fmt + "%x1e").split("\x1e")
-
-    def remote_file(self, rel):
-        return self.git(self.remote, "show", "main:" + rules.RULES_DIR + "/" + rel)
-
+class RulesGitTest(GitRemoteCase):
     def test_push_lands_with_trailer_and_bot_identity(self):
         res, err = self.push(applier("규칙 A"))
         self.assertIsNone(err)
@@ -87,19 +39,71 @@ class RulesGitTest(unittest.TestCase):
         self.git(other, "add", "-A")
         self.git(other, "-c", "user.name=u", "-c", "user.email=u@x", "commit", "-q", "-m", "B")
         self.git(other, "push", "-q", "origin", "HEAD:refs/heads/main")
+        branch_before = self.git(self.work, "rev-parse", "main").strip() if self.on_branch() else None
         res, err = self.push(applier("규칙 A"))
         self.assertIsNone(err)
+        if branch_before:
+            self.assertEqual(self.git(self.work, "rev-parse", "main").strip(), branch_before)
         text = self.remote_file("cuda/a.md")
         self.assertIn("규칙 A", text)
         self.assertIn("규칙 B", text)
         index = self.remote_file("cuda/INDEX.md")
         self.assertIn("cuda/a.md", index)
 
-    def hook(self, name, body):
-        p = os.path.join(self.remote, "hooks", name)
-        with open(p, "w") as f:
-            f.write("#!/bin/sh\n" + body)
-        os.chmod(p, 0o755)
+    def test_failed_retry_moves_no_branch_ref(self):
+        self.assertTrue(self.on_branch())
+        start = self.git(self.work, "rev-parse", "HEAD").strip()
+        self.move_remote("규칙 B")
+        # reject only the retry: the first push is non-fast-forward anyway
+        self.hook("pre-receive", "exit 1\n")
+        with mock.patch.object(rules_git, "log"):
+            res, err = self.push(applier("규칙 A"))
+        self.assertEqual((res, err), (None, "브랜치에 push하지 못했습니다"))
+        self.assertEqual(self.git(self.work, "rev-parse", "HEAD").strip(), start)
+        self.assertEqual(self.git(self.work, "rev-parse", "main").strip(), start)
+        self.assertEqual(self.git(self.work, "status", "--porcelain"), "")
+
+    def test_apply_raises_cleans_and_reraises(self):
+        start = self.git(self.work, "rev-parse", "HEAD").strip()
+
+        def boom(repo):
+            applier("규칙 A")(repo)
+            raise ValueError("x")
+        with self.assertRaises(ValueError):
+            self.push(boom)
+        self.assertEqual(self.git(self.work, "rev-parse", "HEAD").strip(), start)
+        self.assertEqual(self.git(self.work, "status", "--porcelain"), "")
+
+    def test_landed_then_another_commit_on_top(self):
+        self.hook("post-receive", "exit 1\n")
+        real = rules_git._run
+
+        def run(repo, args, env=None, timeout=120):
+            out = real(repo, args, env, timeout)
+            if args[0] == "push":
+                self.move_remote("규칙 C")
+                raise rules_git.GitError("reported error")
+            return out
+        with mock.patch.object(rules_git, "_run", run):
+            res, err = self.push(applier("규칙 A"))
+        self.assertIsNone(err)
+        self.assertEqual(res["status"], "added")
+
+    def test_log_masks_base64_token(self):
+        import base64
+        b64 = base64.b64encode(b"x-access-token:SECRET").decode()
+        real = rules_git._run
+
+        def run(repo, args, env=None, timeout=120):
+            if args[0] == "push":
+                raise rules_git.GitError("bad " + b64 + " SECRET")
+            return real(repo, args, env, timeout)
+        with mock.patch.object(rules_git, "_run", run), \
+                mock.patch.object(rules_git, "log") as logged:
+            self.push(applier("규칙 A"))
+        text = logged.call_args[0][0]
+        self.assertNotIn("SECRET", text)
+        self.assertNotIn(b64, text)
 
     def test_push_landed_but_reported_error(self):
         self.hook("post-receive", "exit 1\n")

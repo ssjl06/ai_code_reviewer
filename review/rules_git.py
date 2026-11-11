@@ -94,24 +94,50 @@ def _fetch_tip(repo: str, remote_url: str, branch: str, env: Dict[str, str]) -> 
     return _run(repo, ["rev-parse", "FETCH_HEAD^{commit}"]).strip()
 
 
+def _is_ancestor(repo: str, a: str, b: str) -> bool:
+    try:
+        proc = subprocess.run(["git", "merge-base", "--is-ancestor", a, b], cwd=repo,
+                              capture_output=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        raise GitError("git merge-base timed out")
+    if proc.returncode not in (0, 1):
+        raise GitError(proc.stderr.decode("utf-8", errors="replace"))
+    return proc.returncode == 0
+
+
 def push_change(repo: str, remote_url: str, branch: str,
                 apply: Callable[[str], Optional[dict]], message: str, key: str,
                 author: Tuple[str, str], pat: str) -> Tuple[Optional[dict], Optional[str]]:
+    """HEAD is detached at the starting commit first, so no branch ref ever moves; on failure
+    HEAD ends at that commit, on success at the pushed commit."""
     if not git_ok(repo):
         return None, ERR_OLD_GIT
     env = auth_env(pat, origin_of(remote_url), dict(os.environ))
-    start = _run(repo, ["rev-parse", "HEAD"]).strip()
+    secrets = [t for t in (pat, base64.b64encode(("x-access-token:" + pat).encode()).decode())
+               if pat]
+    start = ""
 
-    def fail(err: object) -> Tuple[None, str]:
-        log("지침 push 실패: %s" % (str(err).replace(pat, "***") if pat else err))
+    def cleanup() -> None:
+        if not start:
+            return
         try:
+            _run(repo, ["checkout", "--detach", "-q", "-f", start])
             _run(repo, ["reset", "--hard", "-q", start])
             _run(repo, ["clean", "-fdq", "--", RULES_DIR])
         except GitError:
             pass
+
+    def fail(err: object) -> Tuple[None, str]:
+        text = str(err)
+        for t in secrets:
+            text = text.replace(t, "***")
+        log("지침 push 실패: %s" % text)
+        cleanup()
         return None, ERR_PUSH
 
     try:
+        start = _run(repo, ["rev-parse", "HEAD"]).strip()
+        _run(repo, ["checkout", "--detach", "-q", start])
         result = apply(repo)
         if result is None or not _commit(repo, message, key, author):
             return result, None
@@ -122,12 +148,10 @@ def push_change(repo: str, remote_url: str, branch: str,
             except GitError as e:
                 err = e
             tip = _fetch_tip(repo, remote_url, branch, env)
-            body = _run(repo, ["log", "-1", "--format=%b", tip])
-            if _has_trailer(body, key):  # the push landed although git reported an error
+            if receipt(repo, start, tip, key) is not None:  # landed although git reported an error
                 _run(repo, ["checkout", "--detach", "-q", "-f", tip])
                 return result, None
-            if attempt == 2 or subprocess.run(
-                    ["git", "merge-base", "--is-ancestor", tip, "HEAD"], cwd=repo).returncode == 0:
+            if attempt == 2 or _is_ancestor(repo, tip, "HEAD"):
                 return fail(err)  # not a race: the remote did not move past our base
             # the branch moved: redo the change on top of its tip
             _run(repo, ["checkout", "--detach", "-q", "-f", tip])
@@ -137,3 +161,6 @@ def push_change(repo: str, remote_url: str, branch: str,
         return fail("unreachable")
     except (GitError, OSError) as e:
         return fail(e)
+    except Exception:
+        cleanup()
+        raise
