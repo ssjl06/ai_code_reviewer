@@ -111,3 +111,12 @@ def renames_between(repo: str, old_rev: str, new_rev: str) -> Dict[str, str]:
             out[parts[i + 1]] = parts[i + 2]
         i += 1 + n
     return out
+
+
+def blob_id(repo: str, sha: str, path: str) -> Optional[str]:
+    """The object id of `path` at `sha`; None when the path is missing there (or `sha` is)."""
+    try:
+        out = git(repo, "rev-parse", "--verify", "-q", "%s:%s" % (sha, path))
+    except GitError:
+        return None
+    return out.strip() or None

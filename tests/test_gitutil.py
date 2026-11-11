@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from review.gitutil import (GitError, changed_paths, diff_text, git, is_ancestor, read_blobs,
+from review.gitutil import (GitError, blob_id, changed_paths, diff_text, git, is_ancestor, read_blobs,
                            renames_between)
 
 
@@ -56,6 +56,15 @@ class GitUtilTest(unittest.TestCase):
         run(self.repo, "commit", "-q", "-m", "gitlink")
         got = read_blobs(self.repo, "HEAD", ["dir", "sub", "a.txt", "dir/in.txt"])
         self.assertEqual(got, {"a.txt": ["first", "second"], "dir/in.txt": ["inner"]})
+
+    def test_blob_id(self):
+        a1 = blob_id(self.repo, self.c1, "a.txt")
+        self.assertRegex(a1, r"^[0-9a-f]{40}$")
+        self.assertNotEqual(a1, blob_id(self.repo, self.c2, "a.txt"))
+        self.assertEqual(blob_id(self.repo, self.c3, "a.txt"), blob_id(self.repo, self.c2, "a.txt"))
+        self.assertIsNone(blob_id(self.repo, self.c1, "한글.txt"))
+        self.assertIsNone(blob_id(self.repo, self.c1, "nope.txt"))
+        self.assertIsNone(blob_id(self.repo, "0" * 40, "a.txt"))
 
     def test_diff_text_two_and_three_dot(self):
         self.assertIn("+second", diff_text(self.repo, self.c1, self.c2, merge_base=True))
