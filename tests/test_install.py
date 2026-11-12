@@ -114,19 +114,19 @@ class InstallTest(InstallBase):
     def test_kept_workflow_timeout_raised(self):
         with open(TEMPLATE, encoding="utf-8") as t:
             tpl = t.read()
-        old = tpl.replace("timeout-minutes: 320", "timeout-minutes: 25") + "# local edit\n"
+        old = tpl.replace("timeout-minutes: 360", "timeout-minutes: 25") + "# local edit\n"
         self.assertNotEqual(old, tpl)
         self.write(".github/workflows/ai-review.yml", old)
         p = self.install_run()
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertIn("raised timeout-minutes 25 -> 320 in " + self.wf, p.stdout)
+        self.assertIn("raised timeout-minutes 25 -> 360 in " + self.wf, p.stdout)
         with open(self.wf, encoding="utf-8") as f:
-            self.assertEqual(f.read(), old.replace("timeout-minutes: 25", "timeout-minutes: 320"))
+            self.assertEqual(f.read(), old.replace("timeout-minutes: 25", "timeout-minutes: 360"))
         self.assertIn("differs from the current template", p.stderr)  # still has the local edit
 
     def test_kept_workflow_higher_timeout_untouched(self):
         with open(TEMPLATE, encoding="utf-8") as t:
-            old = t.read().replace("timeout-minutes: 320", "timeout-minutes: 400")
+            old = t.read().replace("timeout-minutes: 360", "timeout-minutes: 400")
         self.write(".github/workflows/ai-review.yml", old)
         p = self.install_run()
         self.assertEqual(p.returncode, 0, p.stderr)
@@ -145,8 +145,8 @@ class InstallTest(InstallBase):
         old = ("on: pull_request\njobs:\n  review:\n    runs-on: x\n"
                "    timeout-minutes: 25 # keep me\n    steps: []\n")
         p, got = self.kept(old)
-        self.assertEqual(got, old.replace("25 # keep me", "320 # keep me"))
-        self.assertIn("raised timeout-minutes 25 -> 320", p.stdout)
+        self.assertEqual(got, old.replace("25 # keep me", "360 # keep me"))
+        self.assertIn("raised timeout-minutes 25 -> 360", p.stdout)
 
     def test_only_the_review_job_is_raised(self):
         old = ("on: pull_request\njobs:\n  setup:\n    timeout-minutes: 10\n    steps: []\n"
@@ -154,16 +154,16 @@ class InstallTest(InstallBase):
                "    steps:\n      - timeout-minutes: 3\n        run: a\n"
                "  after:\n    timeout-minutes: 5\n")
         p, got = self.kept(old)
-        want = old.replace("    timeout-minutes: 25", "    timeout-minutes: 320")
+        want = old.replace("    timeout-minutes: 25", "    timeout-minutes: 360")
         self.assertEqual(got, want)
-        self.assertIn("raised timeout-minutes 25 -> 320", p.stdout)
+        self.assertIn("raised timeout-minutes 25 -> 360", p.stdout)
 
     def test_no_review_job_warns_and_keeps_the_file(self):
         old = "on: pull_request\njobs:\n  build:\n    timeout-minutes: 25\n    steps: []\n"
         p, got = self.kept(old)
         self.assertEqual(got, old)
         self.assertIn("warning: could not find timeout-minutes in the review job", p.stderr)
-        self.assertIn("timeout-minutes: 320", p.stderr)
+        self.assertIn("timeout-minutes: 360", p.stderr)
         self.assertTrue(os.path.isdir(self.kit_dst))  # the kit is still installed
 
     def test_review_job_without_the_key_warns(self):
@@ -183,6 +183,23 @@ class InstallTest(InstallBase):
         self.install()
         p = self.install_run()
         self.assertNotIn("differs", p.stderr)
+
+    def test_next_steps_name_three_secrets_and_the_variable(self):
+        out = self.install()
+        steps = out[out.index("Next steps:"):]
+        for s in ("AI_REVIEW_BOT_PAT", "AI_REVIEW_LLM_API_KEY", "AI_REVIEW_LLM_BASE_URL"):
+            self.assertIn(s, steps)
+        self.assertIn("three secrets", steps)
+        self.assertIn("repository variable", steps)
+        self.assertIn("AI_REVIEW_BOT_NAME", steps)
+        self.assertIn("reviews fail while the variable is empty", steps)
+        self.assertNotIn("AI_REVIEW_BOT_PAT, AI_REVIEW_BOT_NAME", steps)
+
+    def test_timeout_fallback_is_360(self):
+        with open(INSTALL, encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("${tpl_timeout:-360}", text)
+        self.assertNotIn("${tpl_timeout:-320}", text)
 
     def test_bad_usage(self):
         for args in ([], ["--nope", self.T], [os.path.join(self.tmp, "missing")], [KIT]):

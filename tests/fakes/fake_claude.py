@@ -31,6 +31,14 @@ KOREAN_MOVED = dict(KOREAN, findings=[dict(KO_FINDING, line=3)])
 KOREAN_ASK = "서술 필드만 한국어로"  # marker phrase of review.prompt.KOREAN_PROMPT
 
 
+MENTION = {"reply": "확인했습니다. 이 이슈는 철회해도 됩니다.",
+           "verdicts": [{"id": "a1", "withdraw": True, "reason": "호출부에서 길이를 검사한다"}],
+           "new_issues": [], "guideline": None, "wants": None}
+MENTION_EN = dict(MENTION, reply="Checked. This issue can be withdrawn.",
+                  verdicts=[{"id": "a1", "withdraw": True, "reason": "The caller checks the length"}])
+MENTION_ASK = "reply, reason"  # marker phrase of review.prompt.MENTION_KOREAN
+
+
 def scenario_output(scn, stdin):
     if scn == "blocking":
         return {"summary": "차단 1건", "findings": [BLOCKING], "previous_findings": [],
@@ -55,6 +63,32 @@ def scripted_output(stdin, log):
     return {"summary": "s", "findings": rule.get("findings", []),
             "previous_findings": [{"id": i, "status": "resolved"} for i in ids],
             "incomplete_reason": None, "diff_reviewed": not rule.get("unreviewed")}
+
+
+def _silent():
+    return {"summary": "s", "findings": [], "previous_findings": [], "incomplete_reason": None,
+            "diff_reviewed": True}
+
+
+def mention_script(argv, stdin, log):
+    """Scenario "mscript": `mention.json` next to the call log holds `{"review": review output
+    or null, "mention": [rules]}`. A review session answers `review` (null: no findings). A
+    mention session answers the first rule whose `when` (substring or null) occurs in the
+    prompt: `out` (null: no structured output), after `sleep` seconds; `withdraw_all` adds a
+    `withdraw: true` verdict for every 8-hex id in the prompt."""
+    with open(os.path.join(os.path.dirname(log), "mention.json"), encoding="utf-8") as f:
+        spec = json.load(f)
+    if "pr-mention" not in argv:
+        return spec.get("review") or _silent()
+    rule = next((r for r in spec.get("mention") or []
+                 if not r.get("when") or r["when"] in stdin), {})
+    if rule.get("sleep"):
+        time.sleep(rule["sleep"])
+    out = rule.get("out")
+    if out is not None and rule.get("withdraw_all"):
+        ids = dict.fromkeys(re.findall(r"(?<![0-9a-f])[0-9a-f]{8}(?![0-9a-f])", stdin))
+        out = dict(out, verdicts=[{"id": i, "withdraw": True, "reason": "철회"} for i in ids])
+    return out
 
 
 def emit(ev):
@@ -99,7 +133,8 @@ def main():
         with open(opts["--log"], "a", encoding="utf-8") as f:
             f.write(json.dumps({"argv": argv, "stdin": stdin,
                                 "stop_at": os.environ.get("AI_REVIEW_STOP_AT"),
-                                "config_dir": os.environ.get("CLAUDE_CONFIG_DIR")}) + "\n")
+                                "config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
+                                "env_keys": sorted(os.environ)}) + "\n")
     scn = opts["--resume-scenario"] if "--resume" in argv else opts["--scenario"]
     sid = argv[argv.index("--resume") + 1] if "--resume" in argv else "sess-fake"
     if scn == "crash":
@@ -123,6 +158,12 @@ def main():
         result(sid, structured_output=scenario_output(scn, stdin))
     elif scn == "script":
         result(sid, structured_output=scripted_output(stdin, opts["--log"]))
+    elif scn == "mscript":
+        out = mention_script(argv, stdin, opts["--log"])
+        if out is None:
+            result(sid, "error_max_turns")
+        else:
+            result(sid, structured_output=out)
     elif scn == "english":
         result(sid, structured_output=ENGLISH)
     elif scn == "english_then_korean":  # the fallback answer is English, the re-ask is Korean
@@ -132,6 +173,12 @@ def main():
             result(sid, structured_output=KOREAN if scn == "korean" else KOREAN_MOVED)
         else:
             result(sid, "error_max_turns")
+    elif scn == "mention":
+        result(sid, structured_output=MENTION)
+    elif scn == "mention_en":
+        result(sid, structured_output=MENTION_EN)
+    elif scn == "mention_korean":  # resume answers only the Korean re-ask prompt
+        result(sid, structured_output=MENTION if MENTION_ASK in stdin else MENTION_EN)
     elif scn in ("budget_stop", "time_stop"):  # which one depends on the guard env
         budget_stop(sid)
     elif scn == "max_turns":

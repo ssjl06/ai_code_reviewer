@@ -15,14 +15,17 @@ def log(msg: str) -> None:
     print("[main] " + msg, flush=True)
 
 
-def post(gh, env, head, review, body, comments, fallback) -> int:
-    """Post first, then lift earlier change requests only on an APPROVE verdict."""
+def post(gh, env, head, review, body, comments, fallback, on_posted=None) -> int:
+    """Post first, then lift earlier change requests only on an APPROVE verdict. `on_posted`
+    is called once the review is stored."""
     try:
         posted = gh.post_with_fallback(head, review["event"], body, comments, fallback)
     except GitHubError as e:
         log("리뷰 게시 실패: %s" % e)
         return 1
     log("리뷰 게시 완료: id=%s" % (posted or {}).get("id"))
+    if on_posted is not None:
+        on_posted()
     rc = 1 if review["failed_all"] else 0
     if review["event"] == "APPROVE":
         try:

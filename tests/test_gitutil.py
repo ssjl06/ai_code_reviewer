@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-from review.gitutil import GitError, diff_text, git, is_ancestor, read_blobs, renames_between
+from review.gitutil import (GitError, blob_id, changed_paths, diff_text, git, is_ancestor, read_blobs,
+                           renames_between)
 
 
 def run(repo, *args):
@@ -56,6 +57,15 @@ class GitUtilTest(unittest.TestCase):
         got = read_blobs(self.repo, "HEAD", ["dir", "sub", "a.txt", "dir/in.txt"])
         self.assertEqual(got, {"a.txt": ["first", "second"], "dir/in.txt": ["inner"]})
 
+    def test_blob_id(self):
+        a1 = blob_id(self.repo, self.c1, "a.txt")
+        self.assertRegex(a1, r"^[0-9a-f]{40}$")
+        self.assertNotEqual(a1, blob_id(self.repo, self.c2, "a.txt"))
+        self.assertEqual(blob_id(self.repo, self.c3, "a.txt"), blob_id(self.repo, self.c2, "a.txt"))
+        self.assertIsNone(blob_id(self.repo, self.c1, "한글.txt"))
+        self.assertIsNone(blob_id(self.repo, self.c1, "nope.txt"))
+        self.assertIsNone(blob_id(self.repo, "0" * 40, "a.txt"))
+
     def test_diff_text_two_and_three_dot(self):
         self.assertIn("+second", diff_text(self.repo, self.c1, self.c2, merge_base=True))
         self.assertIn("+second", diff_text(self.repo, self.c1, self.c2, merge_base=False))
@@ -85,6 +95,18 @@ class GitUtilTest(unittest.TestCase):
         self.assertEqual(renames_between(self.repo, start, end), {})
         for rev in ("", "0" * 40, "--output=x", "HEAD"):
             self.assertEqual(renames_between(self.repo, rev, end), {}, rev)
+
+    def test_changed_paths(self):
+        self._commit("cp src.txt", "".join("row %d\n" % i for i in range(20)))
+        mid = run(self.repo, "rev-parse", "HEAD")
+        run(self.repo, "mv", "cp src.txt", "cp dst.txt")
+        self._commit("other.txt", "o\n")
+        end = run(self.repo, "rev-parse", "HEAD")
+        self.assertEqual(sorted(changed_paths(self.repo, mid, end)),
+                         ["cp dst.txt", "cp src.txt", "other.txt"])
+        self.assertEqual(changed_paths(self.repo, end, end), [])
+        for rev in ("", "0" * 40, "--output=x"):
+            self.assertIsNone(changed_paths(self.repo, rev, end), rev)
 
     def test_unicode_path_not_quoted(self):
         self.assertIn("b/한글.txt", diff_text(self.repo, self.c2, self.c3, merge_base=True))

@@ -8,7 +8,7 @@ import unittest
 from unittest import mock
 
 from review.cli import main
-from review.render import parse_state
+from review.render import parse_issue_marker, parse_state
 from tests.fakes import make_wrapper
 from tests.fakes.fake_github import FakeGitHub
 
@@ -108,6 +108,22 @@ class IntegrationTest(IntegrationBase):
         self.assertEqual(self.run_main("resolved", "--repo", self.R, "--pr", "1"), 0)
         self.assertEqual(len(self.gh.posted), 2)
         self.assertIn("새로 리뷰할 변경 없음 — 리뷰를 건너뜀", self.stdout)
+
+    def test_inline_comment_has_issue_marker(self):
+        self.assertEqual(self.run_main("blocking", "--repo", self.R, "--pr", "1"), 0)
+        posted = self.gh.posted[-1]
+        fid = parse_state(posted["body"])["issues"][0]["id"]
+        self.assertEqual(parse_issue_marker(posted["comments"][0]["body"]), fid)
+        self.assertNotIn("ai-review-issue", posted["body"])
+
+    def test_body_has_no_issue_marker(self):
+        # the 422 fallback moves every finding into the body: no marker there, escaped or not
+        self.gh.reject_inline = True
+        self.assertEqual(self.run_main("blocking", "--repo", self.R, "--pr", "1"), 0)
+        posted = self.gh.posted[-1]
+        self.assertEqual(posted["comments"], [])
+        self.assertIn("배열 범위를 벗어난 접근", posted["body"])
+        self.assertNotIn("ai-review-issue", posted["body"])
 
     def test_skipped_files_comment_not_approve(self):
         self.gh.head = self.add_commit({"src/z.py": "z = 1\n" * 40})

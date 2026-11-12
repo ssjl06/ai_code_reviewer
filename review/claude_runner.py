@@ -12,12 +12,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
-from review.claude_cmd import build_command, build_env
+from review.claude_cmd import REVIEW, SessionKind, build_command, build_env
 from review.hooks.guard import DENY_STOP_FILE, STOP_FILE, TIME_STOP_FILE
-from review.korean import is_korean, merge_korean
-from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT
 from review.stream_log import StreamLogger
-from review.validate import extract_output
+from review.validate import extract_output  # re-exported: the review kind's extract
 
 TIME_RESERVE_S = 300  # exploring stops this long before the chunk limit: one LLM call in flight
 MIN_CHUNK_S = 300
@@ -170,62 +168,73 @@ def _denial_summary(state):
     return "거부된 호출 %d건: %s" % (sum(counts.values()), " ".join(parts))
 
 
-def run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadline=None):
+def _session_dir(chunk, paths, kind):
+    return os.path.join(paths["work"], "%s-%d" % (kind.work_dir, chunk["index"] + 1))
+
+
+def run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadline=None,
+              kind: SessionKind = REVIEW):
     try:
-        return _run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s, deadline)
+        return _run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s, deadline, kind)
     finally:
         try:
-            line = _denial_summary(os.path.join(paths["work"], "chunk-%d" % (chunk["index"] + 1),
-                                                "state"))
+            line = _denial_summary(os.path.join(_session_dir(chunk, paths, kind), "state"))
             if line:
-                StreamLogger("c%d" % (chunk["index"] + 1), out=sys.stdout).note(line)
+                StreamLogger("%s%d" % (kind.label, chunk["index"] + 1), out=sys.stdout).note(line)
         except Exception:  # a log line must never fail the chunk
             pass
 
 
-def _chunk_env(chunk, cfg, paths, base_env):
-    """The chunk's child env and state dir; a resume needs the config dir of its session."""
-    cdir = os.path.join(paths["work"], "chunk-%d" % (chunk["index"] + 1))
+def _chunk_env(chunk, cfg, paths, base_env, kind: SessionKind = REVIEW):
+    """The session's child env and state dir; a resume needs the config dir of its session."""
+    cdir = _session_dir(chunk, paths, kind)
     state, conf = os.path.join(cdir, "state"), os.path.join(cdir, "config")
     for d in (state, conf):
         os.makedirs(d, exist_ok=True)
+    cfg = dict(cfg, explore_budget=cfg[kind.explore_key])
     return build_env(cfg, paths["repo"], state, conf, base_env), state
 
 
-def _attempt(chunk, total, paths, cmd, text, limit, env):
+def _attempt(chunk, total, paths, cmd, text, limit, env, kind: SessionKind = REVIEW):
     """One claude call; returns (status, output, session id, stats, process info)."""
     idx = chunk["index"]
-    log, info = StreamLogger("c%d" % (idx + 1), out=sys.stdout), {}
-    log.start("chunk %d/%d  files=%d  diff=%.1fk tok"
-              % (idx + 1, total, len(chunk["files"]), chunk["est_tokens"] / 1000.0))
-    tee = os.path.join(paths["work"], "chunk-%d" % (idx + 1), "stream.jsonl")
+    log, info = StreamLogger("%s%d" % (kind.label, idx + 1), out=sys.stdout), {}
+    of = "%d/%d" % (idx + 1, total) if total else "%d" % (idx + 1)  # no ratio when unknown
+    log.start("chunk %s  files=%d  diff=%.1fk tok"
+              % (of, len(chunk["files"]), chunk["est_tokens"] / 1000.0))
+    tee = os.path.join(_session_dir(chunk, paths, kind), "stream.jsonl")
     st = run_process(cmd, env, paths["repo"], text, limit, log, tee, info)
-    out = extract_output(log.stats()["result"])
+    out = kind.extract(log.stats()["result"])
     log.finish("ok" if out else st, info["stderr"] or None)
     return st, out, log.session_id, log.stats(), info
 
 
-def _run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadline=None):
+def _run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadline=None,
+               kind: SessionKind = REVIEW):
     idx, t0 = chunk["index"], time.monotonic()
-    env, state = _chunk_env(chunk, cfg, paths, base_env)
+    env, state = _chunk_env(chunk, cfg, paths, base_env, kind)
+
+    def done(out, stats, sid, error):
+        return _finish(idx, out, stats, sid, error) if kind.needs_diff_reviewed \
+            else _result(idx, "ok", out, stats, sid, error)
 
     def attempt(cmd, text, limit, run_env=env):
-        st, out, sid, stats, info = _attempt(chunk, total, paths, cmd, text, limit, run_env)
+        st, out, sid, stats, info = _attempt(chunk, total, paths, cmd, text, limit, run_env, kind)
         stats["wall_s"] = time.monotonic() - t0
         return st, out, sid, stats, info
 
-    limit = cfg["chunk_timeout_s"] if timeout_s is None else timeout_s
+    limit = cfg[kind.limit_key] if timeout_s is None else timeout_s
     end = t0 + limit + cfg["fallback_timeout_s"]  # shared by the first attempt and the conclusion
     if deadline is not None:
         end = min(end, deadline)
         limit = min(limit, end - t0)
     # Only the exploring session gets the time stop: resumes must be able to answer.
     timed = dict(env, AI_REVIEW_STOP_AT=str(time.time() + limit - _reserve(limit)))
-    st, out, sid, stats, info = attempt(build_command(cfg, paths["agents_file"]), prompt, limit,
-                                        timed)
+    st, out, sid, stats, info = attempt(build_command(cfg, paths["agents_file"], None, kind),
+                                        prompt, limit, timed)
     error = "timeout" if st == "timeout" else None
     if out:
-        return _finish(idx, out, stats, sid, error)
+        return done(out, stats, sid, error)
     if not sid:
         msg = error or info["stderr"] or "no output (exit %s)" % info["rc"]
         return _result(idx, "failed", None, stats, None, msg)
@@ -233,33 +242,47 @@ def _run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadl
     limit = end - time.monotonic()
     if limit <= 0.5:
         return _result(idx, "incomplete", None, stats, sid, error + " → deadline")
-    st2, out, sid2, stats2, _ = attempt(build_command(cfg, paths["agents_file"], sid),
-                                        FALLBACK_PROMPT, limit)
+    st2, out, sid2, stats2, _ = attempt(build_command(cfg, paths["agents_file"], sid, kind),
+                                        kind.fallback_prompt, limit)
     if out:  # the Korean pass must resume the session that holds this answer
-        return _finish(idx, out, stats2, sid2 or sid, error)
+        return done(out, stats2, sid2 or sid, error)
     return _result(idx, "incomplete", None, stats2, sid, "%s → %s" % (error, _cause(st2, stats2)))
 
 
-def _reask_korean(r, chunk, total, cfg, paths, base_env, korean_end):
-    """Re-ask a non-Korean output once on its session. Whatever happens the result keeps its
-    status, and its output unless a usable Korean answer replaces the prose."""
-    note = StreamLogger("c%d" % (r["index"] + 1), out=sys.stdout).note
+def resume_ask(result, chunk, prompt, cfg, paths, base_env, kind: SessionKind,
+               deadline: float) -> Optional[dict]:
+    """Ask `prompt` on the session of `result` with no tools (4 turns), within the monotonic
+    `deadline`; the extracted output, or None (no session, no time, no usable answer)."""
+    sid = result.get("session_id")
+    limit = deadline - time.monotonic()
+    if not sid or limit <= 0.5:
+        return None
+    env, _ = _chunk_env(chunk, cfg, paths, base_env, kind)
+    return _attempt(chunk, None, paths, build_command(cfg, paths["agents_file"], sid, kind),
+                    prompt, limit, env, kind)[1]
+
+
+def reask_korean(r, chunk, cfg, paths, base_env, kind: SessionKind, deadline, total=None):
+    """Re-ask a non-Korean output once on its session, until the monotonic `deadline`. Whatever
+    happens the result keeps its status, and its output unless a usable Korean answer replaces
+    the prose."""
+    note = StreamLogger("%s%d" % (kind.label, r["index"] + 1), out=sys.stdout).note
     try:
-        if not r.get("output") or is_korean(r["output"]):
+        if not r.get("output") or kind.is_korean(r["output"]):
             return r
         if not r.get("session_id"):
             note("세션 없음 — 한국어 재요청 생략, 원문 유지")
             return r
-        limit = min(cfg["fallback_timeout_s"], korean_end - time.monotonic())
+        limit = min(cfg["fallback_timeout_s"], deadline - time.monotonic())
         if limit <= 0.5:
             note("시간 부족 — 한국어 재요청 생략, 원문 유지")
             return r
         t0 = time.monotonic()
-        env, _ = _chunk_env(chunk, cfg, paths, base_env)
+        env, _ = _chunk_env(chunk, cfg, paths, base_env, kind)
         new = _attempt(chunk, total, paths,
-                       build_command(cfg, paths["agents_file"], r["session_id"]), KOREAN_PROMPT,
-                       limit, env)[1]
-        merged = merge_korean(r["output"], new)
+                       build_command(cfg, paths["agents_file"], r["session_id"], kind),
+                       kind.korean_prompt, limit, env, kind)[1]
+        merged = kind.merge_korean(r["output"], new)
         note("한국어로 다시 받음" if merged else "한국어 재요청 실패 — 원문 유지")
         stats = r.get("stats") or {}
         return dict(r, output=merged or r["output"],
@@ -275,7 +298,8 @@ def _korean_pass(results, chunks, cfg, paths, base_env, deadline):
     korean_end = deadline + KOREAN_GRACE_S
 
     def one(r):
-        return _reask_korean(r, by_index[r["index"]], len(chunks), cfg, paths, base_env, korean_end)
+        return reask_korean(r, by_index[r["index"]], cfg, paths, base_env, REVIEW, korean_end,
+                            len(chunks))
 
     with ThreadPoolExecutor(cfg["concurrency"]) as ex:
         return list(ex.map(one, results))

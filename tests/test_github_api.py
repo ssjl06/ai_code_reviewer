@@ -3,7 +3,7 @@ import json
 import unittest
 import urllib.error
 
-from review.github_api import GitHub, GitHubError
+from review.github_api import GitHub, GitHubError, PostUnknown, retry_post
 from review.render import state_marker
 
 OPEN_I1 = "hi\n" + state_marker({"v": 3, "sha": "s", "issues": [{"id": "i1", "status": "open"}]})
@@ -203,3 +203,114 @@ class GitHubApiTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CommentApiTest(unittest.TestCase):
+    def test_lists_page_until_a_short_page(self):
+        gh, op = make([(200, [{"id": i} for i in range(100)]), (200, [{"id": 100}])])
+        self.assertEqual(len(gh.list_issue_comments()), 101)
+        self.assertTrue(op.requests[0].full_url.endswith(
+            "/repos/o/r/issues/7/comments?per_page=100&page=1"))
+        self.assertTrue(op.requests[1].full_url.endswith("page=2"))
+
+    def test_review_comments_path(self):
+        gh, op = make([(200, [])])
+        self.assertEqual(gh.list_review_comments(), [])
+        self.assertTrue(op.requests[0].full_url.endswith(
+            "/repos/o/r/pulls/7/comments?per_page=100&page=1"))
+
+    def test_post_issue_comment(self):
+        gh, op = make([(201, {"id": 5})])
+        self.assertEqual(gh.post_issue_comment("hi"), {"id": 5})
+        req = op.requests[0]
+        self.assertEqual((req.method, req.full_url), (
+            "POST", "https://ghe.example/api/v3/repos/o/r/issues/7/comments"))
+        self.assertEqual(json.loads(req.data), {"body": "hi"})
+
+    def test_reply_review_comment(self):
+        gh, op = make([(201, {"id": 6})])
+        gh.reply_review_comment(42, "yo")
+        req = op.requests[0]
+        self.assertEqual((req.method, req.full_url), (
+            "POST", "https://ghe.example/api/v3/repos/o/r/pulls/7/comments/42/replies"))
+        self.assertEqual(json.loads(req.data), {"body": "yo"})
+
+    def test_bot_reviews_newest_first(self):
+        gh, _ = make([(200, [rev(1), rev(3), rev(2, login="x")])])
+        self.assertEqual([r["id"] for r in gh.bot_reviews("AI-Bot")], [3, 1])
+
+    def test_permission(self):
+        gh, op = make([(200, {"permission": "write"}), (404, {"message": "Not Found"})])
+        self.assertEqual(gh.permission("alice"), "write")
+        self.assertTrue(op.requests[0].full_url.endswith(
+            "/repos/o/r/collaborators/alice/permission"))
+        self.assertIsNone(gh.permission("ghost"))
+
+
+class RetryPostTest(unittest.TestCase):
+    def sender(self, results):
+        calls = []
+
+        def send():
+            calls.append(1)
+            r = results.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+        return send, calls
+
+    def test_returns_the_stored_object_after_a_502_without_a_second_send(self):
+        send, calls = self.sender([GitHubError(502, "bad")])
+        self.assertEqual(retry_post(send, lambda: {"id": 9}), {"id": 9})
+        self.assertEqual(len(calls), 1)
+
+    def test_sends_twice_when_nothing_is_stored(self):
+        send, calls = self.sender([GitHubError(0, "net"), {"id": 1}])
+        self.assertEqual(retry_post(send, lambda: None), {"id": 1})
+        self.assertEqual(len(calls), 2)
+
+    def test_a_422_raises(self):
+        send, calls = self.sender([GitHubError(422, "bad")])
+        with self.assertRaises(GitHubError):
+            retry_post(send, lambda: {"id": 9})
+        self.assertEqual(len(calls), 1)
+
+    def test_unknown_when_the_lookup_fails(self):
+        send, calls = self.sender([GitHubError(502, "bad")])
+
+        def lookup():
+            raise GitHubError(503, "down")
+        with self.assertRaises(PostUnknown) as e:
+            retry_post(send, lookup)
+        self.assertEqual((e.exception.status, len(calls)), (503, 1))
+
+    def test_unknown_when_the_second_send_is_not_refused(self):
+        send, calls = self.sender([GitHubError(0, "net"), GitHubError(502, "bad")])
+        with self.assertRaises(PostUnknown):
+            retry_post(send, lambda: None)
+        send, calls = self.sender([GitHubError(0, "net"), GitHubError(422, "bad")])
+        with self.assertRaises(GitHubError) as e:
+            retry_post(send, lambda: None)
+        self.assertNotIsInstance(e.exception, PostUnknown)  # a refusal is definite
+
+    def test_success_does_not_look_up(self):
+        send, _ = self.sender([{"id": 2}])
+        self.assertEqual(retry_post(send, lambda: self.fail("looked up")), {"id": 2})
+
+
+class MentionReceiptTest(unittest.TestCase):
+    def test_mention_receipt(self):
+        def body(k):
+            return "hi\n" + state_marker({"v": 3, "sha": "s", "issues": [],
+                                          "m": {"k": k, "w": ["a"], "n": [], "up": []}})
+        r1 = dict(rev(1, body=body("i:5")), html_url="https://x/1")
+        person = dict(rev(2, login="human", body=body("i:6")), html_url="https://x/2")
+        other = dict(rev(3, body=body("i:7")), html_url="https://x/3")
+        gh, _ = make([(200, [r1, person, other])])
+        self.assertEqual(gh.mention_receipt("ai-bot", "i:5"),
+                         {"m": {"k": "i:5", "w": ["a"], "n": [], "up": []}, "url": "https://x/1",
+                          "id": 1, "state": r1.get("state")})
+        gh, _ = make([(200, [r1, person, other])])
+        self.assertIsNone(gh.mention_receipt("ai-bot", "i:6"))
+        gh, _ = make([(200, [r1])])
+        self.assertIsNone(gh.mention_receipt("ai-bot", "i:99"))

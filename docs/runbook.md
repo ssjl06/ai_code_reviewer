@@ -4,7 +4,7 @@
 - Claude Code >= 2.1.302, installed offline and on `PATH` for **non-login bash**. The runner's login
   shell is tcsh, so set `PATH` in the runner service environment (e.g. the systemd unit or the
   runner's `.env` file), not only in tcsh rc files.
-- Python 3.9+ and git on `PATH`. The kit uses only the Python standard library.
+- Python 3.9+ and git (>= 2.31) on `PATH`. The kit uses only the Python standard library.
 - Network access only to GHES and the LiteLLM endpoint (air-gapped is fine). No SSH needed.
 
 ## Secrets
@@ -13,9 +13,16 @@ Set at repository level, or as organization secrets the target repository can us
 | Secret | Meaning |
 |---|---|
 | `AI_REVIEW_BOT_PAT` | PAT of the bot account; the identity shown on reviews comes from this PAT |
-| `AI_REVIEW_BOT_NAME` | login of the bot account (used to find its earlier reviews) |
 | `AI_REVIEW_LLM_API_KEY` | LiteLLM key |
 | `AI_REVIEW_LLM_BASE_URL` | LiteLLM base URL |
+
+Also set the repository **variable** `AI_REVIEW_BOT_NAME` (Settings, Variables; not a secret): the
+login of the bot account, used to find its earlier reviews and to recognise mentions. It is
+**required**: while it is empty the workflow's first step fails (and the kit itself would exit 2),
+so every review fails, and the job's `@` filter would let every comment containing `@` start a job.
+
+The bot PAT, if fine-grained, needs contents read **and write** (the guideline push) and pull
+requests read and write.
 
 ## Installing into a target repository
 The kit runs from inside each target repository. From a clone of the kit:
@@ -36,6 +43,66 @@ The kit runs from inside each target repository. From a clone of the kit:
 **Updating:** pull the kit repository, re-run `install.sh` on the target, commit the diff.
 `.github/ai-review/VERSION` shows which kit commit is installed (`-dirty` if the kit had local
 changes). Do not edit `.github/ai-review/` in the target by hand; the next install replaces it.
+
+## Mentions
+
+Mentioning the bot (`@<bot>`) in a PR comment, a review or an inline comment starts the same
+`review` job as a push. One job per PR runs at a time: a mention waits for a running review,
+and a push cancels a mention being handled (its mentions stay pending for the next run).
+
+- **Variable.** Set the repository (or organization) *variable* `AI_REVIEW_BOT_NAME` (not a
+  secret) to the bot's login; it is required (see Secrets). The workflow's `if:`, concurrency
+  group and first step read it.
+- **Runner.** git >= 2.31.
+- **`MENTION_SINCE`.** In the installed workflow's `env:`, set `MENTION_SINCE` to the
+  installation time (UTC, ISO 8601, e.g. `"2026-11-11T09:00:00Z"`), so mentions that predate
+  the installation are not answered. The workflow passes it to the kit as the environment
+  variable `AI_REVIEW_MENTION_SINCE` (not `--set`), which overrides the config `mention_since`.
+  A malformed value is logged (`mention_since 형식 오류: ...`) and the mention phase ends with
+  exit 1 without answering anything.
+- **Which workflow file runs.** `issue_comment` runs the workflow file of the default branch,
+  so mentions work only once the new workflow file is on the default branch. The job still runs
+  the kit of the PR head: a PR branch that still has the old kit gets a review but no
+  reply until it merges or rebases onto the new kit.
+  The old kit does not fail on the new workflow: `MENTION_SINCE` reaches the kit only as an
+  environment variable, which the old kit ignores.
+- **Commands** (the first word after the mention; anything else is conversation):
+
+  | Command | Example |
+  |---|---|
+  | `/철회` | `@bot /철회 a1b2c3d4 이 경로는 호출되지 않습니다` |
+  | `/지침` | `@bot /지침 cudaMemcpy 직후 기본 스트림은 동기화 누락으로 지적하지 않는다` |
+  | `/지침수정` | `@bot /지침수정 기본 스트림 규칙을 default-stream 한정으로 좁혀 주세요` |
+  | `/지침삭제` | `@bot /지침삭제 기본 스트림 규칙` |
+
+  A reply in the bot's inline thread needs no issue id for `/철회`; elsewhere give the 8-hex
+  id, or leave it out when exactly one issue is open.
+  A mention or command inside a quote (`>`), including the lines GitHub joins to the quote
+  until a blank line, is ignored.
+- **Failures and recovery.** A mention stays pending (answered by a later run) when its
+  mention review was refused, when GitHub's answer to it was lost and could not be checked
+  (`리뷰 게시 결과를 확인할 수 없어 언급 처리를 중단함`: the phase stops), when the head moved
+  or the bot's guideline commit landed on top of someone else's push, or when dismissing the
+  earlier change requests after an approval failed (the next run dismisses, then replies).
+  When the push review of the run fails to post, the mention phase does not run
+  (`리뷰 게시 실패로 언급 단계를 건너뜀`). A PR closed while a mention is handled gets the reply
+  only. When the ledger is too large for another issue, the reply says
+  `장부가 가득 차 이슈로 등록하지 않음`.
+- **Guidelines** live in `.github/ai-review-rules/` (excluded from review). The bot commits and
+  pushes them to the PR branch: pull before your next push, or the push is rejected.
+- **Dismiss-stale caveat.** A guideline commit is a new head; with "dismiss stale approvals"
+  enabled in branch protection it dismisses existing approvals.
+- **GHES checks.** `vars` in `if:` and `concurrency` (GHES >= 3.8); an expression in
+  `cancel-in-progress`; a run that cancels another starts only after the cancelled job has
+  stopped; a job-level group and the workflow-level group of the same name on a PR branch
+  with the old workflow file are the same group; how `author_association` reports private
+  organization members.
+  - With "Dismiss stale pull request approvals" on in branch protection, the bot's own guideline
+    push removes its APPROVE, and nothing approves again until the next event (a push or a
+    mention) starts a run.
+  - How long the API takes to show a new head after a push: after its own guideline push the
+    mention phase reads the PR up to `mention_head_tries` (10) times, `mention_head_delay_s`
+    (3 s) apart; if the lag is longer, raise them in a config file or with `--set`.
 
 ## Trust model
 The workflow uses a plain `on: pull_request` trigger and runs the PR's own copy of the workflow
@@ -261,6 +328,26 @@ Smoke run:
 Pass: at least 3 of 4 planted defects reported; `■ done` for every chunk within 60 min (`chunk_timeout_s`); zero
 `✖ ... denied` caused by an actual escape attempt; `review.json` event is `REQUEST_CHANGES`.
 Result:
+
+Mention smoke run (a test PR on the GHES, real runner and LiteLLM; one push review first, so
+one issue is open). Each row: post the comment, wait for the run, check the reply and the log
+(`[m<n>]` lines, the "AI review mentions" table of the step summary).
+
+| # | Action | Expected | Result: |
+|---|---|---|---|
+| 1 | PR comment `@<bot> 이 함수는 왜 이렇게 했어?` | A reply quoting the comment; `**반영:** 없음`; no review | |
+| 2 | Reply in the bot's inline thread `@<bot> 테스트에서만 쓰는 코드야` | A reply in the thread; no review | |
+| 3 | New inline comment on a changed line `@<bot> 여기 경계 검사 빠진 거 아냐?` | A thread reply; a real defect becomes a new issue with a mention review (`REQUEST_CHANGES` if blocking) | |
+| 4 | A review with body `@<bot> 전체적으로 괜찮아?` | A PR comment quoting the review body | |
+| 5 | In the open issue's thread `@<bot> /철회 의도된 동작` | The issue `waived` in a mention review; `APPROVE` (earlier change requests dismissed) when nothing else blocks | |
+| 6 | `@<bot> /지침 <rule>` | A bot commit on the PR branch with `AI-Review-Mention: i:<id>`; no AI review of it; the reply says to pull | |
+| 7 | `@<bot> /지침수정 <which rule, how>` | A commit; the reply quotes the replaced rule text | |
+| 8 | `@<bot> /지침삭제 <which rule>` | A commit; the reply quotes the removed rule text | |
+| 9 | `@<bot> /취소` | "알 수 없는 명령입니다. ..." without a model call | |
+| 10 | A mention while a push review runs | The mention run waits for the review, then answers | |
+| 11 | A push while a mention is handled | The mention run is cancelled; the push's run reviews, then answers the mention once | |
+| 12 | An ordinary comment (no mention) and the bot's guideline push | No job starts; nothing is cancelled | |
+| 13 | The GHES checks of "Mentions" above (`vars` in `if:` and `concurrency`, `cancel-in-progress` expression, cancel order, same group across old and new workflow files, `author_association` of private org members) | As described there | |
 
 ## Known limitations
 - `git grep` patterns containing shell metacharacters are denied (use the Grep tool).

@@ -111,6 +111,13 @@ class FitStateTest(unittest.TestCase):
         self.assertEqual(out["cut"], cut)
         self.assertEqual(normalize_state(json.loads(json.dumps(out)))["cut"], cut)
 
+    def test_fit_keeps_approval_fields(self):
+        st = dict(state_with(closed=3000, open_=5, long_titles=True, seen=SEEN_OVER_BUDGET),
+                  approvable=False, unclear=["x1"])
+        out = fit_state(st, budget=20000)
+        self.assertEqual((out["approvable"], out["unclear"]), (False, ["x1"]))
+        self.assertEqual(out["seen"], {})  # the budget forced the last steps
+
     def test_fit_keeps_200_closed_issues_and_the_seen_data(self):
         seen = {"src/p%03d.py" % i: pack(prints("p%d" % i, 40)) for i in range(200)}
         st = state_with(closed=200, seen=seen)

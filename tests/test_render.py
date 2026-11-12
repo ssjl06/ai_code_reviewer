@@ -1,7 +1,8 @@
 import unittest
 
-from review.render import (MAX_BODY, _folded_section, parse_state, render_body, render_inline,
-                           render_step_summary, state_marker)
+from review.render import (MAX_BODY, _folded_section, _safe, issue_marker, parse_issue_marker,
+                           parse_reply, parse_state, render_body, render_inline,
+                           render_step_summary, reply_marker, state_marker)
 
 ST = {"sha": "abc", "findings": []}
 META = {"model": "m", "chunks": 2, "duration_s": 125.0, "range": "a..b",
@@ -276,3 +277,40 @@ class RenderTest(unittest.TestCase):
         self.assertIn("거부된 호출 반복(가드 중단)", render_body(
             REVIEW("COMMENT", incomplete=[0], errors=[[0, "denied"]]), [], META, ST))
         self.assertIn("- c3: 시간 초과 → 결론 단계 생략 (전체 시간 한도 도달)", b)
+
+
+class MarkerTest(unittest.TestCase):
+    def test_issue_marker_round_trip(self):
+        self.assertEqual(issue_marker("ab12"), "\n\n<!-- ai-review-issue ab12 -->")
+        self.assertEqual(parse_issue_marker("text" + issue_marker("ab12")), "ab12")
+        self.assertEqual(parse_issue_marker("text" + issue_marker("ab12") + "\n"), "ab12")
+
+    def test_issue_marker_only_at_the_end(self):
+        self.assertIsNone(parse_issue_marker(issue_marker("ab12") + " more"))
+        self.assertIsNone(parse_issue_marker("no marker"))
+        self.assertIsNone(parse_issue_marker(None))
+        self.assertEqual(parse_issue_marker(issue_marker("a1") + issue_marker("b2")), "b2")
+
+    def test_reply_marker_footer_only(self):
+        k = "i:123"
+        self.assertEqual(reply_marker(k), '<!-- ai-review-reply {"c":"i:123"} -->')
+        self.assertEqual(parse_reply("answer\n\n" + reply_marker(k)), k)
+        self.assertIsNone(parse_reply(reply_marker(k) + "\ntrailing text"))
+        self.assertEqual(parse_reply(reply_marker("i:1") + "\n" + reply_marker("r:2")), "r:2")
+        self.assertIsNone(parse_reply(None))
+        self.assertIsNone(parse_reply(reply_marker("x:1")))
+        self.assertIsNone(parse_reply(reply_marker("v:1x")))
+
+    def test_body_has_no_issue_marker(self):
+        f = FIND()
+        r = REVIEW(findings=[f])
+        b = render_body(r, [f], META, ST)
+        self.assertIn("inline으로 달 수 없는 지적", b)
+        self.assertNotIn("ai-review-issue", b)
+        self.assertNotIn("ai-review-issue", render_inline(f))
+
+    def test_marker_in_llm_text_is_escaped(self):
+        text = "hi " + reply_marker("r:9") + " there"
+        body = _safe(text) + "\n\n" + reply_marker("i:5")
+        self.assertEqual(parse_reply(body), "i:5")
+        self.assertNotIn(reply_marker("r:9"), body)

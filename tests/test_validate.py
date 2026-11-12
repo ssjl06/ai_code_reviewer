@@ -1,3 +1,4 @@
+import json
 import unittest
 
 from review.validate import compact_issue, expand_issue, normalize_output, normalize_state
@@ -121,12 +122,13 @@ class NormalizeStateTest(unittest.TestCase):
                          ({"b.c": "x"}, {}, {"c.c": "y"}, False))
         self.assertEqual(normalize_state({"v": 2, "sha": 1, "complete": "yes", "findings": "x"}),
                          {"v": 3, "sha": "", "complete": False, "seen": {}, "seen_files": {},
-                          "seen_hunks": {}, "issues": [], "recheck_pending": []})
+                          "seen_hunks": {}, "issues": [], "recheck_pending": [],
+                          "approvable": False, "unclear": None})
 
     def test_v3_round_trip(self):
         out = normalize_state(V3_STATE)
         self.assertEqual(out, {k: v for k, v in V3_STATE.items() if k != "closed"}
-                         | {"seen_hunks": {}})
+                         | {"seen_hunks": {}, "approvable": False, "unclear": None})
 
     def test_cut_prints_are_kept(self):
         st = dict(V3_STATE, cut={"a.js": "AQIDBA==", 3: "x", "b.js": 1})
@@ -189,6 +191,80 @@ class NormalizeStateTest(unittest.TestCase):
         st = normalize_state(dict(V3_STATE, recheck_pending=["a", 1, "b"], dropped_closed=4))
         self.assertEqual((st["recheck_pending"], st["dropped_closed"]), (["a", "b"], 4))
         self.assertNotIn("dropped_closed", normalize_state(dict(V3_STATE, dropped_closed="x")))
+
+
+class StateMentionFieldsTest(unittest.TestCase):
+    def test_state_approvable_unclear(self):
+        st = normalize_state(dict(V3_STATE, approvable=True, unclear=["a", 1, "b"]))
+        self.assertEqual((st["approvable"], st["unclear"]), (True, ["a", "b"]))
+        old = normalize_state(V3_STATE)
+        self.assertEqual((old["approvable"], old["unclear"]), (False, None))
+        self.assertIs(normalize_state(dict(V3_STATE, approvable="true"))["approvable"], False)
+        self.assertEqual(normalize_state(dict(V3_STATE, unclear=[]))["unclear"], [])
+        self.assertIsNone(normalize_state(dict(V3_STATE, unclear="x"))["unclear"])
+        v2 = normalize_state(V2_STATE)
+        self.assertEqual((v2["approvable"], v2["unclear"]), (False, None))
+
+    def test_state_m(self):
+        m = {"k": "i:12", "w": ["a"], "n": ["b"], "up": [], "g": "x.md r1 add"}
+        self.assertEqual(normalize_state(dict(V3_STATE, m=m))["m"], m)
+        m2 = {"k": "r:3", "w": [], "n": [], "up": ["c"]}
+        self.assertEqual(normalize_state(dict(V3_STATE, m=m2))["m"], m2)
+        for bad in (dict(m, k="x:1"), dict(m, k=5), dict(m, w="a"), dict(m, n=[1]),
+                    dict(m, up=None), dict(m, g=3), "x", {"k": "i:1"}):
+            self.assertNotIn("m", normalize_state(dict(V3_STATE, m=bad)), bad)
+
+
+class NormalizeMentionTest(unittest.TestCase):
+    GOOD = {"reply": "답", "verdicts": [{"id": "a1", "withdraw": True, "reason": "r"}],
+            "new_issues": [], "guideline": None, "wants": None}
+
+    def test_good_passes_through(self):
+        from review.validate import normalize_mention
+        self.assertEqual(normalize_mention(self.GOOD), self.GOOD)
+
+    def test_reply_is_required(self):
+        from review.validate import normalize_mention
+        for bad in (None, [], {}, dict(self.GOOD, reply=""), dict(self.GOOD, reply=3)):
+            self.assertIsNone(normalize_mention(bad))
+
+    def test_string_withdraw_is_dropped(self):
+        from review.validate import normalize_mention
+        v = [{"id": "a1", "withdraw": "true", "reason": "r"}, {"id": "a2", "withdraw": False},
+             {"withdraw": True}, "x"]
+        out = normalize_mention(dict(self.GOOD, verdicts=v))
+        self.assertEqual(out["verdicts"], [{"id": "a2", "withdraw": False, "reason": ""}])
+
+    def test_wants(self):
+        from review.validate import normalize_mention
+        self.assertEqual(normalize_mention(dict(self.GOOD, wants="rule"))["wants"], "rule")
+        self.assertEqual(normalize_mention(dict(self.GOOD, wants="withdraw"))["wants"], "withdraw")
+        self.assertIsNone(normalize_mention(dict(self.GOOD, wants="delete"))["wants"])
+
+    def test_new_issues_drop_bad_items(self):
+        from review.validate import normalize_mention
+        ok = {"file": "a.c", "line": 3, "severity": "major", "confidence": 90, "category": "bug",
+              "title": "t", "detail": "d"}
+        out = normalize_mention(dict(self.GOOD, new_issues=[ok, {"line": "x"}, 5]))
+        self.assertEqual([i["file"] for i in out["new_issues"]], ["a.c"])
+
+    def test_guideline(self):
+        from review.validate import normalize_mention
+        g = {"op": "add", "path": "g.md", "applies": ["*.c"], "rule": "r", "reason": "why"}
+        self.assertEqual(normalize_mention(dict(self.GOOD, guideline=g))["guideline"], g)
+        for bad in (dict(g, op="drop"), dict(g, applies="*.c"), dict(g, rule=1), "x",
+                    dict(g, op="update")):  # update needs a target
+            self.assertIsNone(normalize_mention(dict(self.GOOD, guideline=bad))["guideline"])
+        upd = dict(g, op="update", target="r1")
+        self.assertEqual(normalize_mention(dict(self.GOOD, guideline=upd))["guideline"], upd)
+
+    def test_extract_mention(self):
+        from review.validate import extract_mention
+        self.assertIsNone(extract_mention(None))
+        self.assertEqual(extract_mention({"structured_output": self.GOOD}), self.GOOD)
+        txt = 'x {"findings": []} y ' + json.dumps(self.GOOD)
+        self.assertEqual(extract_mention({"result": txt}), self.GOOD)
+        self.assertIsNone(extract_mention({"result": '{"reply": ""}'}))
 
 
 if __name__ == "__main__":

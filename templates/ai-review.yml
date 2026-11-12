@@ -10,20 +10,26 @@ name: ai-review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  # Mentions of the bot: the job's `if:` lets only comments that contain @<bot> through.
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  pull_request_review_comment:
+    types: [created]
 
 # GITHUB_TOKEN only reads; the checkout and all API posts use the bot PAT.
 permissions:
   contents: read
-
-concurrency:
-  group: ai-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
 
 # Review settings: edit here.
 env:
   AI_REVIEW_MODEL: deepseek-v4-flash
   MAX_CHUNKS: 40
   CONCURRENCY: 3
+  # Mentions older than this (UTC, ISO 8601) are ignored: set it to the installation time.
+  MENTION_SINCE: ""
+  PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
 
 defaults:
   run:
@@ -31,19 +37,35 @@ defaults:
 
 jobs:
   review:
+    # The run condition: not the bot itself, and either a non-draft pull_request event or a
+    # comment/review that mentions the bot (a coarse filter; the kit decides exactly).
     # Drafts are skipped; marking a PR ready for review triggers a run.
-    if: github.event.pull_request.draft == false
+    if: github.event.sender.login != vars.AI_REVIEW_BOT_NAME && ((github.event_name == 'pull_request' && github.event.pull_request.draft == false) || (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, format('@{0}', vars.AI_REVIEW_BOT_NAME))) || (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, format('@{0}', vars.AI_REVIEW_BOT_NAME))) || (github.event_name == 'pull_request_review' && contains(github.event.review.body, format('@{0}', vars.AI_REVIEW_BOT_NAME))))
+    # One job per PR at a time. A push cancels the running job; a comment waits for it.
+    # An event that will be skipped gets its own group, so it never cancels or replaces a run.
+    concurrency:
+      group: ${{ (github.event.sender.login != vars.AI_REVIEW_BOT_NAME && ((github.event_name == 'pull_request' && github.event.pull_request.draft == false) || (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, format('@{0}', vars.AI_REVIEW_BOT_NAME))) || (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, format('@{0}', vars.AI_REVIEW_BOT_NAME))) || (github.event_name == 'pull_request_review' && contains(github.event.review.body, format('@{0}', vars.AI_REVIEW_BOT_NAME))))) && format('ai-review-{0}', github.event.pull_request.number || github.event.issue.number) || format('ai-review-skip-{0}', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # Runner labels: edit here, e.g. [self-hosted, linux].
     runs-on: [self-hosted]
-    timeout-minutes: 320
+    timeout-minutes: 360
     steps:
+      # Without the variable every review fails and every comment with "@" starts a job.
+      - name: Check the bot name variable
+        env:
+          AI_REVIEW_BOT_NAME: ${{ vars.AI_REVIEW_BOT_NAME }}
+        run: |
+          [ -n "$AI_REVIEW_BOT_NAME" ] && exit 0
+          echo "::error::The repository variable AI_REVIEW_BOT_NAME (the bot's login) is empty; set it under Settings > Secrets and variables > Actions > Variables." >&2
+          exit 1
+
       # Note: upload-artifact v4 is not supported on GHES; the kit pins
       # v3.2.2-node20 (Node 20, like checkout@v4). Sync both actions to GHES
       # when the instance is air-gapped.
       - name: Checkout PR head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: refs/pull/${{ env.PR_NUMBER }}/head
           fetch-depth: 0
           persist-credentials: false
           token: ${{ secrets.AI_REVIEW_BOT_PAT }}
@@ -57,21 +79,22 @@ jobs:
       - name: Review
         env:
           AI_REVIEW_BOT_PAT: ${{ secrets.AI_REVIEW_BOT_PAT }}
-          AI_REVIEW_BOT_NAME: ${{ secrets.AI_REVIEW_BOT_NAME }}
+          AI_REVIEW_BOT_NAME: ${{ vars.AI_REVIEW_BOT_NAME }}
           AI_REVIEW_LLM_API_KEY: ${{ secrets.AI_REVIEW_LLM_API_KEY }}
           AI_REVIEW_LLM_BASE_URL: ${{ secrets.AI_REVIEW_LLM_BASE_URL }}
           GITHUB_API_URL: ${{ github.api_url }}
+          AI_REVIEW_MENTION_SINCE: ${{ env.MENTION_SINCE }}
         run: |
           cd .github/ai-review
           python3 -E -s -m review --repo "$GITHUB_WORKSPACE" \
-            --pr "${{ github.event.pull_request.number }}" \
+            --pr "$PR_NUMBER" \
             --set max_chunks="$MAX_CHUNKS" --set concurrency="$CONCURRENCY"
 
       - name: Upload review artifacts
         if: always()
         uses: actions/upload-artifact@v3.2.2-node20
         with:
-          name: ai-review-${{ github.event.pull_request.number }}
+          name: ai-review-${{ env.PR_NUMBER }}
           path: |
             ${{ runner.temp }}/ai-review/**/stream.jsonl
             ${{ runner.temp }}/ai-review/**/guard-audit.jsonl

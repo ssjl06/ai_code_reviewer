@@ -28,6 +28,13 @@ KOREAN_PROMPT = (
     "diff_reviewed는 반드시 JSON 불리언으로 포함한다. "
     "도구를 호출하지 마라."
 )
+MENTION_FALLBACK = "도구를 더 호출하지 말고 지금까지의 근거만으로 스키마에 맞는 최종 JSON을 출력하라. 모든 서술은 한국어로 쓴다."
+MENTION_KOREAN = (
+    "직전 최종 결과를 내용과 필드(id, withdraw, file, line, severity, confidence, category, "
+    "op, path, applies, target, wants)는 그대로 두고, 서술 필드만 한국어로 옮겨 스키마에 맞는 "
+    "최종 JSON으로 다시 출력하라. 서술 필드는 reply, reason, title, detail, suggestion, "
+    "rule이다. 도구를 호출하지 마라."
+)
 
 
 def _safe_title(title: str) -> str:
@@ -131,6 +138,17 @@ def _recheck_section(chunk: Dict[str, Any], ctx: Dict[str, Any]) -> List[str]:
     return out
 
 
+def _rules_section(chunk: Dict[str, Any], ctx: Dict[str, Any]) -> List[str]:
+    items = (ctx.get("rules") or {}).get(chunk["index"]) or []
+    if not items:
+        return []
+    out = ["", "저장소 지침 (이 저장소에서 사람이 정한 규칙이다. 따른다):"]
+    for path, text in items:
+        fence = _fence(text)
+        out += ["", "%s:" % path, fence + "markdown", text.rstrip("\n"), fence]
+    return out
+
+
 def _ranges(nums: Iterable[int]) -> str:
     """Sorted lines compressed as `12-18, 40`."""
     out: List[str] = []
@@ -172,6 +190,7 @@ def build_prompt(chunk: Dict[str, Any], ctx: Dict[str, Any]) -> str:
             json.dumps(prev, ensure_ascii=False, indent=2),
         ]
     lines += _ledger_section(chunk, ctx) + _orphan_section(ctx) + _recheck_section(chunk, ctx)
+    lines += _rules_section(chunk, ctx)
     fence = _fence(chunk["diff"])
     diff = chunk["diff"] if chunk["diff"].endswith("\n") else chunk["diff"] + "\n"
     lines += [

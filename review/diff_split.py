@@ -165,10 +165,18 @@ def _units(f: dict, limit: int) -> List[Tuple[str, str, str, Optional[int]]]:
     return out
 
 
+def glob_match(path: str, glob: str) -> bool:
+    """The exclude-glob test for one glob: fnmatch on the path and on "/" + path."""
+    return fnmatch.fnmatch(path, glob) or fnmatch.fnmatch("/" + path, glob)
+
+
+def excluded(path: str, cfg: dict) -> bool:
+    """True when `path` matches an exclude glob: the review does not cover it."""
+    return any(glob_match(path, g) for g in cfg["exclude_globs"])
+
+
 def reviewable(f: dict, cfg: dict) -> bool:
-    return not f["binary"] and f["status"] != "D" and not any(
-        fnmatch.fnmatch(f["path"], g) or fnmatch.fnmatch("/" + f["path"], g)
-        for g in cfg["exclude_globs"])
+    return not f["binary"] and f["status"] != "D" and not excluded(f["path"], cfg)
 
 
 def build_chunks(files: List[dict], cfg: dict) -> Tuple[List[dict], List[str], List[str]]:

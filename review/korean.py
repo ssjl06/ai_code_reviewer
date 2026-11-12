@@ -28,18 +28,23 @@ def _prose(output: dict) -> Iterator[str]:
         yield p.get("note") or ""
 
 
-def is_korean(output: dict) -> bool:
-    """False only when the prose, outside code, has no Hangul at all and enough English to judge.
-
-    One Hangul character anywhere counts as Korean; mixed output is not re-asked. Output with
-    fewer than KOREAN_MIN_LETTERS ASCII letters in total ("LGTM", empty) is too short to judge."""
+def _judge(items: Iterator[str]) -> bool:
+    """The Korean test over prose items (see `is_korean`)."""
     letters = 0
-    for item in _prose(output):
+    for item in items:
         text = _strip_code(item)
         if _HANGUL.search(text):
             return True
         letters += len(_ASCII.findall(text))
     return letters < KOREAN_MIN_LETTERS
+
+
+def is_korean(output: dict) -> bool:
+    """False only when the prose, outside code, has no Hangul at all and enough English to judge.
+
+    One Hangul character anywhere counts as Korean; mixed output is not re-asked. Output with
+    fewer than KOREAN_MIN_LETTERS ASCII letters in total ("LGTM", empty) is too short to judge."""
+    return _judge(_prose(output))
 
 
 def _key(f: dict) -> tuple:
@@ -66,3 +71,52 @@ def merge_korean(orig: dict, new: Optional[dict]) -> Optional[dict]:
                                 else dict(p)
                                 for p, q in zip(orig["previous_findings"], new["previous_findings"])]
     return out if is_korean(out) else None
+
+
+def _mention_prose(output: dict) -> Iterator[str]:
+    """Each prose item of a mention output."""
+    yield output.get("reply") or ""
+    for v in output.get("verdicts") or []:
+        yield v.get("reason") or ""
+    for f in output.get("new_issues") or []:
+        yield f.get("title") or ""
+        yield f.get("detail") or ""
+        yield f.get("suggestion") or ""
+    g = output.get("guideline") or {}
+    yield g.get("rule") or ""
+    yield g.get("reason") or ""
+
+
+def is_korean_mention(output: dict) -> bool:
+    """`is_korean` over the narrative fields of a mention output."""
+    return _judge(_mention_prose(output))
+
+
+def _guideline_key(g: Optional[dict]) -> Optional[tuple]:
+    return None if g is None else (g["op"], g["path"], tuple(g["applies"]), g.get("target"))
+
+
+def _mention_keys(o: dict) -> tuple:
+    return ([(v["id"], v["withdraw"]) for v in o["verdicts"]], [_key(f) for f in o["new_issues"]],
+            _guideline_key(o["guideline"]), o["wants"])
+
+
+def merge_korean_mention(orig: dict, new: Optional[dict]) -> Optional[dict]:
+    """`orig` with the narrative fields of `new`, or None when `new` is unusable, changed a
+    verdict, a new issue's place, the guideline's target or `wants`, or is still not Korean."""
+    if not new or _mention_keys(new) != _mention_keys(orig):
+        return None
+    out = dict(orig, reply=new["reply"] or orig["reply"])
+    out["verdicts"] = [dict(v, reason=w["reason"] or v["reason"])
+                       for v, w in zip(orig["verdicts"], new["verdicts"])]
+    out["new_issues"] = []
+    for f, g in zip(orig["new_issues"], new["new_issues"]):
+        m = dict(f, title=g["title"] or f["title"], detail=g["detail"] or f["detail"])
+        if g.get("suggestion") and f.get("suggestion"):
+            m["suggestion"] = g["suggestion"]
+        out["new_issues"].append(m)
+    if orig["guideline"]:
+        g = new["guideline"]
+        out["guideline"] = dict(orig["guideline"], rule=g["rule"] or orig["guideline"]["rule"],
+                                reason=g["reason"] or orig["guideline"]["reason"])
+    return out if is_korean_mention(out) else None

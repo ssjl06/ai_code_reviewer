@@ -6,9 +6,10 @@ import json
 import os
 import sys
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from review import cli_util as cu
+from review import rules
 from review import scope as sc
 from review.aggregate import merge, split_inline
 from review.claude_cmd import write_agents_file
@@ -21,12 +22,18 @@ from review.gitutil import GitError
 from review.ledger import apply_waivers, assign_recheck, pending_after, prompt_lists, shown_lines
 from review.previous import anchor_of
 from review.prompt import build_prompt, orphan_split
-from review.render import render_body, render_inline
+from review.render import issue_marker, parse_state, render_body, render_inline
 from review.validate import normalize_state
 
 LLM_ENV = ("AI_REVIEW_LLM_BASE_URL", "AI_REVIEW_LLM_API_KEY")
 ONLINE_ENV = ("GITHUB_API_URL", "GITHUB_REPOSITORY", "AI_REVIEW_BOT_PAT", "AI_REVIEW_BOT_NAME")
 AGENT_MD = os.path.join(KIT_DIR, "agent", "pr-reviewer.md")
+# The state marker of the review this process posted last (`main` resets it): the mention
+# phase starts from it, as a listing right after the post may not show that review yet.
+LAST_POSTED: Optional[dict] = None
+# True when the review phase of this process tried to post its review and it did not get
+# stored as far as it knows (refused, or the outcome unknown): the mention phase stays out.
+POST_FAILED = False
 
 
 def _fail(msg: str) -> int:
@@ -69,6 +76,8 @@ def _inputs(args, env):
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    global LAST_POSTED, POST_FAILED
+    LAST_POSTED, POST_FAILED = None, False
     t0 = time.monotonic()
     args = _parser().parse_args(argv)
     env = dict(os.environ)
@@ -170,6 +179,18 @@ def _log_matches(review: dict) -> None:
                 % (f["file"], f["line"], f["near_closed"]))
 
 
+def _chunk_rules(repo: str, chunks: List[dict], cfg: dict) -> Dict[int, list]:
+    """{chunk index: [(path, text)]} of the guideline files that apply; omitted ones are logged."""
+    docs = rules.load_docs(repo)
+    out: Dict[int, list] = {}
+    for c in chunks:
+        chosen, omitted = rules.select(docs, c["files"], cfg["rules_max_chars"])
+        out[c["index"]] = chosen
+        if omitted:
+            log("생략된 지침: " + ", ".join(omitted))
+    return out
+
+
 def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope) -> int:
     if scope["mode"] == "unchanged":
         log("새로 리뷰할 변경 없음 — 리뷰를 건너뜀")
@@ -182,7 +203,7 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
     log("조각 %d개 · 생략 파일 %d개 · 잘린 파일 %d개" % (len(chunks), len(skipped), len(truncated)))
     if scope["weak_tracking"]:
         log(WEAK_MSG)
-    previous = scope["previous"]
+    previous = sc.settle_previous(scope) if settle else scope["previous"]
     recheck, left_out = assign_recheck(chunks, previous, scope["blobs"], cfg)
     only = {t["path"] for t in scope["targets"] if t.get("recheck_only")}
     ledger, orphans = prompt_lists(previous, scope["closed"])
@@ -193,6 +214,7 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
                "pr_title": title, "previous": previous, "ledger": ledger, "orphans": orphans,
                "recheck": recheck,
                "added": scope["added"], "deleted": scope["deleted"], "explore_budget": cfg["explore_budget"]}
+        ctx["rules"] = _chunk_rules(repo, chunks, cfg)
         prompts = [build_prompt(c, ctx) for c in chunks]
         paths = {"repo": repo, "work": out_dir,
                  "agents_file": write_agents_file(AGENT_MD, out_dir)}
@@ -217,8 +239,8 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
             "reviewed": cu.reviewed_files(chunks), "skipped": skipped}
     body = render_body(review, body_only, meta, state)
     fallback = render_body(review, inline + body_only, meta, state)
-    comments = [{"path": f["file"], "line": f["line"], "side": "RIGHT", "body": render_inline(f)}
-                for f in inline]
+    comments = [{"path": f["file"], "line": f["line"], "side": "RIGHT",
+                 "body": render_inline(f) + issue_marker(f["id"])} for f in inline]
     log("판정: %s · 새 지적 %d건 (inline %d) · 미완료 조각 %d개" % (
         review["event"], len(review["findings"]), len(inline), len(review["incomplete"])))
     cu.append_step_summary(env, results)
@@ -229,7 +251,13 @@ def _review(args, env, cfg, t0, deadline, out_dir, repo, gh, head, title, scope)
         print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
         log("dry-run: 게시하지 않음")
         return 0
-    return post(gh, env, head, review, body, comments, fallback)
+    global POST_FAILED
+    POST_FAILED = True  # until the review is stored
+
+    def posted() -> None:
+        global LAST_POSTED, POST_FAILED
+        LAST_POSTED, POST_FAILED = parse_state(body), False
+    return post(gh, env, head, review, body, comments, fallback, posted)
 
 
 if __name__ == "__main__":

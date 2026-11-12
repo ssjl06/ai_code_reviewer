@@ -8,12 +8,13 @@ import unittest
 
 from unittest import mock
 
-from review.claude_runner import (TIME_RESERVE_S, _cause, _denial_summary, chunk_limit, extract_output, run_all,
+from review.claude_cmd import MENTION
+from review.claude_runner import (TIME_RESERVE_S, reask_korean, resume_ask, _cause, _denial_summary, chunk_limit, extract_output, run_all,
                                   run_chunk, run_process)
 from review.config import load_config
 from review.hooks.guard import DENY_STOP_FILE, STOP_FILE, TIME_STOP_FILE
 from review.stream_log import StreamLogger
-from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT
+from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT, MENTION_FALLBACK, MENTION_KOREAN
 from tests.fakes import make_wrapper
 
 
@@ -44,7 +45,8 @@ class RunnerTest(unittest.TestCase):
         binp, self.log = make_wrapper(d, scn, resume)
         return {"claude_bin": binp, "chunk_timeout_s": 2, "fallback_timeout_s": 2, "max_turns": 10,
                 "llm_timeout_ms": 1000, "bash_timeout_ms": 1000, "explore_budget": 6, "deny_repeat_limit": 3, "deny_total_limit": 20,
-                "model": "m", "concurrency": 1, "deadline_s": 1000}
+                "model": "m", "concurrency": 1, "deadline_s": 1000,
+                "mention_explore_budget": 20, "mention_session_s": 2}
 
     def run_scn(self, scn, resume="ok", deadline=None, out=None, timeout_s=None):
         with contextlib.redirect_stdout(out or io.StringIO()):
@@ -404,6 +406,86 @@ class RunnerTest(unittest.TestCase):
                          time.monotonic() + 59)
         rc.assert_not_called()
         self.assertEqual((rs[0]["status"], rs[0]["error"]), ("incomplete", "deadline"))
+
+    # --- mention sessions
+    def mention(self, scn, resume="mention", out=None, deadline=None, session=10):
+        self.chunk = {"index": 0, "files": [], "est_tokens": 0}
+        cfg = dict(self.cfg(scn, resume), mention_session_s=session, fallback_timeout_s=10)
+        with contextlib.redirect_stdout(out or io.StringIO()):
+            return run_chunk(self.chunk, "PROMPT", 1, cfg, self.paths, self.env, None, deadline,
+                             MENTION), cfg
+
+    def test_mention_session_is_ok_without_diff_reviewed(self):
+        log = io.StringIO()
+        r, _ = self.mention("mention", out=log)
+        self.assertEqual((r["status"], r["error"]), ("ok", None))
+        self.assertEqual(r["output"]["verdicts"][0]["id"], "a1")
+        self.assertIn("[m1]", log.getvalue())
+        self.assertNotIn("[c1]", log.getvalue())
+        argv = self.calls()[0]["argv"]
+        self.assertEqual(argv[argv.index("--agent") + 1], "pr-mention")
+
+    def test_mention_session_has_its_own_dirs_and_budget(self):
+        self.mention("mention")
+        self.assertTrue(os.path.isdir(os.path.join(self.paths["work"], "mention-1", "state")))
+        self.assertFalse(os.path.exists(os.path.join(self.paths["work"], "chunk-1")))
+
+    def test_mention_without_output_resumes_with_the_mention_fallback(self):
+        r, _ = self.mention("max_turns", "mention")
+        self.assertEqual(r["status"], "ok")
+        c = self.calls()
+        self.assertEqual(c[1]["stdin"], MENTION_FALLBACK)
+        self.assertIn("--resume", c[1]["argv"])
+
+    def test_mention_run_chunk_respects_the_deadline(self):
+        t0 = time.monotonic()
+        r, _ = self.mention("hang", "mention", deadline=t0 + 6, session=30)  # the deadline binds
+        self.assertGreater(time.monotonic() - t0, 5.5)
+        self.assertLess(time.monotonic() - t0, 9)
+        self.assertEqual(r["status"], "incomplete")
+        self.assertEqual(len(self.calls()), 1)  # no time left for the resume
+
+    def test_resume_ask_returns_the_output(self):
+        r, cfg = self.mention("max_turns", "mention")
+        del r
+        self.chunk = {"index": 0, "files": [], "est_tokens": 0}
+        with quiet():
+            out = resume_ask({"session_id": "sess-fake"}, self.chunk, "ask", cfg, self.paths,
+                             self.env, MENTION, time.monotonic() + 30)
+        self.assertEqual(out["reply"], "확인했습니다. 이 이슈는 철회해도 됩니다.")
+        last = self.calls()[-1]
+        self.assertEqual((last["stdin"], last["argv"][last["argv"].index("--tools") + 1]), ("ask", ""))
+        self.assertEqual(last["argv"][last["argv"].index("--max-turns") + 1], "4")
+
+    def test_resume_ask_gives_none_without_session_or_time(self):
+        cfg = self.cfg("mention")
+        self.chunk = {"index": 0, "files": [], "est_tokens": 0}
+        with quiet():
+            self.assertIsNone(resume_ask({"session_id": None}, self.chunk, "p", cfg, self.paths,
+                                         self.env, MENTION, time.monotonic() + 30))
+            self.assertIsNone(resume_ask({"session_id": "s"}, self.chunk, "p", cfg, self.paths,
+                                         self.env, MENTION, time.monotonic() - 1))
+        self.assertEqual(len(self.calls()) if os.path.exists(self.log) else 0, 0)
+
+    def test_reask_korean_on_an_english_mention_reply(self):
+        r, cfg = self.mention("mention_en", "mention_korean")
+        self.assertIn("Checked", r["output"]["reply"])
+        log = io.StringIO()
+        with contextlib.redirect_stdout(log):
+            new = reask_korean(r, self.chunk, cfg, self.paths, self.env, MENTION,
+                               time.monotonic() + 30)
+        self.assertEqual(new["output"]["reply"], "확인했습니다. 이 이슈는 철회해도 됩니다.")
+        self.assertEqual(self.calls()[-1]["stdin"], MENTION_KOREAN)
+        self.assertIn("[m1]", log.getvalue())
+        self.assertEqual(new["status"], "ok")
+
+    def test_reask_korean_keeps_a_korean_mention_reply_without_a_call(self):
+        r, cfg = self.mention("mention")
+        with quiet():
+            new = reask_korean(r, self.chunk, cfg, self.paths, self.env, MENTION,
+                               time.monotonic() + 30)
+        self.assertEqual(new, r)
+        self.assertEqual(len(self.calls()), 1)
 
 
 if __name__ == "__main__":

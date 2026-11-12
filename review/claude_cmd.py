@@ -2,14 +2,43 @@
 
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, NamedTuple, Optional
 
 from review.config import KIT_DIR
+from review.korean import is_korean, is_korean_mention, merge_korean, merge_korean_mention
+from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT, MENTION_FALLBACK, MENTION_KOREAN
+from review.validate import extract_mention, extract_output
 
 ENV_PASSTHROUGH = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "USER")
 AGENT_NAME = "pr-reviewer"
-_SCHEMA_PATH = os.path.join(KIT_DIR, "config", "review-schema.json")
 _SETTINGS_PATH = os.path.join(KIT_DIR, "config", "settings.json")
+
+
+class SessionKind(NamedTuple):
+    """What differs between a review chunk session and a mention session; the command, guard,
+    timeouts, fallback resume and Korean re-ask are shared."""
+    agent_name: str
+    schema_path: str
+    extract: Callable[[Optional[dict]], Optional[dict]]
+    fallback_prompt: str
+    korean_prompt: str
+    label: str  # log prefix: `[c1]`, `[m1]`
+    needs_diff_reviewed: bool  # False: any extracted output is ok
+    is_korean: Callable[[dict], bool]  # on this kind's narrative fields
+    merge_korean: Callable[[dict, Optional[dict]], Optional[dict]]
+    work_dir: str  # per-session dirs under paths["work"]: `<work_dir>-<n>`
+    agents_file: str  # file name of the agents mapping
+    explore_key: str  # cfg key of the explore budget
+    limit_key: str  # cfg key of the session limit
+
+
+REVIEW = SessionKind(AGENT_NAME, os.path.join(KIT_DIR, "config", "review-schema.json"),
+                     extract_output, FALLBACK_PROMPT, KOREAN_PROMPT, "c", True, is_korean,
+                     merge_korean, "chunk", "agents.json", "explore_budget", "chunk_timeout_s")
+MENTION = SessionKind("pr-mention", os.path.join(KIT_DIR, "config", "mention-schema.json"),
+                      extract_mention, MENTION_FALLBACK, MENTION_KOREAN, "m", False,
+                      is_korean_mention, merge_korean_mention, "mention", "agents-mention.json",
+                      "mention_explore_budget", "mention_session_s")
 
 
 def load_agent(md_path: str) -> Dict[str, Dict[str, str]]:
@@ -30,22 +59,23 @@ def load_agent(md_path: str) -> Dict[str, Dict[str, str]]:
     return {meta.get("name", AGENT_NAME): {"description": meta.get("description", ""), "prompt": body}}
 
 
-def write_agents_file(md_path: str, out_dir: str) -> str:
-    path = os.path.join(out_dir, "agents.json")
+def write_agents_file(md_path: str, out_dir: str, kind: SessionKind = REVIEW) -> str:
+    path = os.path.join(out_dir, kind.agents_file)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(load_agent(md_path), f, ensure_ascii=False)
     return path
 
 
 def build_command(
-    cfg: Dict[str, Any], agents_file: str, resume_session: Optional[str] = None
+    cfg: Dict[str, Any], agents_file: str, resume_session: Optional[str] = None,
+    kind: SessionKind = REVIEW,
 ) -> List[str]:
-    with open(_SCHEMA_PATH, "r", encoding="utf-8") as f:
+    with open(kind.schema_path, "r", encoding="utf-8") as f:
         schema = json.dumps(json.load(f), separators=(",", ":"), ensure_ascii=False)
     cmd = [cfg["claude_bin"], "-p", "--verbose", "--output-format", "stream-json"]
     if resume_session:
         cmd += ["--resume", resume_session]
-    cmd += ["--agent", AGENT_NAME, "--agents", agents_file, "--json-schema", schema]
+    cmd += ["--agent", kind.agent_name, "--agents", agents_file, "--json-schema", schema]
     cmd += ["--max-turns", "4" if resume_session else str(cfg["max_turns"])]
     cmd += ["--tools", "" if resume_session else "Read,Grep,Glob,Bash"]
     cmd += ["--permission-mode", "dontAsk", "--setting-sources", "user"]
