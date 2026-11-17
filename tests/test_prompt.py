@@ -45,9 +45,29 @@ class PromptTest(unittest.TestCase):
 
     def test_korean_prompt(self):
         self.assertIn("서술 필드만 한국어로", KOREAN_PROMPT)
-        self.assertIn("도구를 호출하지 마라", KOREAN_PROMPT)
+        self.assertIn("탐색 도구는 호출하지 마라", KOREAN_PROMPT)
         for k in ("file", "line", "severity", "confidence", "category", "id", "status"):
             self.assertIn(k, KOREAN_PROMPT)
+
+    def test_every_ask_for_the_answer_names_the_answer_tool(self):
+        """The answer is a StructuredOutput call: "no tool calls, print the JSON" ended in prose."""
+        import glob
+        import os
+        from review import prompt
+        from review.hooks import guard
+        from review.mention.guideline import OVERFLOW_ASK
+        texts = [build_prompt(CHUNK, CTX), FALLBACK_PROMPT, KOREAN_PROMPT, prompt.MENTION_FALLBACK,
+                 prompt.MENTION_KOREAN, prompt.SUBMIT_PROMPT, OVERFLOW_ASK, guard.BUDGET_REASON,
+                 guard.DENY_REASON, guard.TIME_REASON]
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for path in sorted(glob.glob(os.path.join(root, "agent", "*.md"))):
+            with open(path, encoding="utf-8") as f:
+                texts.append(f.read())
+        self.assertEqual(len(texts), 12)
+        for t in texts:
+            self.assertIn("StructuredOutput", t)
+            for old in ("최종 JSON", "도구 호출 없이", "도구를 더 호출하지 말고", "도구를 호출하지 마라"):
+                self.assertNotIn(old, t.replace("탐색 도구를 더 호출하지 말고", ""))
 
     def test_incremental_lists_only_previous_for_chunk_files(self):
         prev = [_finding("f1", "src/k.cu"), _finding("f2", "other.py")]

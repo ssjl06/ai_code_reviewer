@@ -185,6 +185,11 @@ def main():
         result(sid, "error_max_turns")
     elif scn == "broken":
         result(sid, result="not json at all")
+    elif scn == "prose_then_submit":  # prose until told the answer was not received
+        if "접수되지 않았다" in stdin:
+            result(sid, structured_output=OUT)
+        else:
+            result(sid, result="리뷰를 마쳤습니다.")
     elif scn == "text_json":
         result(sid, result="Here: " + json.dumps(OUT) + " done")
     elif scn in ("text_missing", "text_null", "text_false_str"):  # plain text, no schema

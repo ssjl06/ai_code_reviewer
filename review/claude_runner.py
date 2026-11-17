@@ -14,12 +14,14 @@ from typing import Any, Dict, List, Optional
 
 from review.claude_cmd import REVIEW, SessionKind, build_command, build_env
 from review.hooks.guard import DENY_STOP_FILE, STOP_FILE, TIME_STOP_FILE
+from review.prompt import SUBMIT_PROMPT
 from review.stream_log import StreamLogger
 from review.validate import extract_output  # re-exported: the review kind's extract
 
 TIME_RESERVE_S = 300  # exploring stops this long before the chunk limit: one LLM call in flight
 MIN_CHUNK_S = 300
 MIN_START_S = 60  # a chunk is not started with less than this left before the deadline
+_PROSE_CAUSES = ("no structured output", "invalid output")  # the session ended by itself
 KOREAN_GRACE_S = 300  # Korean re-asks may run this long past the deadline (the job allows 20 min)
 
 
@@ -246,7 +248,15 @@ def _run_chunk(chunk, prompt, total, cfg, paths, base_env, timeout_s=None, deadl
                                         kind.fallback_prompt, limit)
     if out:  # the Korean pass must resume the session that holds this answer
         return done(out, stats2, sid2 or sid, error)
-    return _result(idx, "incomplete", None, stats2, sid, "%s → %s" % (error, _cause(st2, stats2)))
+    cause2, limit = _cause(st2, stats2), end - time.monotonic()
+    if cause2 in _PROSE_CAUSES and limit > 0.5:
+        # the session ended by itself in prose: say the answer was not received, ask once more
+        st3, out, sid3, stats3, _ = attempt(
+            build_command(cfg, paths["agents_file"], sid2 or sid, kind), SUBMIT_PROMPT, limit)
+        if out:
+            return done(out, stats3, sid3 or sid2 or sid, error)
+        stats2, cause2 = stats3, _cause(st3, stats3)
+    return _result(idx, "incomplete", None, stats2, sid, "%s → %s" % (error, cause2))
 
 
 def resume_ask(result, chunk, prompt, cfg, paths, base_env, kind: SessionKind,
