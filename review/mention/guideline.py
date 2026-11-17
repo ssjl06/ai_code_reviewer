@@ -13,7 +13,7 @@ from review.claude_runner import resume_ask
 from review.gitutil import git
 from review.mention.apply import NO_GUIDELINE, RULE_OPS, WRONG_OP
 
-OVERFLOW_ASK = "같은 디렉토리에 새 주제 파일 경로를 정하라. 경로만 바꾼 최종 JSON을 출력하라."
+OVERFLOW_ASK = "같은 디렉토리에 새 주제 파일 경로를 정하라. 경로만 바꾼 최종 결과를 StructuredOutput 도구 호출로 제출하라."
 FORK = "PR 브랜치가 이 저장소에 없어 커밋할 수 없습니다"
 TOO_LONG = "지침 파일이 %d줄을 넘게 됩니다" % rules.MAX_LINES
 NO_COMMIT = "커밋이 만들어지지 않았습니다"

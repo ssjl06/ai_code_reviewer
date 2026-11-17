@@ -13,13 +13,13 @@ import time
 
 EXPLORE_TOOLS = {"Read", "Grep", "Glob", "Bash"}
 GIT_SUBCOMMANDS = {"diff", "log", "show", "blame", "grep", "ls-files"}
-BUDGET_REASON = "탐색 예산 소진. 추가 도구 호출 없이 지금 최종 JSON 결과를 출력하라."
+BUDGET_REASON = "탐색 예산 소진. 탐색 도구는 더 호출하지 말고 지금 StructuredOutput 도구로 최종 결과를 제출하라."
 STOP_REASON = "탐색 예산 소진 — 결론 단계로 전환"
 STOP_FILE = "budget-stop"  # created in the state dir once the guard stops a session
-DENY_REASON = "거부된 호출이 반복됨. 추가 도구 호출 없이 지금 최종 JSON 결과를 출력하라."
+DENY_REASON = "거부된 호출이 반복됨. 탐색 도구는 더 호출하지 말고 지금 StructuredOutput 도구로 최종 결과를 제출하라."
 DENY_STOP_REASON = "거부된 호출 반복 — 결론 단계로 전환"
 DENY_STOP_FILE = "deny-stop"  # like STOP_FILE, for a stop after too many rule denials
-TIME_REASON = "탐색 시간 소진. 추가 도구 호출 없이 지금 최종 JSON 결과를 출력하라."
+TIME_REASON = "탐색 시간 소진. 탐색 도구는 더 호출하지 말고 지금 StructuredOutput 도구로 최종 결과를 제출하라."
 TIME_STOP_REASON = "탐색 시간 소진 — 결론 단계로 전환"
 TIME_STOP_FILE = "time-stop"  # like STOP_FILE, for a stop at AI_REVIEW_STOP_AT
 ANSWER_TOOL = "StructuredOutput"  # how --json-schema delivers the final answer: never stopped

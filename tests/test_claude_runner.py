@@ -14,7 +14,8 @@ from review.claude_runner import (TIME_RESERVE_S, reask_korean, resume_ask, _cau
 from review.config import load_config
 from review.hooks.guard import DENY_STOP_FILE, STOP_FILE, TIME_STOP_FILE
 from review.stream_log import StreamLogger
-from review.prompt import FALLBACK_PROMPT, KOREAN_PROMPT, MENTION_FALLBACK, MENTION_KOREAN
+from review.prompt import (FALLBACK_PROMPT, KOREAN_PROMPT, MENTION_FALLBACK, MENTION_KOREAN,
+                           SUBMIT_PROMPT)
 from tests.fakes import make_wrapper
 
 
@@ -315,6 +316,24 @@ class RunnerTest(unittest.TestCase):
     def test_broken_json_incomplete(self):
         r = self.run_scn("broken", "broken")
         self.assertEqual((r["status"], r["output"]), ("incomplete", None))
+        self.assertEqual(r["error"], "no structured output → no structured output")
+        self.assertEqual([c["stdin"] for c in self.calls()],
+                         ["PROMPT", FALLBACK_PROMPT, SUBMIT_PROMPT])  # asked once more, not twice
+
+    def test_prose_resume_is_asked_once_more_for_the_tool_call(self):
+        r = self.run_scn("broken", "prose_then_submit")
+        self.assertEqual((r["status"], r["error"]), ("ok", "no structured output"))
+        self.assertEqual(r["output"]["findings"][0]["file"], "a.c")
+        c = self.calls()
+        self.assertEqual([x["stdin"] for x in c], ["PROMPT", FALLBACK_PROMPT, SUBMIT_PROMPT])
+        a = c[2]["argv"]
+        self.assertEqual((a[a.index("--resume") + 1], a[a.index("--tools") + 1],
+                          a[a.index("--max-turns") + 1]), ("sess-fake", "", "4"))
+        self.assertIsNone(c[2]["stop_at"])
+
+    def test_resume_that_hit_max_turns_or_the_clock_is_not_asked_again(self):
+        r = self.run_scn("broken", "max_turns")
+        self.assertEqual(r["error"], "no structured output → max_turns")
         self.assertEqual(len(self.calls()), 2)
 
     def test_text_json_extracted(self):
